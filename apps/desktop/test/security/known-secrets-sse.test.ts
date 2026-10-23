@@ -1,5 +1,6 @@
 // Aegis M7 (review of 5c417bd): 1a known-value masking everywhere (incl. forged data:image), 2 masked-save guard for
 // base64-ish secret fields, 3 SSE line-wise sanitising.
+import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { CookieJar } from '../../src/main/proxy/cookie-jar';
 import { AccessTokenVault, HANDLE_PREFIX, MIN_KNOWN, knownSet, maskString, replaceKnown, sanitizeJson, sseSanitizer, SSE_TOO_LARGE_FRAME, isPemPublicKey } from '../../src/main/proxy/sanitize';
@@ -157,7 +158,6 @@ describe('2 masked values from base64-ish secret fields are never submitted upst
 });
 
 describe('3 login PEM exemption: parsed public key, top-level data.public_key only', () => {
-  const { generateKeyPairSync } = require('node:crypto') as typeof import('node:crypto');
   const kp = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const pub = kp.publicKey.export({ type: 'spki', format: 'pem' }) as string;
   const priv = kp.privateKey.export({ type: 'pkcs8', format: 'pem' }) as string;

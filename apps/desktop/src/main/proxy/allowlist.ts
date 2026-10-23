@@ -88,7 +88,7 @@ export function canonicalisePath(pathname: string): { path: string; wire: string
     if (/%(?![0-9A-Fa-f]{2})/.test(seg)) return null;
     let d: string;
     try { d = decodeURIComponent(seg); } catch { return null; }
-    if (/[%/\\\u0000-\u001f\u007f]/.test(d) || d === '.' || d === '..') return null;
+    if (/[%/\\]/.test(d) || [...d].some((c) => c.charCodeAt(0) < 0x20 || c.charCodeAt(0) === 0x7f) || d === '.' || d === '..') return null;
     dec.push(d); wire.push(encodeURIComponent(d));
   }
   const path = normalisePath('/' + dec.join('/'));
