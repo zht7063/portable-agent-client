@@ -9,6 +9,7 @@
 # A throwaway gnome-keyring-daemon (temp HOME, random password) provides the Secret Service; if the box has no
 # `secret-tool` (libsecret-tools), the test-only shim test/live/bin/secret-tool (Python `secretstorage`, set
 # PYTHONPATH if needed) is put on PATH. Without a Secret Service the client falls back to env key mode (no storage).
+# M5 (UI smoke of the local pages + token actions, screenshots into PAC_SHOT_DIR): PAC_M4=1 PAC_M5=1 ...
 set -euo pipefail
 ip link set lo up 2>/dev/null || true
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -40,6 +41,7 @@ PAC_LIVE_PROXY=1 PAC_SERVER_URL="http://127.0.0.1:$PORT" PAC_LIVE_USER=pacsmoke 
 LIVE=${PIPESTATUS[0]}
 cd apps/desktop
 M4ENV=(); [ "${PAC_M4:-}" = 1 ] && M4ENV=(PA_SMOKE_KEYS=1 PA_SMOKE_TOKEN_ID="$(cat "$W/tokenid")")
+[ "${PAC_M5:-}" = 1 ] && M4ENV+=(PA_SMOKE_UI=1 PA_SMOKE_SHOT_DIR="${PAC_SHOT_DIR:-/tmp}" PA_SMOKE_TIMEOUT_MS=180000)
 env "${M4ENV[@]}" PAC_SERVER_URL="http://127.0.0.1:$PORT" PA_SMOKE_LOGIN=1 PA_SMOKE_USER=pacsmoke PA_SMOKE_PASS_FILE="$W/pass" PA_SMOKE_SECRET_FILE="$W/key" \
   PA_SMOKE_SCREENSHOT="${PA_SMOKE_SCREENSHOT:-/tmp/m3-smoke.png}" PA_SMOKE_WAIT_MS=3000 xvfb-run -a -s "-screen 0 1400x900x24" node scripts/smoke.mjs 2>&1 | tail -3
 SMOKE=${PIPESTATUS[0]}

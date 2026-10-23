@@ -16,6 +16,7 @@ import { ServerSession } from './proxy/server-session';
 import type { CompatRange, ServerCheck } from './proxy/server-status';
 import compat from '../../../../compat.json';
 import { runLoginSmoke, type SmokeExtra } from './smoke-login';
+import { runUiSmokeStep } from './smoke-ui';
 import { runKeysSmokeStep } from './smoke-keys';
 import { KeyService } from './key-service';
 import { serverChangeDialog } from './dialogs';
@@ -187,7 +188,20 @@ app.whenReady().then(async () => {
     home: homedir(), dataDir: userData, env: process.env, platform: process.platform, keyring, helperPath, getCore: () => host.core,
     ensureKey: (profileId, h, tokenId) => keys.ensure(profileId, h, tokenId),
   });
-  if (process.env.PA_SMOKE === '1' && process.env.PA_SMOKE_KEYS === '1') {
+  if (process.env.PA_SMOKE === '1' && process.env.PA_SMOKE_UI === '1') {
+    smokeExtra = (js, secret) => runUiSmokeStep(js, secret, {
+      tokenId: Number(process.env.PA_SMOKE_TOKEN_ID), keyring, helperPath, home: homedir(), shotDir: process.env.PA_SMOKE_SHOT_DIR,
+      readClipboard: () => clipboard.readText(), clearClipboard: () => clipboard.clear(), revealShown: () => smokeRevealShown,
+      click: async (x, y) => {
+        if (!win) return;
+        win.webContents.sendInputEvent({ type: 'mouseMove', x, y });
+        win.webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+        win.webContents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+      },
+      type: (text) => { win?.webContents.insertText(text); },
+      shot: async () => (win ? (await win.webContents.capturePage()).toPNG() : Buffer.alloc(0)),
+    });
+  } else if (process.env.PA_SMOKE === '1' && process.env.PA_SMOKE_KEYS === '1') {
     smokeExtra = (js, secret) => runKeysSmokeStep(js, secret, {
       tokenId: Number(process.env.PA_SMOKE_TOKEN_ID), serverUrl: host.config().serverUrl ?? '', keyring, helperPath, home: homedir(),
       readClipboard: () => clipboard.readText(), clearClipboard: () => clipboard.clear(),
@@ -206,6 +220,7 @@ app.whenReady().then(async () => {
     },
     // M5 "Show key": confirm natively (Cancel default), then show the key in a native box; never in the renderer.
     confirmRevealKey: async (tokenId) => {
+      if (process.env.PA_SMOKE === '1' && process.env.PA_SMOKE_UI === '1') return true; // dev UI smoke only (no user present)
       const opts = {
         type: 'warning' as const, buttons: ['取消', '显示 key'], defaultId: 0, cancelId: 0, noLink: true,
         title: PRODUCT.productName, message: `显示令牌 #${tokenId} 的完整 API key？`,
