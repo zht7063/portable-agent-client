@@ -112,6 +112,13 @@ Code: `apps/desktop/src/main/key-service.ts`, `ServerSession.mainApi`, IPC `keys
 (`**********`, `xx****xx` as a whole value, also inside JSON-in-string option values) or an access-token handle is
 answered `409 MASKED_SECRET_SAVE_BLOCKED` with a message to edit the setting in the server web UI; nothing is sent.
 
+Aegis N4 (checked against rc.46 source): `PUT /api/token` persists only name/status/expiry/quota/model limits/IPs/group
+(`model.Token.Update` select list), so a masked `key` in the body is ignored server-side — not blocked.
+`PUT /api/user/self` (`UpdateSelf`: username/password/display_name; sidebar/language branches) and admin
+`PUT /api/user` (`EditWithTx` omits `access_token`) never write the access token, but do write `password` when
+non-empty; upstream forms never prefill it. Defence in depth: a masked value or handle in `password` /
+`original_password` on those two PUTs is also refused with 409 (other fields pass; login is unaffected).
+
 ## Local integration (M3/M4)
 
 `NEWAPI_BIN=<official rc.46 binary> PAC_M4=1 unshare -rn dbus-run-session -- scripts/integration-local-newapi.sh`

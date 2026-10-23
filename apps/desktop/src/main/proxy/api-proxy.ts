@@ -30,6 +30,25 @@ export const MASKED_SAVE_MESSAGE = '该表单包含客户端掩码后的密钥�
 const MASK_LONG = /\*{10}/;                 // maskSecret() for > 8 chars: abcd**********wxyz
 const MASK_SHORT = /^[^*]{2}\*{4}[^*]{2}$/; // maskSecret() for 5..8 chars (all-star masks of <= 4 chars are ambiguous, e.g. "*")
 
+/**
+ * Aegis N4 (verified against rc.46 source): `PUT /api/token` persists only name/status/expiry/quota/limits/group
+ * (model.Token.Update Select list) -> the masked `key` cannot be written back; not blocked. `PUT /api/user/self`
+ * (UpdateSelf: username/password/display_name) and admin `PUT /api/user` (EditWithTx: Omit access_token) never write
+ * `access_token`, but do write `password` if non-empty. Upstream forms never prefill it, so as defence in depth a
+ * masked/handle value in password fields is refused here (other fields, e.g. display names with stars, pass).
+ */
+export const USER_SAVE_PATHS = /^\/api\/user(\/self)?\/?$/;
+const USER_SECRET_FIELDS = ['password', 'original_password'];
+export function containsMaskedPassword(body: ArrayBuffer): boolean {
+  let v: unknown;
+  try { v = JSON.parse(new TextDecoder().decode(body)); } catch { return false; }
+  if (!v || typeof v !== 'object') return false;
+  return USER_SECRET_FIELDS.some((f) => {
+    const x = (v as Record<string, unknown>)[f];
+    return typeof x === 'string' && (MASK_LONG.test(x) || MASK_SHORT.test(x) || x.startsWith(HANDLE_PREFIX));
+  });
+}
+
 /** True if any string in the (JSON or text) body carries our mask or an access-token handle. */
 export function containsMaskedValue(body: ArrayBuffer): boolean {
   const text = new TextDecoder().decode(body);
@@ -98,6 +117,9 @@ export class ServerProxy {
 
     if (req.body && req.body.byteLength > LIMITS.requestBody) return fail(413, 'TOO_LARGE', 'request body too large');
     if (req.body && method !== 'GET' && method !== 'HEAD' && ADMIN_SECRET_PATHS.test(path) && containsMaskedValue(req.body)) {
+      return fail(409, 'MASKED_SECRET_SAVE_BLOCKED', MASKED_SAVE_MESSAGE);
+    }
+    if (req.body && method === 'PUT' && USER_SAVE_PATHS.test(path) && containsMaskedPassword(req.body)) {
       return fail(409, 'MASKED_SECRET_SAVE_BLOCKED', MASKED_SAVE_MESSAGE);
     }
 

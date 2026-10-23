@@ -145,6 +145,10 @@ describe('M4 masked admin form save is blocked in the proxy', () => {
     ['PUT', '/api/option/', { key: 'GitHubClientSecret', value: maskSecret('0123456789abcdef0123') }],
     ['PUT', '/api/option/', { key: 'CustomOAuth', value: JSON.stringify({ client_secret: 'abcd**********wxyz' }) }],
     ['POST', '/api/custom-oauth-provider/', { name: 'x', client_secret: 'abcd**********wxyz' }],
+    // Aegis N4: password fields on user saves (defence in depth; rc.46 never writes access_token / token key here).
+    ['PUT', '/api/user/self', { display_name: 'd', password: 'abcd**********wxyz', original_password: 'x' }],
+    ['PUT', '/api/user/', { id: 2, username: 'u', password: 'ab****yz' }],
+    ['PUT', '/api/user/self', { password: 'pac-h.something' }],
   ])('%s %s with a masked value -> 409 with a "use the server web UI" message, not forwarded', async (m, path, body) => {
     const { fetch, req } = proxy();
     const res = await req(m, path, body);
@@ -159,7 +163,11 @@ describe('M4 masked admin form save is blocked in the proxy', () => {
     expect((await req('PUT', '/api/option/', { key: 'CorsOrigins', value: '*' })).status).toBe(200);
     expect((await req('PUT', '/api/channel/', { id: 1, key: '' })).status).toBe(200);
     expect((await req('POST', '/api/token/', { name: 'a**********b' })).status).toBe(200); // not an admin secret endpoint
-    expect(fetch).toHaveBeenCalledTimes(4);
+    // Aegis N4: token edits (rc.46 ignores `key` on PUT /api/token) and user saves without masked passwords pass.
+    expect((await req('PUT', '/api/token/', { id: 7, name: 't', key: 'Zq77**********77Xy' })).status).toBe(200);
+    expect((await req('PUT', '/api/user/self', { display_name: 'a**********b', password: '' })).status).toBe(200);
+    expect((await req('POST', '/api/user/login', { username: 'u', password: 'abcd**********wxyz' })).status).toBe(200);
+    expect(fetch).toHaveBeenCalledTimes(7);
   });
   it('detector', () => {
     expect(containsMaskedValue(new TextEncoder().encode('{"a":["x","pac-h.abc"]}').buffer as ArrayBuffer)).toBe(true);
