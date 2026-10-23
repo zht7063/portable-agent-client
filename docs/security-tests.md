@@ -54,6 +54,15 @@ Guarantees:
    fits; if the requester itself is the largest, it is the one ended. A stream over its own 32 MiB also gets
    `SSE_BUFFER_LIMIT`. A stream's bytes are released on line flush, stream end, error frames, exceptions thrown while
    sanitising (try/catch release, then rethrow) and consumer cancel / upstream abort; `sseBudget.held` returns to 0.
+   **Idle timeout**: while a stream holds a partial line, no new data for 120 s (`SSE_IDLE_MS`) ends it with
+   `event: error` / `SSE_IDLE_TIMEOUT` and releases its bytes, so a stream dropped without cancel cannot pin budget.
+   The budget references streams only through `WeakRef`s; a `FinalizationRegistry` releases the bytes of a stream
+   that is garbage-collected without end/cancel (fallback). The timer is armed only while a half line is buffered,
+   so quiet sessions between complete lines are never cut.
+   **Frontend note**: several concurrent large image responses (each up to 32 MiB buffered) can together hit the
+   64 MiB global budget; the largest stream then ends with `SSE_BUFFER_LIMIT`. This is a transient condition: the
+   UI should show the error and offer a retry. This repo has no client-side handler for these SSE error codes (the
+   playground UI is upstream's), so the retry hint is a documented follow-up for the frontend.
    Over-long lines end the stream with `event: error` / `SSE_LINE_TOO_LARGE`. `data:image` spans are found with a
    linear scan (no backtracking regex), so multi-MB images pass byte-identical.
    **`b64_json` exception (Iris decision; no generic base64 exception).** In a JSON body, or the JSON of an SSE
@@ -109,14 +118,17 @@ Read-only displays (passkey public keys, Gemini thought signatures) are not save
   entirely. The `sk-`, JWT, `otpauth://` and `Bearer` shapes and the error-text long-run mask are also linear
   scanners: the previous regexes overflowed the regexp stack on 16 MB runs (RangeError). JSON bodies nested deeper
   than 256 levels (`MAX_JSON_DEPTH`, also inside `setting`) are refused with 502 `TOO_DEEP` instead of overflowing
-  the recursive walk. Tests: `glued-keys.test.ts` "large / deep inputs".
+  the recursive walk. The request-side masked-save guard (`containsMaskedValue`, incl. JSON-in-a-string option
+  values) uses the same limit and refuses deeper request bodies with 400 `TOO_DEEP` (not forwarded). Tests: `glued-keys.test.ts` "large / deep inputs".
 - **Provider ID prefixes** are exempt from the heuristic only for these exact shapes (`ID_PREFIX_SHAPES`); a prefix
   followed by an unknown 48-char key never matches (tests: 15/15 masked per prefix, 200 synthetic real-shape ids per
   prefix 0 masked). Known values are exact-replaced first regardless.
 
   | Prefix | Tail shape | Source / example |
   |---|---|---|
-  | `chatcmpl-` | 29 base62 | OpenAI Chat Completions responses, e.g. `chatcmpl-B9MBs8CjcvOU2jLn4n570S5qMJKcT` |
+  | `chatcmpl-` | 29-31 base62 | OpenAI Chat Completions responses, e.g. `chatcmpl-B9MBs8CjcvOU2jLn4n570S5qMJKcT` (29; up to 31 allowed) |
+  | `cmpl-` | 29 base62 | OpenAI legacy Completions, e.g. `cmpl-7QmVI15qgYVllxK0FtxVGG6ywfzaq` |
+  | `msgbatch_` | `01` + 22 base62 | Anthropic Message Batches, e.g. `msgbatch_013Zva2CMHLNnXjNJJKqJ2EF` |
   | `resp_` | 48 lowercase hex | OpenAI Responses API, e.g. `resp_67ccd2bed1ec8190b14f964abc0542670bb6a6b452d3795b` |
   | `msg_` | `01` + 22 base62 (Anthropic) or 24 base62 (OpenAI Assistants) | Anthropic Messages API, e.g. `msg_013Zva2CMHLNnXjNJJKqJ2EF` |
   | `toolu_` | `01` + 21-24 base62 | Anthropic tool use docs, e.g. `toolu_01A09q90qw90lq917835lq9` |
@@ -125,7 +137,8 @@ Read-only displays (passkey public keys, Gemini thought signatures) are not save
   | `thread_`, `run_`, `step_` | 24 base62 | OpenAI Assistants ids |
   | `file-` | 22-24 base62 | OpenAI Files, e.g. `file-6F2ksmvXxt4VdoqmHRw6kL` (22), older ids 24 |
 
-  Removed (shape not pinned down from a reliable source): `cmpl-`, `batch_`, `ftjob-`, `req_`, `msgbatch_`. OpenAI
+  All tails are < 32 chars, so no prefix can carry a 48-char key. Removed (shape not pinned down from a reliable
+  source): `batch_`, `ftjob-`, `req_`. OpenAI
   documents ids as opaque and liable to change; a provider changing a shape makes those ids get masked (fail closed).
 - **Key formats**: new-api tokens are 48-char base62 (no `-`/`_`), which the run/segment heuristic covers. The
   remaining gap is third-party keys made of short hyphen/underscore-separated segments (no single segment of >= 32
