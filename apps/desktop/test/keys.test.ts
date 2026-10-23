@@ -233,7 +233,7 @@ describe('Aegis N2: mainApi errors never carry keys/tokens', () => {
     const fetch = vi.fn(async () => Response.json({ success: false, message: `bad key ${RAW} (sk-${RAW}) for real-access-token-0123456789abcdef` }, { status: 400 }));
     const s = await session(fetch);
     s.vault.issue('real-access-token-0123456789abcdef');
-    const e = await s.mainApi('POST', '/api/token/7/key').catch((x) => x);
+    const e: any = await s.mainApi('POST', '/api/token/7/key').catch((x: unknown) => x);
     expect(e.error.code).toBe('SERVER');
     expect(e.message).not.toContain(RAW);
     expect(e.message).not.toContain('real-access-token-0123456789abcdef');
