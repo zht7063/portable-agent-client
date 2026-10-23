@@ -5,7 +5,7 @@
 This project is licensed under AGPL-3.0 (see LICENSE and NOTICE). It bundles the following third-party
 production dependencies of the desktop client and its packages. Full license texts ship inside each package.
 
-Electron runtime notices are added in a later milestone (M6).
+Packaged builds also contain the Electron runtime notices added by electron-builder (LICENSE.electron.txt (MIT) and LICENSES.chromium.html (Chromium and its third-party components) in the app directory), and resources/licenses/ with this file, LICENSE, NOTICE, the new-api LICENSE/NOTICE and the OFL-1.1/Unlicense texts listed below.
 
 ## Desktop client and packages
 

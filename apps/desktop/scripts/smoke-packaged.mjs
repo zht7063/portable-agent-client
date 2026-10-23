@@ -36,12 +36,13 @@ const jsUnpacked = files.filter((f) => f.endsWith('.cjs') || f.endsWith('.js')).
 const smokeMarkers = ['PA_SMOKE', 'runLoginSmoke', 'runUiSmokeStep', 'runKeysSmokeStep'];
 const wrapper = join(userData, 'bin', 'pa-key');
 const licenseFiles = ['LICENSE', 'NOTICE', 'THIRD-PARTY-LICENSES.md'];
+const licenseResources = ['LICENSE.txt', 'NOTICE.txt', 'THIRD-PARTY-LICENSES.txt', 'LICENSE.new-api.txt', 'NOTICE.new-api.txt', 'fontsource-variable_lora.LICENSE.txt', 'fontsource-variable_public-sans.LICENSE.txt'];
 const out = {
   boot, wrapper: existsSync(wrapper), wrapperMode: existsSync(wrapper) ? (statSync(wrapper).mode & 0o777).toString(8) : null,
   scriptUnpacked: existsSync(join(res, 'app.asar.unpacked', 'dist', 'key-helper', 'pa-key.cjs')),
   keyringLinuxShipped: files.some((f) => /keyring-linux/.test(f)) || asar.includes('keyring-linux-x64'),
   smokeCode: smokeMarkers.filter((m) => asar.includes(m) || jsUnpacked.some((b) => b.includes(m))),
-  licenses: Object.fromEntries(licenseFiles.map((f) => [f, asar.includes(`"${f}"`)])),
+  licenses: Object.fromEntries([...licenseFiles.map((f) => [f, asar.includes(`"${f}"`)]), ...licenseResources.map((f) => [`resources/licenses/${f}`, existsSync(join(res, 'licenses', f))])]),
   helper: null,
 };
 if (out.wrapper) {

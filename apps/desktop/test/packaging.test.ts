@@ -20,6 +20,17 @@ describe('local packaging config (H4)', () => {
     expect(cfg.productName).toBe(product.productName);
     const pkg = JSON.parse(readFileSync(join(app, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
     for (const s of Object.values(pkg.scripts)) if (s.includes('electron-builder')) expect(s).toContain('--publish never');
+    // Packaging scripts build the production (smoke-free) main bundle.
+    for (const n of ['pack:dir', 'pack:linux']) expect(pkg.scripts[n]).toContain('build:prod');
+  });
+
+  it('M6: license materials ship as plain files in resources/licenses (and inside the app)', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const cfg = require(join(app, 'electron-builder.config.cjs')) as { files: string[]; extraResources: { from: string; to: string }[] };
+    for (const f of ['LICENSE', 'NOTICE', 'THIRD-PARTY-LICENSES.md']) expect(cfg.files).toContain(f);
+    expect(cfg.extraResources).toEqual(expect.arrayContaining([{ from: 'dist/renderer/licenses', to: 'licenses' }]));
+    const build = readFileSync(join(app, '..', '..', 'scripts', 'build-new-api-web.sh'), 'utf8');
+    for (const f of ['LICENSE.txt', 'NOTICE.txt', 'THIRD-PARTY-LICENSES.txt']) expect(build).toContain(`$OUT/licenses/${f}`);
   });
 
   it.skipIf(!built)('stage: linux has no native modules; darwin stages only @napi-rs/keyring(+darwin binary)', () => {

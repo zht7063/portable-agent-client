@@ -14,7 +14,8 @@
     "pack:dir": "bun run build:prod && node scripts/stage.mjs && electron-builder --config electron-builder.config.cjs --dir --publish never",
     "smoke:packaged": "node scripts/smoke-packaged.mjs",
     "build:main:prod": "node scripts/build-main.mjs --prod",
-    "build:prod": "bun run build:main:prod && bun run build:renderer"
+    "build:prod": "bun run build:main:prod && bun run build:renderer",
+    "pack:linux": "bun run build:prod && node scripts/stage.mjs && electron-builder --config electron-builder.config.cjs --linux AppImage deb --publish never"
   },
   "dependencies": {
     "@pac/core": "workspace:*",

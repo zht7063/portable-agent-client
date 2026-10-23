@@ -23,7 +23,19 @@ module.exports = {
     // Never ship the Linux keyring binary (bundles libdbus, AFL-2.1 OR GPL-2.0+); Linux uses secret-tool.
     '!node_modules/@napi-rs/keyring-linux-*/**',
   ],
-  linux: { target: 'dir', category: 'Development' },
+  // M6 (AGPL-3.0): license materials also ship as plain files next to the app (resources/licenses/), not only inside
+  // app.asar: our LICENSE/NOTICE/THIRD-PARTY-LICENSES, the new-api LICENSE/NOTICE and the OFL/Unlicense texts of
+  // bundled fonts/packages (all produced by scripts/build-new-api-web.sh). Electron/Chromium notices are added by
+  // electron-builder itself (LICENSE.electron.txt, LICENSES.chromium.html in the app root).
+  extraResources: [
+    { from: 'dist/renderer/licenses', to: 'licenses' },
+    { from: 'dist/renderer/LICENSE.new-api.txt', to: 'licenses/LICENSE.new-api.txt' },
+    { from: 'dist/renderer/NOTICE.new-api.txt', to: 'licenses/NOTICE.new-api.txt' },
+  ],
+  // Default target is an unpacked dir; `bun run pack:linux` builds AppImage + deb locally (never published).
+  linux: { target: 'dir', category: 'Development', maintainer: `${product.productName} (placeholder) <noreply@example.invalid>`, synopsis: `${product.productName} desktop client (based on new-api)` },
+  deb: { packageCategory: 'devel' },
+  artifactName: '${name}-${version}-${os}-${arch}-LOCAL.${ext}',
   mac: { target: 'dir', identity: null },
   win: { target: 'dir' },
   // Use the locally installed Electron; no download.

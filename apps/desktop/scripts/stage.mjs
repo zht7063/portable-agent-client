@@ -25,7 +25,7 @@ for (const d of ['main', 'preload', 'key-helper', 'renderer']) {
 }
 writeFileSync(join(stage, 'package.json'), JSON.stringify({
   name: product.executableName, productName: product.productName, version: pkg.version === '0.0.0' ? '0.0.1' : pkg.version,
-  description: `${product.productName} desktop client (based on new-api)`, author: product.productName, license: 'AGPL-3.0-only', main: 'dist/main/index.cjs',
+  description: `${product.productName} desktop client (based on new-api)`, author: product.productName, homepage: product.sourceUrl ?? product.upstream.repo, license: 'AGPL-3.0-only', main: 'dist/main/index.cjs',
 }, null, 2));
 // AGPL-3.0: license materials travel with every package.
 for (const f of ['LICENSE', 'NOTICE', 'THIRD-PARTY-LICENSES.md']) cpSync(join(repo, f), join(stage, f));
