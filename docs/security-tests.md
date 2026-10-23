@@ -15,3 +15,14 @@ All run in `bun run test` (offline) and in CI.
 | Packaging | `apps/desktop/test/window-policy.test.ts`, `test/packaging/*` | packaged menus/devTools, reproducible source tarball, placeholder build check |
 
 Changing CSP, the preload surface or the allowlist requires updating the snapshot test and this file in the same commit.
+
+## Known limitations
+
+- **Unprefixed keys shorter than 32 characters** are not detected (scan-bundle) or masked (sanitize `looksLikeBareKey`):
+  below that length the random-vs-identifier heuristic produces too many false positives. `sk-` keys are covered from
+  16 characters; values in secret-named fields are masked regardless of shape.
+- **Base64-encoded keys** (a key wrapped in base64, e.g. inside a Basic auth header or an encoded blob) are not
+  decoded and therefore not detected/masked for now.
+- The high-entropy heuristic (upper + lower + digit, >= 6 class switches, not hex/UUID/single-case/identifier+number)
+  can miss keys that happen to look low-entropy and can flag non-secrets; scan-bundle false positives go into
+  `scripts/scan-bundle-allowlist.json` (sha256 + justification only).
