@@ -59,10 +59,10 @@ export const MIN_B64_PAYLOAD = 64;
 const B64_IMAGE_PREFIX = /\bdata:image\/[a-z0-9.+-]+;base64,/gi;
 const validB64 = (p: string, min: number) => p.length >= min && p.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(p);
 const IMAGE_MAGIC = [[0x89, 0x50, 0x4e, 0x47], [0xff, 0xd8, 0xff], [0x47, 0x49, 0x46, 0x38], [0x52, 0x49, 0x46, 0x46], [0x3c]];
-function imageMagic(p: string): boolean {
+function imageMagic(p: string, svg = true): boolean {
   const b = Buffer.from(p.slice(0, 24), 'base64');
   if (b.length >= 12 && b.subarray(0, 4).toString('latin1') === 'RIFF') return b.subarray(8, 12).toString('latin1') === 'WEBP';
-  return IMAGE_MAGIC.some((m) => m.every((x, i) => b[i] === x)) || /^\s*<(?:\?xml|svg)/.test(b.toString('latin1'));
+  return IMAGE_MAGIC.slice(0, 4).some((m) => m.every((x, i) => b[i] === x)) || (svg && (b[0] === 0x3c || /^\s*<(?:\?xml|svg)/.test(b.toString('latin1'))));
 }
 const ID_LIKE = [
   /^[0-9a-f]+$/i,                                                          // hex digests / hex IDs (any case)
@@ -160,6 +160,21 @@ export function replaceKnown(s: string, known: readonly string[]): string {
   return out;
 }
 
+/**
+ * Iris/Aegis M7: the ONLY other base64 exception besides data:image. A string under the exact key `b64_json` of an
+ * element of the TOP-LEVEL `data` array (image-generation response `data[i].b64_json`, also inside SSE `data:` JSON
+ * lines) that is valid base64 and decodes to a PNG/JPEG/GIF/WebP header is a confirmed image payload: same rules as a
+ * data:image payload. Callers apply known-value replacement first; a payload containing a known value is not exempt
+ * (it is masked as plain text, which breaks that image). Any other depth / field name / free text is plain text.
+ */
+export const isB64JsonImage = (p: unknown): p is string => typeof p === 'string' && validB64(p, MIN_B64_PAYLOAD) && imageMagic(p, false);
+const maskImagePayload = (p: string) => maskPlain(p, true, BARE_RUN_B64_IMAGE);
+/** Elements of the top-level `data` array (the only objects whose `b64_json` can be exempt). */
+const imageItems = (root: unknown): Set<unknown> => {
+  const d = root && typeof root === 'object' && !Array.isArray(root) ? (root as { data?: unknown }).data : undefined;
+  return new Set(Array.isArray(d) ? d.filter((e) => e && typeof e === 'object' && !Array.isArray(e)) : []);
+};
+
 export interface SanitizeStats { masked: number; handles: number }
 
 function isAuthBundle(o: Record<string, unknown>): boolean {
@@ -183,6 +198,7 @@ export function sanitizeJson(v: unknown, vault: AccessTokenVault, stats: Sanitiz
   };
   collect(v, null);
   const known = knownSet(found, vault.values(), extraKnown);
+  const items = imageItems(v);
   // Pass 2: mask (exact known values first, everywhere; then field rules and heuristics).
   const walk = (x: unknown, field: string | null): unknown => {
     if (typeof x === 'string') {
@@ -205,6 +221,7 @@ export function sanitizeJson(v: unknown, vault: AccessTokenVault, stats: Sanitiz
       const bundle = isAuthBundle(o);
       for (const [k, val] of Object.entries(o)) {
         if (bundle && k === 'access_token') { out[k] = vault.issue(val as string); stats.handles++; continue; }
+        if (k === 'b64_json' && items.has(o) && isB64JsonImage(val) && replaceKnown(val, known) === val) { out[k] = maskImagePayload(val); continue; }
         if (exempt?.(o, k, val)) { const r = replaceKnown(val as string, known); if (r !== val) stats.masked++; out[k] = r; continue; }
         out[k] = walk(val, k.toLowerCase());
       }
@@ -230,11 +247,35 @@ export function isPemPublicKey(s: unknown): s is string {
  * image-span recognition): a line may grow up to maxLine (= LIMITS.responseBody, the same cap as a buffered body);
  * beyond that the stream is terminated with an `event: error` frame (SSE_LINE_TOO_LARGE) and nothing of the line is sent.
  */
+/**
+ * One SSE line. For a `data: {json}` line whose top-level data[i].b64_json is a confirmed image (see isB64JsonImage),
+ * that exact quoted value is kept as an image payload and the rest of the line is masked as text; the line is not
+ * re-serialised, so it stays byte-identical when nothing secret is in it.
+ */
+function sseLine(t: string, known: readonly string[]): string {
+  const plain = (x: string) => maskString(replaceKnown(x, known));
+  const m = /^data:[ \t]?/.exec(t);
+  if (!m || !t.includes('"b64_json"')) return plain(t);
+  let parsed: unknown;
+  try { parsed = JSON.parse(t.slice(m[0].length)); } catch { return plain(t); }
+  const imgs = [...imageItems(parsed)].map((e) => (e as Record<string, unknown>).b64_json)
+    .filter((p): p is string => isB64JsonImage(p) && replaceKnown(p, known) === p);
+  let out = '', last = 0;
+  for (const p of imgs) {
+    const at = t.indexOf(`"b64_json":"${p}"`, last) >= 0 ? t.indexOf(`"b64_json":"${p}"`, last) : t.indexOf(`"b64_json": "${p}"`, last);
+    if (at < 0) continue; // escaped (e.g. \/) or reordered: plain text
+    const start = t.indexOf(`"${p}"`, at) + 1;
+    out += plain(t.slice(last, start)) + maskImagePayload(p);
+    last = start + p.length;
+  }
+  return out + plain(t.slice(last));
+}
+
 export const SSE_MAX_LINE = 32 << 20;
 export const SSE_TOO_LARGE_FRAME = '\n\nevent: error\ndata: {"success":false,"code":"SSE_LINE_TOO_LARGE"}\n\n';
 export function sseSanitizer(known: readonly string[], maxLine = SSE_MAX_LINE): TransformStream<Uint8Array, Uint8Array> {
   const dec = new TextDecoder(); const enc = new TextEncoder();
-  const clean = (t: string) => maskString(replaceKnown(t, known));
+  const clean = (t: string) => sseLine(t, known);
   const parts: string[] = []; let pending = 0; // partial line, kept as pieces (no O(n^2) concatenation)
   return new TransformStream({
     transform(chunk, ctl) {
