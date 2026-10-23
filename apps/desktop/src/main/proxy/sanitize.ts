@@ -35,14 +35,42 @@ const SECRET_FIELDS = new Set([
 /** `key` is also an ordinary field (e.g. /api/option returns {key: "SMTPServer", value}). Mask only secret-shaped. */
 const AMBIGUOUS = new Set(['key', 'token', 'sk']);
 const SECRET_SHAPE = [
-  /\bsk-[A-Za-z0-9_-]{16,}/g,                          // OpenAI-style / new-api display keys
+  /\bsk-[A-Za-z0-9_-]{16,}/g,                          // sk- keys: any custom length (16-128 and beyond), may contain - and _
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g, // JWT-like
   /otpauth:\/\/[^\s"']+/g,
-  /\b[A-Za-z0-9]{48}\b/g,                             // M7: raw new-api token key (48 alnum) inside free text
 ];
+/*
+ * M7 (Aegis): bare (unprefixed) keys in free text. A run of 16-128 [A-Za-z0-9_-] chars counts as a key only if it
+ * looks random (see looksLikeBareKey); ordinary IDs (hex digests, UUIDs, numeric/lowercase request IDs) do not.
+ */
+const BARE_RUN = /(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{16,128}(?![A-Za-z0-9_-])/g;
+const ID_LIKE = [
+  /^[0-9a-f]+$/i,                                                          // hex digests / hex IDs (any case)
+  /^[0-9a-f]{8}(?:-?[0-9a-f]{4}){3}-?[0-9a-f]{12}(?:[-_][0-9a-z]+)*$/i,     // UUID-ish (optionally suffixed)
+  /^[0-9a-z_-]+$/,                                                         // single-case: request IDs, slugs, names
+  /^[0-9A-Z_-]+$/,                                                         // single-case upper: CONSTANT_NAMES, base32
+];
+/**
+ * Heuristic for an unprefixed key: >= 32 chars (new-api keys are 48), upper + lower + digit (base62-random), not
+ * ID-like, and at least 32 "key" chars once - and _ are removed (so word-ish identifiers like foo_bar_Baz1 don't match).
+ */
+export function looksLikeBareKey(s: string): boolean {
+  if (s.length < 32 || s.length > 128) return false;
+  if (!/[a-z]/.test(s) || !/[A-Z]/.test(s) || !/[0-9]/.test(s)) return false;
+  if (ID_LIKE.some((re) => re.test(s))) return false;
+  if (s.replace(/[-_]/g, '').length < 32) return false;
+  if (/^[A-Za-z_-]+[0-9]*$/.test(s)) return false; // camelCase identifier with a trailing number
+  // Random keys switch between lower/upper/digit many times; identifiers made of words do so rarely.
+  const cls = (c: string) => (/[a-z]/.test(c) ? 0 : /[A-Z]/.test(c) ? 1 : /[0-9]/.test(c) ? 2 : 3);
+  let switches = 0;
+  for (let i = 1; i < s.length; i++) if (cls(s[i]!) !== cls(s[i - 1]!)) switches++;
+  return switches >= 6;
+}
+/** Field names that hold ordinary identifiers: bare-run heuristic is not applied to them (sk-/JWT still are). */
+const ID_FIELD = /^(?:id|uuid|request_id|requestid|trace_id|traceid|.+_id|.+Id)$/;
 /** M7: `Bearer <token>` anywhere in free text (upstream error messages echoing the request). */
 const BEARER = /\b(bearer\s+)([A-Za-z0-9._~+/=-]{12,})/gi;
-const RAW_KEY = /^(sk-)?[A-Za-z0-9_-]{32,}$/;           // new-api token keys are 48 alnum chars (stored without sk-)
+const isRawKey = (x: string) => /^sk-[A-Za-z0-9_-]{16,}$/.test(x) || looksLikeBareKey(x); // new-api keys: 48 alnum, stored without sk-
 
 export function maskSecret(s: string): string {
   if (s.length <= 4) return '*'.repeat(s.length);
@@ -52,9 +80,10 @@ export function maskSecret(s: string): string {
 const isMasked = (s: string) => s.includes('****') || s.startsWith(HANDLE_PREFIX);
 
 /** Masks secret-shaped substrings in free text (used for JSON strings and non-JSON text bodies). */
-export function maskString(s: string): string {
+export function maskString(s: string, bare = true): string {
   let out = s.replace(BEARER, (_m, pre: string, tok: string) => (tok.startsWith(HANDLE_PREFIX) ? pre + tok : pre + maskSecret(tok)));
   for (const re of SECRET_SHAPE) out = out.replace(re, (m) => maskSecret(m));
+  if (bare) out = out.replace(BARE_RUN, (m) => (looksLikeBareKey(m) ? maskSecret(m) : m));
   return out;
 }
 
@@ -81,9 +110,9 @@ export function sanitizeJson(v: unknown, vault: AccessTokenVault, stats: Sanitiz
   const walk = (x: unknown, field: string | null): unknown => {
     if (typeof x === 'string') {
       if (field !== null && SECRET_FIELDS.has(field) && x.length > 0 && !isMasked(x)) {
-        if (!AMBIGUOUS.has(field) || RAW_KEY.test(x) || /^sk-/.test(x)) { stats.masked++; return maskSecret(x); }
+        if (!AMBIGUOUS.has(field) || isRawKey(x) || /^sk-/.test(x)) { stats.masked++; return maskSecret(x); }
       }
-      const m = maskString(x);
+      const m = maskString(x, !(field !== null && ID_FIELD.test(field)));
       if (m !== x) stats.masked++;
       return m;
     }
@@ -97,7 +126,7 @@ export function sanitizeJson(v: unknown, vault: AccessTokenVault, stats: Sanitiz
       const bundle = isAuthBundle(o);
       for (const [k, val] of Object.entries(o)) {
         if (bundle && k === 'access_token') { out[k] = vault.issue(val as string); stats.handles++; continue; }
-        out[k] = walk(val, k.toLowerCase());
+        out[k] = walk(val, /Id$/.test(k) ? k : k.toLowerCase());
       }
       return out;
     }
