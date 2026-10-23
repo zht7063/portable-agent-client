@@ -49,4 +49,3 @@ describe('false-positive probes (pinned; ordinary IDs stay readable)', () => {
   ];
   it.each(probes)('%s -> masked=%s', (_n, s, m) => { expect(maskString(s) !== s).toBe(m); });
 });
-});
