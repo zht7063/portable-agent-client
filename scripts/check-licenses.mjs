@@ -63,7 +63,7 @@ function visit(name, fromDir, optional, web = false) {
   else {
     const lic = typeof pkg.license === 'string' ? pkg.license : pkg.license?.type;
     if (web && WEB_NOT_SHIPPED.some((r) => r.test(name))) { webExcluded.add(pj); warnings.push(`web: ${name}@${pkg.version} (${lic}): installed but not in the browser bundle (Node-only native loader)`); }
-    else if (web && !spdxAllowed(lic) && WEB_FLAGGED.has(lic)) { webFlagged.push(`${name}@${pkg.version} (${lic})`); webFlaggedDirs.push({ id: `${name}@${pkg.version} (${lic})`, dir: dirname(pj) }); }
+    else if (web && !spdxAllowed(lic) && WEB_FLAGGED.has(lic)) { const id = `${name}@${pkg.version} (${lic})`; if (!webFlagged.includes(id)) { webFlagged.push(id); webFlaggedDirs.push({ id, dir: dirname(pj) }); } }
     else if (NOT_SHIPPED.some((r) => r.test(name))) warnings.push(`${name}@${pkg.version} (${lic}): installed but excluded from shipping (bundles libdbus AFL-2.1 OR GPL-2.0+)`);
     else if (!spdxAllowed(lic)) problems.push(`${name}@${pkg.version}: license "${lic ?? 'none'}" not allowed`);
   }
@@ -77,6 +77,8 @@ const webFlagged = [];
 const webFlaggedDirs = [];
 const licenseFile = (dir) => readdirSync(dir).find((f) => /^(LICEN[CS]E|COPYING)(\.(md|txt))?$/i.test(f));
 const webDir = join(root, '.build', 'new-api-web');
+/** One row per name@version (the same package is reached from several workspaces / dependents). */
+const uniqPkgs = (ps) => [...new Map(ps.map((p) => [`${p.name}@${p.version}`, p])).values()];
 const licOf = (p) => (typeof p.license === 'string' ? p.license : p.license?.type);
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
@@ -94,14 +96,14 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const webSeen = new Map(seen);
   seen.clear();
   for (const [k, v] of appSeen) seen.set(k, v);
-  const webRows = [...webSeen.entries()].filter(([pj]) => !webExcluded.has(pj)).map(([, p]) => p).sort((a, b) => a.name.localeCompare(b.name));
-  const listed = [...seen.values()].filter((p) => !p.name.startsWith('@pac/')).map((p) => `${p.name}@${p.version} ${typeof p.license === 'string' ? p.license : p.license?.type}`).sort();
+  const webRows = uniqPkgs([...webSeen.entries()].filter(([pj]) => !webExcluded.has(pj)).map(([, p]) => p)).sort((a, b) => a.name.localeCompare(b.name));
+  const listed = uniqPkgs([...seen.values()]).filter((p) => !p.name.startsWith('@pac/')).map((p) => `${p.name}@${p.version} ${typeof p.license === 'string' ? p.license : p.license?.type}`).sort();
   console.log(listed.join('\n'));
   for (const w of warnings) console.warn(`warning: ${w}`);
   for (const f of webFlagged) console.warn(`FLAG (web bundle, non-allowlisted but AGPL-compatible): ${f}`);
   if (problems.length) { console.error(problems.map((p) => `license: ${p}`).join('\n')); process.exit(1); }
   if (process.argv.includes('--write')) {
-    const rows = [...seen.values()].filter((p) => !p.name.startsWith('@pac/') && !NOT_SHIPPED.some((r) => r.test(p.name)))
+    const rows = uniqPkgs([...seen.values()]).filter((p) => !p.name.startsWith('@pac/') && !NOT_SHIPPED.some((r) => r.test(p.name)))
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((p) => `| ${p.name} | ${p.version} | ${typeof p.license === 'string' ? p.license : p.license?.type} |`);
     writeFileSync(join(root, 'THIRD-PARTY-LICENSES.md'), [

@@ -12,15 +12,7 @@ Electron runtime notices are added in a later milestone (M6).
 | Package | Version | License |
 |---|---|---|
 | @napi-rs/keyring | 2.1.2 | MIT |
-| @napi-rs/keyring | 2.1.2 | MIT |
-| @napi-rs/keyring | 2.1.2 | MIT |
-| @napi-rs/keyring | 2.1.2 | MIT |
-| @napi-rs/keyring | 2.1.2 | MIT |
 | jsonc-parser | 3.3.1 | MIT |
-| jsonc-parser | 3.3.1 | MIT |
-| jsonc-parser | 3.3.1 | MIT |
-| smol-toml | 1.9.1 | BSD-3-Clause |
-| smol-toml | 1.9.1 | BSD-3-Clause |
 | smol-toml | 1.9.1 | BSD-3-Clause |
 
 ## Vendored new-api web frontend (bundled renderer)
@@ -47,10 +39,6 @@ patched per patches/new-api-web/README.md. Its production dependencies:
 | @babel/template | 7.29.7 | MIT |
 | @babel/traverse | 7.29.7 | MIT |
 | @babel/types | 7.29.7 | MIT |
-| @babel/types | 7.29.7 | MIT |
-| @babel/types | 7.29.7 | MIT |
-| @babel/types | 7.29.7 | MIT |
-| @babel/types | 7.29.7 | MIT |
 | @base-ui/react | 1.6.0 | MIT |
 | @base-ui/utils | 0.3.1 | MIT |
 | @codemirror/autocomplete | 6.20.3 | MIT |
@@ -67,7 +55,6 @@ patched per patches/new-api-web/README.md. Its production dependencies:
 | @emotion/cache | 11.14.0 | MIT |
 | @emotion/css | 11.13.5 | MIT |
 | @emotion/hash | 0.8.0 | MIT |
-| @emotion/hash | 0.9.2 | MIT |
 | @emotion/hash | 0.9.2 | MIT |
 | @emotion/memoize | 0.9.0 | MIT |
 | @emotion/react | 11.14.0 | MIT |
@@ -89,7 +76,6 @@ patched per patches/new-api-web/README.md. Its production dependencies:
 | @hugeicons/react | 1.1.9 | MIT |
 | @jridgewell/gen-mapping | 0.3.13 | MIT |
 | @jridgewell/resolve-uri | 3.1.2 | MIT |
-| @jridgewell/sourcemap-codec | 1.5.5 | MIT |
 | @jridgewell/sourcemap-codec | 1.5.5 | MIT |
 | @jridgewell/trace-mapping | 0.3.31 | MIT |
 | @lezer/common | 1.5.2 | MIT |
@@ -207,9 +193,6 @@ patched per patches/new-api-web/README.md. Its production dependencies:
 | combined-stream | 1.0.8 | MIT |
 | comma-separated-tokens | 2.0.3 | MIT |
 | commander | 2.20.3 | MIT |
-| commander | 2.20.3 | MIT |
-| commander | 2.20.3 | MIT |
-| commander | 2.20.3 | MIT |
 | commander | 8.3.0 | MIT |
 | concat-stream | 2.0.0 | MIT |
 | concat-stream | 1.4.11 | MIT |
@@ -254,8 +237,6 @@ patched per patches/new-api-web/README.md. Its production dependencies:
 | es-toolkit | 1.52.0 | MIT |
 | es-toolkit | 1.49.0 | MIT |
 | escape-string-regexp | 4.0.0 | MIT |
-| eventemitter3 | 4.0.7 | MIT |
-| eventemitter3 | 4.0.7 | MIT |
 | eventemitter3 | 4.0.7 | MIT |
 | eventemitter3 | 5.0.4 | MIT |
 | eventsource-parser | 3.1.0 | MIT |
@@ -408,7 +389,6 @@ patched per patches/new-api-web/README.md. Its production dependencies:
 | stringify-entities | 4.0.4 | MIT |
 | style-mod | 4.1.3 | MIT |
 | stylis | 4.4.0 | MIT |
-| stylis | 4.2.0 | MIT |
 | stylis | 4.2.0 | MIT |
 | supports-preserve-symlinks-flag | 1.0.0 | MIT |
 | tailwind-merge | 3.6.0 | MIT |
