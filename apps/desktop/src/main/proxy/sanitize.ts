@@ -38,7 +38,10 @@ const SECRET_SHAPE = [
   /\bsk-[A-Za-z0-9_-]{16,}/g,                          // OpenAI-style / new-api display keys
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g, // JWT-like
   /otpauth:\/\/[^\s"']+/g,
+  /\b[A-Za-z0-9]{48}\b/g,                             // M7: raw new-api token key (48 alnum) inside free text
 ];
+/** M7: `Bearer <token>` anywhere in free text (upstream error messages echoing the request). */
+const BEARER = /\b(bearer\s+)([A-Za-z0-9._~+/=-]{12,})/gi;
 const RAW_KEY = /^(sk-)?[A-Za-z0-9_-]{32,}$/;           // new-api token keys are 48 alnum chars (stored without sk-)
 
 export function maskSecret(s: string): string {
@@ -48,8 +51,9 @@ export function maskSecret(s: string): string {
 }
 const isMasked = (s: string) => s.includes('****') || s.startsWith(HANDLE_PREFIX);
 
-function maskString(s: string): string {
-  let out = s;
+/** Masks secret-shaped substrings in free text (used for JSON strings and non-JSON text bodies). */
+export function maskString(s: string): string {
+  let out = s.replace(BEARER, (_m, pre: string, tok: string) => (tok.startsWith(HANDLE_PREFIX) ? pre + tok : pre + maskSecret(tok)));
   for (const re of SECRET_SHAPE) out = out.replace(re, (m) => maskSecret(m));
   return out;
 }

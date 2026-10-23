@@ -1,6 +1,6 @@
 import { decide, normalisePath } from './allowlist';
 import type { CookieJar } from './cookie-jar';
-import { AccessTokenVault, HANDLE_PREFIX, filterRequestHeaders, filterResponseHeaders, sanitizeJson, maskSecret } from './sanitize';
+import { AccessTokenVault, HANDLE_PREFIX, filterRequestHeaders, filterResponseHeaders, sanitizeJson, maskString } from './sanitize';
 import type { FetchLike, ServerCheck } from './server-status';
 
 /*
@@ -54,7 +54,11 @@ export function containsMaskedValue(body: ArrayBuffer): boolean {
   const text = new TextDecoder().decode(body);
   if (text.includes(HANDLE_PREFIX)) return true;
   let v: unknown;
-  try { v = JSON.parse(text); } catch { return MASK_LONG.test(text); }
+  try { v = JSON.parse(text); } catch {
+    // M7: non-JSON bodies (form-encoded / text): check every value token, so short masks (ab****yz) are caught too.
+    const dec = (t: string) => { try { return decodeURIComponent(t.replace(/\+/g, ' ')); } catch { return t; } };
+    return MASK_LONG.test(text) || text.split(/[&=\s;,]+/).some((t) => MASK_SHORT.test(dec(t)));
+  }
   const walk = (x: unknown): boolean => {
     if (typeof x === 'string') {
       if (MASK_LONG.test(x) || MASK_SHORT.test(x)) return true;
@@ -181,9 +185,8 @@ export class ServerProxy {
   }
 }
 
-function maskText(s: string): string {
-  return s.replace(/\bsk-[A-Za-z0-9_-]{16,}/g, (m) => maskSecret(m)).replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g, (m) => maskSecret(m));
-}
+/** Non-JSON text bodies get the same secret-shape masking as JSON strings (M7: incl. raw 48-char keys, Bearer). */
+const maskText = (s: string): string => maskString(s);
 
 export function rewriteStatus(body: unknown): unknown {
   if (!body || typeof body !== 'object') return body;
