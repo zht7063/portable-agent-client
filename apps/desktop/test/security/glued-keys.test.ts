@@ -1,6 +1,6 @@
 // Aegis M7: keys glued with - / _ into longer runs, and false-positive probes for common ID shapes.
 import { describe, expect, it } from 'vitest';
-import { AccessTokenVault, maskString, sanitizeJson } from '../../src/main/proxy/sanitize';
+import { AccessTokenVault, MAX_BARE_RUN, knownSet, maskString, replaceKnown, sanitizeJson } from '../../src/main/proxy/sanitize';
 
 const K = 'Zq7Rw2Lp9Xv4Tm8Nk3Hd6Jf1Bc5Gs0YeQa2Wu7Ir4Ot9Pl3S';
 let seed = 3;
@@ -38,14 +38,56 @@ describe('false-positive probes (pinned; ordinary IDs stay readable)', () => {
   ];
   it.each(unchanged)('%s unchanged', (_n, s) => { expect(maskString(s)).toBe(s); });
 
-  // Provider ids: masked only when the whole id (or a [-_] segment) is a >= 32-char mixed-case random run.
+  // Provider ids: allowlisted prefixes (ID_PREFIX_RUN) + 8-64 alnum tail are never masked by the heuristic.
   const probes: [string, string, boolean][] = [
-    ['chatcmpl- (29-char mixed tail: whole id 38 chars looks random)', 'chatcmpl-9xYzAbCdEf1234GhIjKl5678M', true],
+    ['chatcmpl- (29-char mixed tail: whole id 38 chars looks random)', 'chatcmpl-9xYzAbCdEf1234GhIjKl5678M', false],
     ['resp_ (48 hex)', 'resp_67ccd2bed1ec8190b14f964abc0542670bb6a6b452d3795b', false],
     ['msg_ (24 mixed)', 'msg_01XFDUDYJgAACzvnptvVoYEL', false],
     ['call_ (24 mixed)', 'call_Fq2kXz9LmN3pRtVw8YbC4dEh', false],
     ['file- (24 mixed)', 'file-AbC123dEf456GhI789jKl0', false],
-    ['run_ (32 mixed tail)', 'run_Fq2kXz9LmN3pRtVw8YbC4dEhJ7sQ1uWa', true],
+    ['run_ (32 mixed tail)', 'run_Fq2kXz9LmN3pRtVw8YbC4dEhJ7sQ1uWa', false],
   ];
   it.each(probes)('%s -> masked=%s', (_n, s, m) => { expect(maskString(s) !== s).toBe(m); });
+});
+
+describe('ID prefix allowlist does not hide keys', () => {
+  const prefixes = ['chatcmpl-', 'cmpl-', 'resp_', 'msg_', 'call_', 'run_', 'step_', 'asst_', 'thread_', 'file-', 'batch_', 'ftjob-', 'toolu_', 'req_', 'msgbatch_'];
+  it.each(prefixes)('%s<K> is left alone by the heuristic but a KNOWN K is still masked (JSON + text)', (p) => {
+    const s = `${p}${K}`;
+    expect(maskString(s)).toBe(s);
+    const v = new AccessTokenVault(); v.issue(K);
+    expect(JSON.stringify(sanitizeJson({ id: s, message: `failed ${s}` }, v))).not.toContain(K);
+    expect(JSON.stringify(sanitizeJson({ id: s, api_key: K }, new AccessTokenVault()))).not.toContain(K);
+    expect(maskString(replaceKnown(s, knownSet([K])))).not.toContain(K);
+  });
+  it.each(prefixes)('%s<id>-<K> / %s<K>_x / prefix with a >64 tail are not exempt', (p) => {
+    for (const s of [`${p}abc12345-${K}`, `${p}${K}_${K}`, `${p}${K}${K}`]) expect(maskString(s)).not.toContain(K);
+  });
+  it('unknown prefixes get the normal checks', () => {
+    expect(maskString(`key_${K}`)).not.toContain(K);
+    expect(maskString(`chatcmpl${K}`)).not.toContain(K);
+  });
+});
+
+describe('linear bare-run scanner', () => {
+  it('16.4M-char single run: no stack overflow, masked entirely, fast', () => {
+    const big = 'aB3'.repeat(5_466_667); // 16.4M chars
+    const t = Date.now();
+    const out = maskString(`x ${big} y`);
+    expect(Date.now() - t).toBeLessThan(5000);
+    expect(out.length).toBeLessThan(100);
+    expect(out.startsWith('x aB3a') && out.endsWith(' y')).toBe(true);
+  });
+  it('16.4M chars of many short runs: linear, unchanged', () => {
+    const s = 'hello world. '.repeat(1_262_000);
+    const t = Date.now();
+    expect(maskString(s)).toBe(s);
+    expect(Date.now() - t).toBeLessThan(5000);
+  });
+  it('run of exactly MAX_BARE_RUN is analysed per segment; one more char masks it whole', () => {
+    const at = (n: number) => `${K}-${'a'.repeat(n - K.length - 1)}`;
+    const a = maskString(at(MAX_BARE_RUN));
+    expect(a).not.toContain(K); expect(a.length).toBeGreaterThan(MAX_BARE_RUN - 100);
+    expect(maskString(at(MAX_BARE_RUN + 1)).length).toBeLessThan(40);
+  });
 });

@@ -49,8 +49,39 @@ const SECRET_SHAPE = [
 // masked. The + / = special case applies only inside a recognised base64 span (below).
 // Aegis M7: no upper bound -- a key glued with - or _ into a longer run (`uuid-K`, `K_<100 chars>`) is found by
 // checking the whole run (if <= 128) and then each [-_]-separated segment (see maskRun).
-const BARE_RUN = /(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{16,}(?![A-Za-z0-9_-])/g;
+/**
+ * Aegis M7: provider object ids (OpenAI / Anthropic style) are not secrets and their random tails look exactly like
+ * keys. A run that is EXACTLY <prefix><8-64 alnum> is not masked by the heuristic (known values are still
+ * exact-replaced before this). Anything more (another -/_ segment, longer tail) gets the normal checks.
+ * List: OpenAI chatcmpl-/cmpl- (completions), resp_ (Responses), msg_ (Assistants messages / Anthropic messages),
+ * call_ (tool calls), run_/step_/asst_/thread_ (Assistants), file- (Files), batch_ (Batch), ftjob- (fine-tuning),
+ * Anthropic toolu_ (tool use ids), req_ (request ids), msgbatch_ (message batches).
+ */
+const ID_PREFIX_RUN = /^(?:chatcmpl-|cmpl-|resp_|msg_|call_|run_|step_|asst_|thread_|file-|batch_|ftjob-|toolu_|req_|msgbatch_)[A-Za-z0-9]{8,64}$/;
+/** Runs longer than this are masked entirely (no per-segment analysis of multi-MB blobs). */
+export const MAX_BARE_RUN = 1 << 20;
+const isRunChar = (c: number) => (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 45 || c === 95;
+/**
+ * Plain text bare-key masking with a hand-written linear scanner (no regex backtracking / stack limits on huge
+ * inputs). A run is a maximal [A-Za-z0-9_-] sequence, so K in `https://h/K`, `K/x`, `K+`, `K=`, `x+K` is masked.
+ * No upper bound: a key glued with - or _ into a longer run (`uuid-K`, `K_<100 chars>`) is found per segment.
+ */
+function maskBareRuns(s: string): string {
+  let out = '', last = 0, i = 0;
+  const n = s.length;
+  while (i < n) {
+    if (!isRunChar(s.charCodeAt(i))) { i++; continue; }
+    let j = i + 1; while (j < n && isRunChar(s.charCodeAt(j))) j++;
+    if (j - i >= 16) {
+      const run = s.slice(i, j); const m = j - i > MAX_BARE_RUN ? maskSecret(run) : maskRun(run);
+      if (m !== run) { out += s.slice(last, i) + m; last = j; }
+    }
+    i = j;
+  }
+  return last === 0 ? s : out + s.slice(last);
+}
 function maskRun(m: string): string {
+  if (ID_PREFIX_RUN.test(m)) return m;
   if (m.length <= 128 && looksLikeBareKey(m)) return maskSecret(m);
   if (!/[-_]/.test(m)) return m;
   return m.split(/([-_])/).map((seg) => (looksLikeBareKey(seg) ? maskSecret(seg) : seg)).join('');
@@ -132,10 +163,10 @@ function* imageSpans(s: string): Generator<{ start: number; payload: string }> {
     yield { start, payload };
   }
 }
-function maskPlain(s: string, bare: boolean, run: RegExp = BARE_RUN): string {
+function maskPlain(s: string, bare: boolean, run: RegExp | null = null): string {
   let out = s.replace(BEARER, (_m, pre: string, tok: string) => (tok.startsWith(HANDLE_PREFIX) ? pre + tok : pre + maskSecret(tok)));
   for (const re of SECRET_SHAPE) out = out.replace(re, (m) => maskSecret(m));
-  if (bare) out = out.replace(run, (m) => (run === BARE_RUN ? maskRun(m) : looksLikeBareKey(m) ? maskSecret(m) : m));
+  if (bare) out = run ? out.replace(run, (m) => (looksLikeBareKey(m) ? maskSecret(m) : m)) : maskBareRuns(out);
   return out;
 }
 
