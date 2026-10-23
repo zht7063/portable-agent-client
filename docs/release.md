@@ -89,4 +89,8 @@ files, vitest for `src/pa-local`). Its dependencies need network once, as a sepa
 
     bun run install:web   # = build-new-api-web.sh --prepare-only (bun install --frozen-lockfile in .build/new-api-web)
 
-Without it the test fails fast with "vendored web dependencies not installed".
+Without it the local-pages part is skipped with "local-pages: SKIPPED: vendored web dependencies not installed" and
+`bun run test` still passes on the root vitest suite. CI must set `PA_REQUIRE_WEB_DEPS=1`, which turns a missing
+install into a failure ("local-pages: FAIL"), so CI can never silently skip these checks:
+
+    bun run install:web && PA_REQUIRE_WEB_DEPS=1 bun run test

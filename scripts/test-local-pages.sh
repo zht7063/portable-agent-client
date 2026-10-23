@@ -10,7 +10,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 for a in "$@"; do
   if [ "$a" = --no-install ] && [ ! -d "$ROOT/.build/new-api-web/node_modules" ]; then
-    echo "vendored web dependencies not installed; run: bun run install:web" >&2; exit 1
+    # Aegis M6 item 3: `bun run test` must not fail just because the (network-installed) web deps are absent.
+    # CI sets PA_REQUIRE_WEB_DEPS=1, which turns the skip into a failure.
+    if [ "${PA_REQUIRE_WEB_DEPS:-0}" = 1 ]; then
+      echo "local-pages: FAIL: vendored web dependencies not installed (PA_REQUIRE_WEB_DEPS=1); run: bun run install:web" >&2; exit 1
+    fi
+    echo "local-pages: SKIPPED: vendored web dependencies not installed (.build/new-api-web/node_modules)." >&2
+    echo "local-pages: run 'bun run install:web' (needs network) to enable; set PA_REQUIRE_WEB_DEPS=1 to make this a failure." >&2
+    exit 0
   fi
 done
 "$ROOT/scripts/build-new-api-web.sh" --prepare-only "$@"
