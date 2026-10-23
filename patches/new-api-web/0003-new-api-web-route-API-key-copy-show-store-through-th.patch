@@ -1,0 +1,123 @@
+From 03e27785c6b0d1ff980f246d512d1bca269b31c2 Mon Sep 17 00:00:00 2001
+From: "Engineer (bot)" <zht7063@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 02:05:12 +0800
+Subject: [PATCH 3/3] new-api-web: route API key copy/show/store through the
+ desktop main process
+
+---
+ src/features/keys/components/api-keys-cells.tsx          | 7 +++++++
+ src/features/keys/components/data-table-bulk-actions.tsx | 5 +++++
+ src/features/keys/components/data-table-row-actions.tsx  | 9 +++++++++
+ 3 files changed, 21 insertions(+)
+
+diff --git a/src/features/keys/components/api-keys-cells.tsx b/src/features/keys/components/api-keys-cells.tsx
+index 024fdff..51699df 100644
+--- a/src/features/keys/components/api-keys-cells.tsx
++++ b/src/features/keys/components/api-keys-cells.tsx
+@@ -15,6 +15,8 @@ You should have received a copy of the GNU Affero General Public License
+ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
++Modified by portable-agent-client (patch 0003): in the desktop client full keys never reach the renderer, so
++key copy/show/store go through main (src/pa-local/tokens); renderer-side copies of the masked value are hidden.
+ */
+ import { Check, Copy, Loader2 } from 'lucide-react'
+ import { useState, useCallback } from 'react'
+@@ -36,11 +38,16 @@ import {
+   TooltipTrigger,
+ } from '@/components/ui/tooltip'
+ import { copyToClipboard } from '@/lib/copy-to-clipboard'
++import { isPaDesktop, PaApiKeyCell } from '@/pa-local'
+ 
+ import type { ApiKey } from '../types'
+ import { useApiKeys } from './api-keys-provider'
+ 
+ export function ApiKeyCell({ apiKey }: { apiKey: ApiKey }) {
++  return isPaDesktop() ? <PaApiKeyCell apiKey={apiKey} /> : <UpstreamApiKeyCell apiKey={apiKey} />
++}
++
++function UpstreamApiKeyCell({ apiKey }: { apiKey: ApiKey }) {
+   const { t } = useTranslation()
+   const {
+     resolveRealKey,
+diff --git a/src/features/keys/components/data-table-bulk-actions.tsx b/src/features/keys/components/data-table-bulk-actions.tsx
+index 6cb71d2..2295f86 100644
+--- a/src/features/keys/components/data-table-bulk-actions.tsx
++++ b/src/features/keys/components/data-table-bulk-actions.tsx
+@@ -15,6 +15,8 @@ You should have received a copy of the GNU Affero General Public License
+ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
++Modified by portable-agent-client (patch 0003): in the desktop client full keys never reach the renderer, so
++key copy/show/store go through main (src/pa-local/tokens); renderer-side copies of the masked value are hidden.
+ */
+ import { type Table } from '@tanstack/react-table'
+ import { Copy, Trash2, Loader2 } from 'lucide-react'
+@@ -30,6 +32,7 @@ import {
+   TooltipTrigger,
+ } from '@/components/ui/tooltip'
+ import { copyToClipboard } from '@/lib/copy-to-clipboard'
++import { isPaDesktop } from '@/pa-local'
+ 
+ import { type ApiKey } from '../types'
+ import { ApiKeysMultiDeleteDialog } from './api-keys-multi-delete-dialog'
+@@ -83,6 +86,7 @@ export function DataTableBulkActions<TData>({
+   return (
+     <>
+       <BulkActionsToolbar table={table} entityName='API key'>
++        {!isPaDesktop() && (
+         <Tooltip>
+           <TooltipTrigger
+             render={
+@@ -106,6 +110,7 @@ export function DataTableBulkActions<TData>({
+             <p>{t('Copy selected keys')}</p>
+           </TooltipContent>
+         </Tooltip>
++        )}
+ 
+         <Tooltip>
+           <TooltipTrigger
+diff --git a/src/features/keys/components/data-table-row-actions.tsx b/src/features/keys/components/data-table-row-actions.tsx
+index 910ad6d..cf4bb3c 100644
+--- a/src/features/keys/components/data-table-row-actions.tsx
++++ b/src/features/keys/components/data-table-row-actions.tsx
+@@ -15,6 +15,8 @@ You should have received a copy of the GNU Affero General Public License
+ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
++Modified by portable-agent-client (patch 0003): in the desktop client full keys never reach the renderer, so
++key copy/show/store go through main (src/pa-local/tokens); renderer-side copies of the masked value are hidden.
+ */
+ import type { Row } from '@tanstack/react-table'
+ import {
+@@ -53,6 +55,7 @@ import { sendToFluent } from '@/features/chat/lib/send-to-fluent'
+ import { encodeChannelConnectionInfo } from '@/lib/channel-connection-info'
+ import { copyToClipboard } from '@/lib/copy-to-clipboard'
+ import { handleServerError } from '@/lib/handle-server-error'
++import { isPaDesktop, PaTokenMenuItems } from '@/pa-local'
+ 
+ import { updateApiKeyStatus } from '../api'
+ import { API_KEY_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
+@@ -220,6 +223,10 @@ export function DataTableRowActions<TData>({
+         contentClassName='w-[200px]'
+         modal={false}
+       >
++        {isPaDesktop() ? (
++          <PaTokenMenuItems apiKey={apiKey} />
++        ) : (
++          <>
+         <DropdownMenuItem
+           disabled={isRealKeyLoading}
+           onClick={async () => {
+@@ -286,6 +293,8 @@ export function DataTableRowActions<TData>({
+               ))}
+             </DropdownMenuSubContent>
+           </DropdownMenuSub>
++        )}
++          </>
+         )}
+         <DropdownMenuSeparator />
+         <DropdownMenuItem
+-- 
+2.47.3
+

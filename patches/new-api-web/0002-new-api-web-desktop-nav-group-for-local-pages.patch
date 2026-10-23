@@ -1,0 +1,52 @@
+From 49a61d36d82b4d97a1fda5ebd892e72e82fbade8 Mon Sep 17 00:00:00 2001
+From: "Engineer (bot)" <zht7063@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 02:04:45 +0800
+Subject: [PATCH 2/3] new-api-web: desktop nav group for local pages
+
+---
+ src/hooks/use-sidebar-data.ts | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/src/hooks/use-sidebar-data.ts b/src/hooks/use-sidebar-data.ts
+index 48a5ad3..3531887 100644
+--- a/src/hooks/use-sidebar-data.ts
++++ b/src/hooks/use-sidebar-data.ts
+@@ -15,6 +15,7 @@ You should have received a copy of the GNU Affero General Public License
+ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
++Modified by portable-agent-client (patch 0002): desktop-only "Desktop" nav group (local pages in src/pa-local).
+ */
+ import {
+   Activity,
+@@ -41,6 +42,7 @@ import { useTranslation } from 'react-i18next'
+ 
+ import type { SidebarData } from '@/components/layout/types'
+ import { ROLE } from '@/lib/roles'
++import { isPaDesktop } from '@/pa-local'
+ 
+ /**
+  * Root navigation groups for the application sidebar.
+@@ -128,6 +130,19 @@ export function useSidebarData(): SidebarData {
+           },
+         ],
+       },
++      ...(isPaDesktop()
++        ? [
++            {
++              id: 'pa-desktop',
++              title: t('Desktop'),
++              items: [
++                { title: t('Harness'), url: '/pa/harness', icon: PlugZap },
++                { title: t('Keychain'), url: '/pa/keychain', icon: Key },
++                { title: t('Server settings'), url: '/pa/server', icon: ServerCog },
++              ],
++            },
++          ]
++        : []),
+       {
+         id: 'admin',
+         title: t('Admin'),
+-- 
+2.47.3
+

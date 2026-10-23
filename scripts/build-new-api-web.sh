@@ -3,7 +3,8 @@
 #   vendor/new-api-web (pristine, never edited) -> .build/new-api-web (temp copy)
 #   -> apply patches/new-api-web/*.patch in order (git-format patches, `git apply`)
 #   -> bun install --frozen-lockfile -> rsbuild build -> apps/desktop/dist/renderer
-# Usage: scripts/build-new-api-web.sh [--no-install]
+#   + src-local/ (our own AGPL pages, M5) -> src/pa-local, src-local/routes -> src/routes (before patching)
+# Usage: scripts/build-new-api-web.sh [--no-install] [--prepare-only]
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$ROOT/vendor/new-api-web"
@@ -19,6 +20,11 @@ mkdir -p "$BUILD"
 find "$BUILD" -mindepth 1 -maxdepth 1 ! -name node_modules -exec rm -rf {} +
 (cd "$SRC" && tar -cf - .) | (cd "$BUILD" && tar -xf -)
 
+# Local pages (not upstream code): copied in before the patch queue so patches can import '@/pa-local'.
+mkdir -p "$BUILD/src/pa-local"
+(cd "$ROOT/src-local" && tar --exclude=./routes -cf - .) | (cd "$BUILD/src/pa-local" && tar -xf -)
+(cd "$ROOT/src-local/routes" && tar -cf - .) | (cd "$BUILD/src/routes" && tar -xf -)
+
 shopt -s nullglob
 for p in "$PATCHES"/*.patch; do
   echo "applying $(basename "$p")"
@@ -29,7 +35,13 @@ for p in "$PATCHES"/*.patch; do
 done
 
 cd "$BUILD"
-if [ "${1:-}" != "--no-install" ]; then bun install --frozen-lockfile; fi
+NO_INSTALL=0; PREPARE_ONLY=0
+for a in "$@"; do case "$a" in --no-install) NO_INSTALL=1 ;; --prepare-only) PREPARE_ONLY=1 ;; esac; done
+if [ "$NO_INSTALL" = 0 ]; then bun install --frozen-lockfile; fi
+if [ "$PREPARE_ONLY" = 1 ]; then
+  cp "$ROOT/scripts/gen-route-tree.mjs" ./.gen-route-tree.mjs && node ./.gen-route-tree.mjs && rm -f ./.gen-route-tree.mjs
+  echo "prepared $BUILD"; exit 0
+fi
 NODE_ENV=production bunx --bun rsbuild build
 rm -rf "$OUT"
 mkdir -p "$OUT"
