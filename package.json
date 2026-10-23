@@ -17,6 +17,7 @@
     "lint": "eslint .",
     "test": "vitest run && bash scripts/test-local-pages.sh --no-install",
     "test:live": "vitest run -c vitest.live.config.ts",
+    "test:compat": "vitest run -c vitest.compat.config.ts",
     "build": "bun run --filter '*' build",
     "licenses": "node scripts/check-licenses.mjs",
     "compat": "node scripts/compat-check.mjs",

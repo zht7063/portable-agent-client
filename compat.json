@@ -5,5 +5,10 @@
   "commit": "7d8b91268dab69d7150f345c448b5e250163146a",
   "minServer": "v1.0.0-rc.46",
   "maxServerTested": "v1.0.0-rc.46",
-  "policy": "same-minor-line"
+  "policy": "same-minor-line",
+  "compatMatrix": {
+    "$comment": "Official new-api Docker image tags checked by the manual-only .github/workflows/compat.yml (docs/ci.md).",
+    "image": "calciumion/new-api",
+    "versions": ["v1.0.0-rc.46"]
+  }
 }

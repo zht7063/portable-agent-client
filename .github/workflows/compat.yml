@@ -1,0 +1,64 @@
+# M7 compat matrix: manual-only. Runs the client's credential-free /api/status compatibility check against each
+# official new-api Docker image version listed in compat.json (compatMatrix.versions), as a service container.
+# Read-only token, SHA-pinned actions, no secrets, nothing is published or uploaded. See docs/ci.md.
+name: compat
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  matrix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      image: ${{ steps.m.outputs.image }}
+      versions: ${{ steps.m.outputs.versions }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: m
+        name: Read compatMatrix from compat.json
+        run: |
+          echo "image=$(jq -r '.compatMatrix.image' compat.json)" >> "$GITHUB_OUTPUT"
+          echo "versions=$(jq -c '.compatMatrix.versions' compat.json)" >> "$GITHUB_OUTPUT"
+  status:
+    needs: matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ${{ fromJSON(needs.matrix.outputs.versions) }}
+    services:
+      newapi:
+        image: ${{ needs.matrix.outputs.image }}:${{ matrix.version }}
+        ports:
+          - 3000:3000
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      PAC_COMPAT_SERVER: http://127.0.0.1:3000
+      PAC_COMPAT_EXPECT: ${{ matrix.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.19.0
+      - name: Install (frozen lockfiles)
+        run: bun install --frozen-lockfile
+      - name: compat.json valid and server version accepted by policy
+        run: bun run compat -- --server "$PAC_COMPAT_EXPECT"
+      - name: Wait for the new-api service
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS "$PAC_COMPAT_SERVER/api/status" > /dev/null; then exit 0; fi
+            sleep 2
+          done
+          echo "new-api did not become ready" >&2; exit 1
+      - name: /api/status compatibility check
+        run: bun run test:compat

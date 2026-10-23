@@ -16,5 +16,14 @@ Steps: install (frozen) -> `bun run install:web` -> typecheck -> lint -> `bun ru
 
 `apps/desktop/test/security/ci-policy.test.ts` enforces these rules on the workflow file itself.
 
-Not in CI (deliberate): packaged Electron smoke (needs the Electron binary + xvfb; run locally, see release.md), the
-compatibility matrix against the official new-api Docker image (needs network/pulling images; open question).
+Not in CI (deliberate): packaged Electron smoke (needs the Electron binary + xvfb; run locally, see release.md).
+
+## Compat matrix (manual only)
+
+`.github/workflows/compat.yml` runs **only on manual dispatch** (`workflow_dispatch`; never on push/PR/schedule). Same
+rules as above: `contents: read`, SHA-pinned actions, `persist-credentials: false`, no secrets, nothing published or
+uploaded. For each tag in `compat.json` → `compatMatrix.versions` it starts the official image
+(`compatMatrix.image` = `calciumion/new-api`) as a service container, runs `bun run compat -- --server <tag>` and
+`bun run test:compat` (`test/compat/status.compat.test.ts`: the client's credential-free `/api/status` check via
+`checkServer`; skipped unless `PAC_COMPAT_SERVER` is set). It has not been triggered yet. Image tags are not
+digest-pinned. The policy test above also covers this workflow (manual-only trigger, image from compat.json).
