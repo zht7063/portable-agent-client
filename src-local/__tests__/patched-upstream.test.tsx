@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { paCopyCurl } from '../tokens/key-actions'
 import { installFakePa, removeFakePa } from './fake-pa'
 
+import { toast } from 'sonner'
+import { SignIn } from '@/features/auth/sign-in'
+
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }))
 vi.mock('@tanstack/react-router', () => ({
   Link: (p: { to: string; children: unknown; className?: string }) => <a href={p.to}>{p.children as never}</a>,
@@ -14,9 +17,6 @@ vi.mock('@/hooks/use-status', () => ({ useStatus: () => ({ status: { register_en
 vi.mock('@/features/auth/auth-layout', () => ({ AuthLayout: (p: { children: unknown }) => <div>{p.children as never}</div> }))
 vi.mock('@/features/auth/components/terms-footer', () => ({ TermsFooter: () => null }))
 vi.mock('@/features/auth/sign-in/components/user-auth-form', () => ({ UserAuthForm: () => <form /> }))
-import { toast } from 'sonner'
-
-import { SignIn } from '@/features/auth/sign-in'
 
 let clip: ReturnType<typeof vi.fn>
 beforeEach(() => {

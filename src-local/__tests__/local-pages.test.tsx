@@ -13,8 +13,9 @@ import { paShowKey, paStoreKey } from '../tokens/key-actions'
 import { PaApiKeyCell } from '../tokens/pa-token-actions'
 import { fail, installFakePa, removeFakePa } from './fake-pa'
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }))
 import { toast } from 'sonner'
+
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }))
 
 let fake: ReturnType<typeof installFakePa>
 let clip: ReturnType<typeof vi.fn>

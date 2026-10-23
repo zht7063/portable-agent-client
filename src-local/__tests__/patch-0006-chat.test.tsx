@@ -1,20 +1,21 @@
 /* portable-agent-client local pages (AGPL-3.0-only). Patch 0006: chat presets / chat routes hidden in the desktop. */
 import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { installFakePa, removeFakePa } from './fake-pa'
-
-const getApiKeys = vi.fn()
-const fetchTokenKey = vi.fn()
-vi.mock('@/features/keys/api', () => ({ getApiKeys: (...a: unknown[]) => getApiKeys(...a), fetchTokenKey: (...a: unknown[]) => fetchTokenKey(...a) }))
 
 import { fetchActiveChatKey } from '@/features/chat/hooks/use-active-chat-key'
 import { resolveChatUrl } from '@/features/chat/lib/chat-links'
 import { useSidebarData } from '@/hooks/use-sidebar-data'
 import { Route as ChatRoute } from '@/routes/_authenticated/chat/$chatId'
 import { Route as Chat2LinkRoute } from '@/routes/_authenticated/chat2link'
+
+const getApiKeys = vi.fn()
+const fetchTokenKey = vi.fn()
+vi.mock('@/features/keys/api', () => ({ getApiKeys: (...a: unknown[]) => getApiKeys(...a), fetchTokenKey: (...a: unknown[]) => fetchTokenKey(...a) }))
 
 afterEach(() => { removeFakePa(); vi.clearAllMocks() })
 
@@ -53,7 +54,7 @@ describe('patch 0006: chat links never built in the desktop', () => {
 
 // Every remaining place that builds a link/handoff from a key must be gated for the desktop.
 describe('no UI path puts a (masked) key into a link', () => {
-  const root = join(__dirname, '..', '..')
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
   const files: string[] = []
   const walk = (d: string) => { for (const n of readdirSync(d)) { const p = join(d, n); if (statSync(p).isDirectory()) { if (!['__tests__', 'pa-local', 'i18n'].includes(n)) walk(p) } else if (/\.tsx?$/.test(n) && !/\.test\.tsx?$/.test(n)) files.push(p) } }
   walk(root)

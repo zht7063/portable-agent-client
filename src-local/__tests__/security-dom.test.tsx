@@ -14,8 +14,8 @@ import { installFakePa, removeFakePa } from './fake-pa'
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }))
 
-const RAW = 'Lk9' + 'q'.repeat(42) + 'Zz1'
-const AT = 'AT0' + 'x'.repeat(40) + 'END'
+const RAW = `Lk9${'q'.repeat(42)}Zz1`
+const AT = `AT0${'x'.repeat(40)}END`
 const KEYISH = /\b(sk-)?[A-Za-z0-9]{40,}\b|pac-h\.|session=|new_api_refresh/
 
 let fetchSpy: ReturnType<typeof vi.fn>

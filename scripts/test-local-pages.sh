@@ -42,7 +42,7 @@ if [ "$tc_rc" -ne 0 ]; then
 else
   echo "typecheck: clean"
 fi
-bunx oxlint -c .oxlintrc.json src/pa-local src/routes/_authenticated/pa "src/routes/(auth)/pa-server.tsx" "src/routes/(auth)/pa-about.tsx" src/hooks/use-sidebar-data.ts \
+bunx oxlint --deny-warnings -c .oxlintrc.json src/pa-local src/routes/_authenticated/pa "src/routes/(auth)/pa-server.tsx" "src/routes/(auth)/pa-about.tsx" src/hooks/use-sidebar-data.ts \
   src/features/keys/components/api-keys-cells.tsx src/features/keys/components/data-table-row-actions.tsx \
   src/components/layout/components/nav-group.tsx src/features/chat/lib/chat-links.ts src/features/chat/hooks/use-active-chat-key.ts \
   src/routes/_authenticated/chat2link.tsx \
