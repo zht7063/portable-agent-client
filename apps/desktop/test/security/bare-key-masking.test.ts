@@ -66,10 +66,9 @@ describe('base64 and data: URIs are not corrupted', () => {
     const svg = `data:image/svg+xml;base64,${Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg">${'<path d="M0 0"/>'.repeat(5)}</svg>`).toString('base64')}`;
     expect(sanitizeJson({ avatar: uri, logo: svg }, new AccessTokenVault())).toEqual({ avatar: uri, logo: svg });
   });
-  it('a plain (unprefixed) base64 block with an embedded high-entropy 48-run bounded by + / = is unchanged', () => {
+  it('unprefixed base64 gets no exception: an embedded high-entropy 48-run bounded by + / = IS masked', () => {
     for (const blob of [pad4(`${b64(30)}/${KEY48}+${b64(30)}`), `${pad4(`${b64(24)}+${KEY48}+${b64(24)}`)}`, `x: ${pad4(`${b64(30)}+${KEY48}/${b64(30)}`)} end`]) {
-      expect(blob.replace(/^x: | end$/g, '').length % 4).toBe(0);
-      expect(maskString(blob)).toBe(blob);
+      expect(maskString(blob)).not.toContain(KEY48);
     }
   });
   it('a normal bare key next to a data: URI is still masked', () => {
@@ -123,13 +122,15 @@ describe('data: bypass regressions (Aegis): K is masked in every non-image / inv
     const text = `data:image/png;base64,${KEY48}${KEY48}`; // valid 96-char payload; the run has no + / = around it
     expect(maskString(text)).not.toContain(KEY48);
   });
-  it('legit inline PNG base64 (valid alphabet, padding, >= 64 chars) stays intact, incl. high-entropy runs bounded by + / =', () => {
+  it('legit inline PNG base64 (valid alphabet, padding, >= 64 chars, PNG header) stays intact, incl. high-entropy runs bounded by + / =', () => {
+    const PNGH = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const png = (n: number) => Buffer.concat([PNGH, Buffer.from(b64(n))]).toString('base64');
     for (const n of [48, 49, 50, 300]) {
-      const uri = `data:image/png;base64,${b64(n)}`;
+      const uri = `data:image/png;base64,${png(n)}`;
       expect(maskString(uri)).toBe(uri);
       expect(maskString(`<img src="${uri}" alt="x">`)).toBe(`<img src="${uri}" alt="x">`);
     }
-    const inner = `data:image/png;base64,${b64(30)}+${KEY48}/${b64(30)}AA`;
+    const inner = `data:image/png;base64,${png(30)}+${KEY48}/${png(30)}AA`;
     expect(inner.split(',')[1]!.length % 4).toBe(0);
     expect(maskString(inner)).toBe(inner);
   });
@@ -146,5 +147,48 @@ describe('data:image magic header check', () => {
     ['svg', uri('<svg xmlns="http://www.w3.org/2000/svg">', 'svg+xml')],
   ])('%s payload with a valid header is left intact', (_n, u) => {
     expect(maskString(`<img src="${u}">`)).toBe(`<img src="${u}">`);
+  });
+});
+
+describe('rule (b) removed (Aegis HIGH): K next to unprefixed base64 is always masked, every 4-alignment', () => {
+  const R = (n: number, seed = 1) => { let x = seed; const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'; return Array.from({ length: n }, () => A[(x = (x * 1103515245 + 12345) >>> 0) >>> 26]).join(''); };
+  const forms: [string, (d: number) => string][] = [
+    [' K/R{80} ', (d) => ` ${KEY48}/${R(80 + d)} `],
+    [' R{120}+K ', (d) => ` ${R(120 + d, 2)}+${KEY48} `],
+    [' AAAA/K+R{20} ', (d) => ` ${'A'.repeat(4 + d)}/${KEY48}+${R(20, 3)} `],
+    ['{"sig":"R{100}+K"}', (d) => `{"sig":"${R(100 + d, 4)}+${KEY48}"}`],
+    ['upstream error: bad K/R{100}', (d) => `upstream error: bad ${KEY48}/${R(100 + d, 5)}`],
+    ['GET /v1/K/R{100} HTTP/1.1', (d) => `GET /v1/${KEY48}/${R(100 + d, 6)} HTTP/1.1`],
+    ['R{64}/K==', (d) => `${R(64 + d, 7)}/${KEY48}==`],
+    ['multi-line R/K', (d) => `${R(76, 8)}\n${R(20 + d, 9)}+${KEY48}\n${R(76, 10)}`],
+  ];
+  for (const [name, f] of forms) {
+    it.each([0, 1, 2, 3])(`${name} (+%i chars)`, (d) => {
+      const text = f(d);
+      expect(new Set([0, 1, 2, 3].map((x) => f(x).length % 4)).size).toBe(4); // the 4 variants cover every mod-4 class
+      expect(maskString(text)).not.toContain(KEY48);
+      expect(JSON.stringify(sanitizeJson({ message: text, nested: [{ sig: text }] }, new AccessTokenVault()))).not.toContain(KEY48);
+    });
+  }
+});
+
+describe('pinned: what stays unmasked inside a header-verified data:image payload', () => {
+  const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('x'.repeat(61))]).toString('base64'); // 92 chars, no padding
+  const img = (payload: string) => `<img src="data:image/png;base64,${payload}">`;
+  it('K bounded by + / = inside the payload is NOT masked (documented limitation)', () => {
+    const p = `${PNG}+${KEY48}/${PNG}AA`; expect(p.length % 4).toBe(0);
+    expect(maskString(img(p))).toBe(img(p));
+  });
+  it('K glued to the payload end (valid total length) is NOT masked: payload end is a base64 boundary (documented)', () => {
+    const p = `${PNG}${KEY48}AAAA`; expect(p.length % 4).toBe(0);
+    expect(maskString(img(p))).toBe(img(p));
+  });
+  it('K right after the payload but separated by a non-base64 char IS masked', () => {
+    expect(maskString(`${img(PNG)} ${KEY48}`)).not.toContain(KEY48);
+    expect(maskString(`data:image/png;base64,${PNG}"${KEY48}`)).not.toContain(KEY48);
+  });
+  it('payload that breaks validity (length % 4 != 0) or lacks the header is plain text: K masked', () => {
+    expect(maskString(img(`${PNG}+${KEY48}/A`))).not.toContain(KEY48);
+    expect(maskString(img(`${'Q'.repeat(16)}+${KEY48}/${'Q'.repeat(15)}`))).not.toContain(KEY48);
   });
 });
