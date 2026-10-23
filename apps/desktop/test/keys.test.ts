@@ -227,3 +227,21 @@ describe('Aegis N1: clipboard auto-clear after keys:copy', () => {
     expect(toClientConfig(await cs.load()).clipboardClearSeconds).toBe(45);
   });
 });
+
+describe('Aegis N2: mainApi errors never carry keys/tokens', () => {
+  it('masks a key / bearer token echoed in an upstream error message', async () => {
+    const fetch = vi.fn(async () => Response.json({ success: false, message: `bad key ${RAW} (sk-${RAW}) for real-access-token-0123456789abcdef` }, { status: 400 }));
+    const s = await session(fetch);
+    s.vault.issue('real-access-token-0123456789abcdef');
+    const e = await s.mainApi('POST', '/api/token/7/key').catch((x) => x);
+    expect(e.error.code).toBe('SERVER');
+    expect(e.message).not.toContain(RAW);
+    expect(e.message).not.toContain('real-access-token-0123456789abcdef');
+    expect(e.message).toContain('bad key');
+    expect(findCredentialLeaks({ m: e.message })).toEqual([]);
+  });
+  it('maskErrorText keeps ordinary text', async () => {
+    const { maskErrorText } = await import('../src/main/proxy/sanitize');
+    expect(maskErrorText('令牌不存在 token not found')).toBe('令牌不存在 token not found');
+  });
+});

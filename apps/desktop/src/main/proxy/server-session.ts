@@ -2,7 +2,7 @@ import { PaException } from '@pac/core';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { CookieJar, type StoredCookie } from './cookie-jar';
-import { AccessTokenVault } from './sanitize';
+import { AccessTokenVault, maskErrorText } from './sanitize';
 import { ServerProxy, type ProxyRequest } from './api-proxy';
 import { checkServer, type CompatRange, type FetchLike, type ServerCheck } from './server-status';
 
@@ -116,7 +116,8 @@ export class ServerSession {
     let j: { success?: boolean; data?: T; message?: string };
     try { j = (await res.json()) as typeof j; } catch { throw new PaException({ code: 'SERVER', message: `服务器返回异常（HTTP ${res.status}）` }); }
     // Upstream messages are user-facing text; never include response data in errors.
-    if (!res.ok || j.success === false) throw new PaException({ code: 'SERVER', message: (typeof j.message === 'string' && j.message.slice(0, 200)) || `HTTP ${res.status}` });
+    // Aegis N2: mask secrets in the message (never carry keys/tokens in errors), then truncate.
+    if (!res.ok || j.success === false) throw new PaException({ code: 'SERVER', message: (typeof j.message === 'string' && maskErrorText(j.message, [tok, cookie]).slice(0, 200)) || `HTTP ${res.status}` });
     return j.data as T;
   }
 

@@ -54,6 +54,17 @@ function maskString(s: string): string {
   return out;
 }
 
+/**
+ * Aegis N2: text that may end up in an error (upstream `message`, etc.). Masks secret shapes, any long opaque run
+ * (raw 48-char token keys, access tokens) and each value in `known` (e.g. the bearer token that was sent).
+ */
+export function maskErrorText(s: string, known: (string | null | undefined)[] = []): string {
+  let out = String(s);
+  for (const k of known) if (k && k.length >= 4) out = out.split(k).join(maskSecret(k));
+  out = maskString(out);
+  return out.replace(/[A-Za-z0-9_-]{24,}/g, (m) => maskSecret(m));
+}
+
 export interface SanitizeStats { masked: number; handles: number }
 
 function isAuthBundle(o: Record<string, unknown>): boolean {
