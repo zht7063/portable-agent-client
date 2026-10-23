@@ -69,3 +69,29 @@ export function normalisePath(pathname: string): string | null {
   if (pathname.split('/').some((s) => s === '..' || s === '.')) return null;
   return pathname;
 }
+
+/**
+ * Aegis M7: percent-encoding in the PATH (the query is forwarded verbatim and never used for decisions).
+ * The upstream frontend does put encodeURIComponent() values in path segments (session ids, plugin keys/versions,
+ * task / container ids, system-info node names), so '%' cannot be refused outright. Instead each segment is decoded
+ * ONCE; the request is refused if a segment is malformed, or its decoded form still contains '%' (double encoding)
+ * or a separator / control char / dot-segment. All decisions (DENY, allowlist, masked-save guards, login/logout
+ * gates) use the decoded path, and the canonical re-encoding of exactly that path is what is sent upstream, so the
+ * server cannot see a different path from the one that was checked.
+ */
+export function canonicalisePath(pathname: string): { path: string; wire: string } | null {
+  if (!pathname.startsWith('/') || pathname.startsWith('//')) return null;
+  const segs = pathname.slice(1).split('/');
+  const dec: string[] = []; const wire: string[] = [];
+  for (const seg of segs) {
+    if (!seg.includes('%')) { dec.push(seg); wire.push(seg); continue; }
+    if (/%(?![0-9A-Fa-f]{2})/.test(seg)) return null;
+    let d: string;
+    try { d = decodeURIComponent(seg); } catch { return null; }
+    if (/[%/\\\u0000-\u001f\u007f]/.test(d) || d === '.' || d === '..') return null;
+    dec.push(d); wire.push(encodeURIComponent(d));
+  }
+  const path = normalisePath('/' + dec.join('/'));
+  if (!path) return null;
+  return { path, wire: '/' + wire.join('/') };
+}

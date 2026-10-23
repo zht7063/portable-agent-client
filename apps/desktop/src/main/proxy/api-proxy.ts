@@ -1,4 +1,4 @@
-import { decide, normalisePath } from './allowlist';
+import { canonicalisePath, decide } from './allowlist';
 import type { CookieJar } from './cookie-jar';
 import { AccessTokenVault, HANDLE_PREFIX, filterRequestHeaders, filterResponseHeaders, sanitizeJson, maskString, knownSet, replaceKnown, sseSanitizer, isPemPublicKey } from './sanitize';
 import type { FetchLike, ServerCheck } from './server-status';
@@ -99,15 +99,16 @@ export class ServerProxy {
   async handle(req: ProxyRequest): Promise<Response> {
     let u: URL;
     try { u = new URL(req.url); } catch { return fail(400, 'BAD_REQUEST', 'bad url'); }
-    const path = normalisePath(u.pathname);
-    if (!path) return fail(400, 'BAD_REQUEST', 'bad path');
+    const canon = canonicalisePath(u.pathname); // decode-once BEFORE every decision (see canonicalisePath)
+    if (!canon) return fail(400, 'BAD_REQUEST', 'bad path');
+    const path = canon.path;
     const method = req.method.toUpperCase();
     const d = decide(method, path);
     if (!d.allow) return fail(d.status, d.code, d.message);
 
     const origin = this.o.getOrigin();
     if (!origin) return fail(503, 'NO_SERVER', '尚未配置服务器地址（设置 PAC_SERVER_URL 或在配置中填写 serverUrl）。');
-    const target = new URL(path + u.search, origin);
+    const target = new URL(canon.wire + u.search, origin);
     if (target.origin !== origin) return fail(400, 'BAD_REQUEST', 'origin mismatch'); // defence in depth
 
     // Aegis #4: match login/logout paths with trailing slashes stripped (gin redirects/accepts `/login/`).
