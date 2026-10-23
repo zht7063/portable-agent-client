@@ -22,6 +22,8 @@ export class AccessTokenVault {
   resolve(handle: string): string | null { return this.map.get(handle) ?? null; }
   /** Most recently issued real token (main-only API calls, M4). */
   latest(): string | null { let v: string | null = null; for (const t of this.map.values()) v = t; return v; }
+  /** All real tokens currently held (known secrets for exact-value masking). */
+  values(): string[] { return [...this.map.values()]; }
   clear(): void { this.map.clear(); }
   get size(): number { return this.map.size; }
 }
@@ -125,6 +127,23 @@ export function maskErrorText(s: string, known: (string | null | undefined)[] = 
   return out.replace(/[A-Za-z0-9_-]{24,}/g, (m) => maskSecret(m));
 }
 
+/**
+ * Aegis M7 1a: exact-value masking of KNOWN secrets (vault tokens, values under secret-named fields, the bearer
+ * token that was sent). Applied before any heuristic and everywhere -- including inside header-verified data:image
+ * payloads -- so a known key can never be smuggled out. Values shorter than MIN_KNOWN are ignored (trivial matches).
+ */
+export const MIN_KNOWN = 12;
+export function knownSet(...groups: Iterable<string | null | undefined>[]): string[] {
+  const out = new Set<string>();
+  for (const g of groups) for (const k of g) if (typeof k === 'string' && k.length >= MIN_KNOWN && !isMasked(k)) out.add(k);
+  return [...out].sort((a, b) => b.length - a.length); // longest first: a key that contains another is replaced whole
+}
+export function replaceKnown(s: string, known: readonly string[]): string {
+  let out = s;
+  for (const k of known) if (out.includes(k)) out = out.split(k).join(maskSecret(k));
+  return out;
+}
+
 export interface SanitizeStats { masked: number; handles: number }
 
 function isAuthBundle(o: Record<string, unknown>): boolean {
@@ -133,13 +152,30 @@ function isAuthBundle(o: Record<string, unknown>): boolean {
 }
 
 /** Deep-clean a parsed JSON body. Auth bundles get a handle; everything else secret is masked. */
-export function sanitizeJson(v: unknown, vault: AccessTokenVault, stats: SanitizeStats = { masked: 0, handles: 0 }): unknown {
+export function sanitizeJson(v: unknown, vault: AccessTokenVault, stats: SanitizeStats = { masked: 0, handles: 0 }, extraKnown: Iterable<string | null | undefined> = [], exempt?: (o: Record<string, unknown>, k: string, v: unknown) => boolean): unknown {
+  // Pass 1: collect known secrets (values under secret-named fields + vault tokens + caller-supplied).
+  const found: string[] = [];
+  const collect = (x: unknown, field: string | null): void => {
+    if (typeof x === 'string') {
+      if (field === 'setting' && x.startsWith('{')) { try { collect(JSON.parse(x), null); } catch { /* not JSON */ } }
+      if (field !== null && SECRET_FIELDS.has(field) && (!AMBIGUOUS.has(field) || isRawKey(x) || /^sk-/.test(x))) found.push(x);
+    } else if (Array.isArray(x)) {
+      for (const e of x) collect(e, field !== null && SECRET_FIELDS.has(field) && !AMBIGUOUS.has(field) ? field : null);
+    } else if (x && typeof x === 'object') {
+      for (const [k, val] of Object.entries(x as Record<string, unknown>)) collect(val, k.toLowerCase());
+    }
+  };
+  collect(v, null);
+  const known = knownSet(found, vault.values(), extraKnown);
+  // Pass 2: mask (exact known values first, everywhere; then field rules and heuristics).
   const walk = (x: unknown, field: string | null): unknown => {
     if (typeof x === 'string') {
       if (field !== null && SECRET_FIELDS.has(field) && x.length > 0 && !isMasked(x)) {
         if (!AMBIGUOUS.has(field) || isRawKey(x) || /^sk-/.test(x)) { stats.masked++; return maskSecret(x); }
       }
-      const m = maskString(x); // no field-name exemption: real IDs survive via ID_LIKE
+      // Aegis M7 2: user `setting` is JSON-in-a-string carrying webhook_secret -> field rules apply inside it.
+      if (field === 'setting' && x.startsWith('{')) { try { return JSON.stringify(walk(JSON.parse(x), null)); } catch { /* not JSON */ } }
+      const m = maskString(replaceKnown(x, known)); // no field-name exemption: real IDs survive via ID_LIKE
       if (m !== x) stats.masked++;
       return m;
     }
@@ -153,6 +189,7 @@ export function sanitizeJson(v: unknown, vault: AccessTokenVault, stats: Sanitiz
       const bundle = isAuthBundle(o);
       for (const [k, val] of Object.entries(o)) {
         if (bundle && k === 'access_token') { out[k] = vault.issue(val as string); stats.handles++; continue; }
+        if (exempt?.(o, k, val)) { const r = replaceKnown(val as string, known); if (r !== val) stats.masked++; out[k] = r; continue; }
         out[k] = walk(val, k.toLowerCase());
       }
       return out;
@@ -162,11 +199,44 @@ export function sanitizeJson(v: unknown, vault: AccessTokenVault, stats: Sanitiz
   return walk(v, null);
 }
 
+/** A PEM public key (`-----BEGIN PUBLIC KEY-----` + base64 lines). Public by definition; only known values are masked. */
+export const isPemPublicKey = (s: unknown): s is string =>
+  typeof s === 'string' && s.length < 8192 && /^-----BEGIN (?:RSA )?PUBLIC KEY-----\r?\n[A-Za-z0-9+/=\r\n]+-----END (?:RSA )?PUBLIC KEY-----\s*$/.test(s);
+
+/**
+ * Aegis M7 3: line-wise sanitizer for text/event-stream. Each complete line (SSE frames are line-based) is masked
+ * like any text body (known values, then heuristics) and forwarded immediately, so latency is one line. A partial
+ * line is held until its newline arrives; a single line longer than SSE_MAX_LINE is flushed in pieces, keeping a
+ * tail of SSE_TAIL chars (> longest heuristic run) so a key at the cut point is still seen whole by the next piece.
+ */
+export const SSE_MAX_LINE = 64 * 1024;
+const SSE_TAIL = 256;
+export function sseSanitizer(known: readonly string[]): TransformStream<Uint8Array, Uint8Array> {
+  const dec = new TextDecoder(); const enc = new TextEncoder();
+  const clean = (t: string) => maskString(replaceKnown(t, known));
+  let buf = '';
+  return new TransformStream({
+    transform(chunk, ctl) {
+      buf += dec.decode(chunk, { stream: true });
+      const nl = buf.lastIndexOf('\n');
+      if (nl >= 0) { ctl.enqueue(enc.encode(buf.slice(0, nl + 1).split('\n').map(clean).join('\n'))); buf = buf.slice(nl + 1); }
+      if (buf.length > SSE_MAX_LINE) {
+        // cut at a non-key char before the tail so no run is split
+        let cut = buf.length - SSE_TAIL;
+        while (cut > 0 && /[A-Za-z0-9_+/=-]/.test(buf[cut - 1]!)) cut--;
+        if (cut === 0) cut = buf.length - SSE_TAIL;
+        ctl.enqueue(enc.encode(clean(buf.slice(0, cut)))); buf = buf.slice(cut);
+      }
+    },
+    flush(ctl) { buf += dec.decode(); if (buf) ctl.enqueue(enc.encode(clean(buf))); },
+  });
+}
+
 /** Response headers the renderer may see; everything else (Set-Cookie, auth, server internals) is dropped. */
 const RESPONSE_HEADERS = new Set(['content-type', 'content-disposition', 'content-language', 'cache-control', 'last-modified', 'etag', 'retry-after']);
 export function filterResponseHeaders(h: Headers): Record<string, string> {
   const out: Record<string, string> = {};
-  h.forEach((v, k) => { if (RESPONSE_HEADERS.has(k.toLowerCase())) out[k.toLowerCase()] = v; });
+  h.forEach((v, k) => { if (RESPONSE_HEADERS.has(k.toLowerCase())) out[k.toLowerCase()] = maskString(v); }); // e.g. ETag
   return out;
 }
 

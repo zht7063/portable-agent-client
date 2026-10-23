@@ -1,6 +1,6 @@
 import { decide, normalisePath } from './allowlist';
 import type { CookieJar } from './cookie-jar';
-import { AccessTokenVault, HANDLE_PREFIX, filterRequestHeaders, filterResponseHeaders, sanitizeJson, maskString } from './sanitize';
+import { AccessTokenVault, HANDLE_PREFIX, filterRequestHeaders, filterResponseHeaders, sanitizeJson, maskString, knownSet, replaceKnown, sseSanitizer, isPemPublicKey } from './sanitize';
 import type { FetchLike, ServerCheck } from './server-status';
 
 /*
@@ -24,7 +24,8 @@ const STATUS_DISABLE = ['github_oauth', 'discord_oauth', 'linuxdo_oauth', 'teleg
  * client secrets / payment keys, custom OAuth providers, deployment credentials). The client only ever shows these
  * masked, so saving such a form would overwrite the real secret with the mask -> refused before it leaves main.
  */
-export const ADMIN_SECRET_PATHS = /^\/api\/(channel|option|custom-oauth-provider|deployments)(\/|$)/;
+// Aegis M7 2: + /api/user/setting (notification webhook_secret is round-tripped by the profile form).
+export const ADMIN_SECRET_PATHS = /^\/api\/(channel|option|custom-oauth-provider|deployments|user\/setting)(\/|$)/;
 export const MASKED_SAVE_MESSAGE = '该表单包含客户端掩码后的密钥（如 abcd**********wxyz），保存会用掩码覆盖服务器上的真实值，已阻止。请在服务器网页端编辑此设置。 '
   + 'This form contains secrets masked by the client; saving would overwrite the real values. Blocked — edit this setting in the server web UI.';
 const MASK_LONG = /\*{10}/;                 // maskSecret() for > 8 chars: abcd**********wxyz
@@ -131,9 +132,10 @@ export class ServerProxy {
     const cookie = this.o.getJar().header(path, origin.startsWith('https://'));
     if (cookie) headers.cookie = cookie;
     const auth = req.headers.get('authorization');
+    let sentToken: string | null = null;
     if (auth?.startsWith(`Bearer ${HANDLE_PREFIX}`)) {
       const real = this.o.vault.resolve(auth.slice('Bearer '.length));
-      if (real) headers.authorization = `Bearer ${real}`;
+      if (real) { headers.authorization = `Bearer ${real}`; sentToken = real; }
     }
 
     let res: Response;
@@ -165,9 +167,12 @@ export class ServerProxy {
 
     const ct = (res.headers.get('content-type') ?? '').toLowerCase();
     if (method === 'HEAD' || res.status === 204 || res.status === 304) { await res.body?.cancel(); return new Response(null, { status: res.status, headers: outHeaders }); }
+    // Aegis M7 1a: known secrets = every vault token + the token sent on this request (exact-value masked everywhere).
+    const known = knownSet(this.o.vault.values(), [sentToken]);
     if (ct.includes('text/event-stream')) {
-      // Playground SSE: model output only. Streamed through unchanged (headers filtered).
-      return new Response(res.body, { status: res.status, headers: outHeaders });
+      // Aegis M7 3: playground SSE carries model output, which can echo anything (prompt, upstream errors) -> sanitised
+      // line by line (headers filtered).
+      return new Response(res.body ? res.body.pipeThrough(sseSanitizer(known)) : null, { status: res.status, headers: outHeaders });
     }
 
     const buf = await readLimited(res, LIMITS.responseBody);
@@ -176,9 +181,12 @@ export class ServerProxy {
       const text = new TextDecoder().decode(buf);
       let parsed: unknown; let isJson = false;
       try { parsed = JSON.parse(text); isJson = true; } catch { /* not JSON */ }
-      if (!isJson) return new Response(maskText(text), { status: res.status, headers: outHeaders });
+      if (!isJson) return new Response(maskText(text, known), { status: res.status, headers: outHeaders });
       if (path === '/api/status' && method === 'GET') parsed = rewriteStatus(parsed);
-      const clean = sanitizeJson(parsed, this.o.vault);
+      // The RSA public key for password encryption must reach the renderer intact (masking breaks login); public by
+      // definition, so only exact known values are masked in it.
+      const pem = path === '/api/user/login/encryption-key' ? (_o: Record<string, unknown>, k: string, v: unknown) => k === 'public_key' && isPemPublicKey(v) : undefined;
+      const clean = sanitizeJson(parsed, this.o.vault, undefined, known, pem);
       return new Response(JSON.stringify(clean), { status: res.status, headers: { ...outHeaders, 'content-type': 'application/json; charset=utf-8' } });
     }
     return new Response(buf, { status: res.status, headers: outHeaders });
@@ -186,7 +194,7 @@ export class ServerProxy {
 }
 
 /** Non-JSON text bodies get the same secret-shape masking as JSON strings (M7: incl. raw 48-char keys, Bearer). */
-const maskText = (s: string): string => maskString(s);
+const maskText = (s: string, known: readonly string[]): string => maskString(replaceKnown(s, known));
 
 export function rewriteStatus(body: unknown): unknown {
   if (!body || typeof body !== 'object') return body;

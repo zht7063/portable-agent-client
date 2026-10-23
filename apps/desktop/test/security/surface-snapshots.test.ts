@@ -61,7 +61,7 @@ describe('proxy allowlist snapshot', () => {
   });
   it('server paths, masked-save paths', () => {
     expect(SERVER_PATH.source).toBe('^\\/(api|v1|mj|pg)(\\/|$)');
-    expect(ADMIN_SECRET_PATHS.source).toBe('^\\/api\\/(channel|option|custom-oauth-provider|deployments)(\\/|$)');
+    expect(ADMIN_SECRET_PATHS.source).toBe('^\\/api\\/(channel|option|custom-oauth-provider|deployments|user\\/setting)(\\/|$)');
     expect(USER_SAVE_PATHS.source).toBe('^\\/api\\/user(\\/self)?\\/?$');
   });
   it('relay endpoints that take API keys are never reachable from the renderer', () => {
