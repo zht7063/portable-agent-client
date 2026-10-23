@@ -1,0 +1,6 @@
+repo=https://github.com/QuantumNous/new-api
+path=web
+tag=v1.0.0-rc.46
+commit=7d8b91268dab69d7150f345c448b5e250163146a
+license=AGPL-3.0 (LICENSE copied from upstream repo root; upstream NOTICE kept as NOTICE.upstream)
+note=Pristine snapshot via `git archive <tag> web`. Do not edit; local changes live in patches/new-api-web/.
