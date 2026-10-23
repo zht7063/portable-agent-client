@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createHandlers, dispatch } from '../src/main/ipc/handlers';
+import { smokeAutoConfirmReveal } from '../src/main/smoke-gate';
 
 const mk = (confirm?: () => Promise<boolean>) => {
   const cfg = { serverUrl: null as string | null, insecureTransport: false, clipboardClearSeconds: 30 };
@@ -30,5 +31,16 @@ describe('Aegis M5: disabling clipboard auto-clear needs native confirmation', (
     const c = vi.fn(async () => false); const t = mk(c);
     expect(await dispatch(t.h, 'config:set', { clipboardClearSeconds: 60 })).toMatchObject({ ok: true });
     expect(c).not.toHaveBeenCalled();
+  });
+});
+
+describe('Aegis M5: Show-key smoke auto-confirm gate', () => {
+  const env = { PA_SMOKE: '1', PA_SMOKE_UI: '1' };
+  it('only in a smoke build, unpackaged, with PA_SMOKE=1 and PA_SMOKE_UI=1', () => {
+    expect(smokeAutoConfirmReveal({ smokeBuild: true, isPackaged: false, env })).toBe(true);
+    expect(smokeAutoConfirmReveal({ smokeBuild: true, isPackaged: true, env })).toBe(false);
+    expect(smokeAutoConfirmReveal({ smokeBuild: false, isPackaged: false, env })).toBe(false);
+    expect(smokeAutoConfirmReveal({ smokeBuild: true, isPackaged: false, env: { PA_SMOKE: '1' } })).toBe(false);
+    expect(smokeAutoConfirmReveal({ smokeBuild: true, isPackaged: false, env: {} })).toBe(false);
   });
 });

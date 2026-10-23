@@ -21,6 +21,7 @@ import { runKeysSmokeStep } from './smoke-keys';
 import { KeyService } from './key-service';
 import { serverChangeDialog } from './dialogs';
 import { buildAbout } from './about';
+import { smokeAutoConfirmReveal } from './smoke-gate';
 
 /*
  * Main process: isolated window showing the patched upstream new-api web build on the privileged app protocol
@@ -230,7 +231,7 @@ app.whenReady().then(async () => {
     },
     // M5 "Show key": confirm natively (Cancel default), then show the key in a native box; never in the renderer.
     confirmRevealKey: async (tokenId) => {
-      if ((__PA_SMOKE__ && process.env.PA_SMOKE === '1') && process.env.PA_SMOKE_UI === '1') return true; // dev UI smoke only (no user present)
+      if (__PA_SMOKE__ && smokeAutoConfirmReveal({ smokeBuild: __PA_SMOKE__, isPackaged: app.isPackaged, env: process.env })) return true; // dev UI smoke only (no user present)
       const opts = {
         type: 'warning' as const, buttons: ['取消', '显示 key'], defaultId: 0, cancelId: 0, noLink: true,
         title: PRODUCT.productName, message: `显示令牌 #${tokenId} 的完整 API key？`,
