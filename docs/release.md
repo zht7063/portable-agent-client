@@ -81,6 +81,26 @@ Rules for any future distribution (not done yet):
 2. Keep that commit reachable at `sourceUrl`, or ship/offer the matching source tarball alongside the binary.
 3. Network use (§13) is not applicable to the client itself, but the About page offers source to every user anyway.
 
+## TODO: official production packaging (blocked on a decision)
+
+**Pending yubai's decision on how the AGPL Corresponding Source is offered**: (a) a public source repository at
+`sourceUrl`, or (b) a written offer (`sourceOffer`) with the matching source tarball. Until then there is **no**
+production packaging command, and none may be run.
+
+Planned command (will only work once the decision is made):
+
+```bash
+# 1. Replace sourceUrl / sourceOffer in packages/core/src/product.config.json and remove both from "$placeholders".
+# 2. From a clean, tagged build commit, WITHOUT PA_LOCAL_BUILD:
+cd apps/desktop
+bun run build:prod && node scripts/stage.mjs \
+  && electron-builder --config electron-builder.config.cjs --linux AppImage deb --publish never
+# 3. scripts/source-tarball.sh <build-commit>; node scripts/scan-bundle.mjs
+```
+
+While the placeholder source links are unreplaced, `scripts/check-placeholders.cjs` makes this command fail by design.
+Still open alongside it: branding, signing/notarization, macOS/Windows hosts, publishing (see below).
+
 ## Not done (needs decisions)
 
 Branding (name, logo/icon, app ID), code signing/notarization, macOS/Windows packaging on real hosts, any publishing.
