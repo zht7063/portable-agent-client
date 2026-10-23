@@ -336,6 +336,23 @@ describe('3 SSE is sanitised line-wise across chunk boundaries', () => {
     for (let i = 0; i < 20 && budget.held > 0; i++) { gc(); await new Promise((r) => setTimeout(r, 10)); }
     expect(budget.held).toBe(0); expect(budget.streams).toBe(0);
   });
+  it('a dropped stream with a NON-EMPTY buffer and a pending idle timer is collectable: GC releases its bytes before the timeout', async () => {
+    const { setFlagsFromString } = await import('node:v8'); const { runInNewContext } = await import('node:vm');
+    setFlagsFromString('--expose-gc'); const gc = runInNewContext('gc') as () => void;
+    const budget = new SseBudget(1 << 20);
+    await (async () => {
+      const enc = new TextEncoder();
+      let c: ReadableStreamDefaultController<Uint8Array> | null = null;
+      const r = new ReadableStream<Uint8Array>({ start(x) { c = x; } }).pipeThrough(sseSanitizer([], { idleMs: 600_000 }, budget)).getReader();
+      void r.read().catch(() => undefined);
+      c!.enqueue(enc.encode('data: {"x":"' + 'g'.repeat(8000)));
+      await new Promise((x) => setTimeout(x, 0));
+      expect(budget.held).toBeGreaterThan(8000); expect(budget.streams).toBe(1);
+      c = null;
+    })();
+    for (let i = 0; i < 50 && budget.held > 0; i++) { gc(); await new Promise((x) => setTimeout(x, 10)); }
+    expect(budget.held).toBe(0); expect(budget.streams).toBe(0);
+  });
   it('known value (not key-shaped) masked in SSE', async () => {
     expect(await run(['data: tok=lowercase-known-', 'secret-value\n'], ['lowercase-known-secret-value'])).not.toContain('lowercase-known-secret-value');
   });

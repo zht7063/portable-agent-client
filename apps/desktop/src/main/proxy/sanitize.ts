@@ -519,22 +519,28 @@ class SseLineMeter {
  * forwarded immediately (latency = one line); a partial line is buffered. Buffered bytes are charged to the
  * process-wide SseBudget and released on line flush, stream end, error frames, exceptions and cancel/abort.
  */
+/** Idle-timer callback: module-level, references the stream only through a WeakRef. */
+function sseIdleFire(w: WeakRef<{ onIdle?: () => void }>): void { w.deref()?.onIdle?.(); }
+
 export function sseSanitizer(known: readonly string[], limits: Partial<SseLimits> = {}, budget: SseBudget = sseBudget): TransformStream<Uint8Array, Uint8Array> {
   const l: SseLimits = { maxLine: SSE_MAX_LINE, maxText: SSE_MAX_TEXT_LINE, window: SSE_IMAGE_WINDOW, idleMs: SSE_IDLE_MS, ...limits };
   const dec = new TextDecoder(); const enc = new TextEncoder();
   type Ctl = TransformStreamDefaultController<Uint8Array>;
   let ctlRef: Ctl | null = null;
   let parts: string[] = []; let meter = new SseLineMeter(l); let dead = false;
-  const me: SseHolder = { held: 0, kill: () => { if (!dead && ctlRef) fail(ctlRef, SSE_BUFFER_LIMIT_FRAME); } };
+  const me: SseHolder & { onIdle?: () => void } = { held: 0, kill: () => { if (!dead && ctlRef) fail(ctlRef, SSE_BUFFER_LIMIT_FRAME); } };
   let idle: ReturnType<typeof setTimeout> | null = null;
   const stopIdle = () => { if (idle) { clearTimeout(idle); idle = null; } };
   /** Armed only while a partial line is buffered: a stream dropped without cancel cannot pin its bytes forever. */
   const armIdle = () => {
     stopIdle();
     if (me.held <= 0) return;
-    idle = setTimeout(() => { idle = null; if (!dead && ctlRef) fail(ctlRef, SSE_IDLE_TIMEOUT_FRAME); else finish(); }, l.idleMs);
+    // The timer holds only a WeakRef to this stream's holder, so a dropped stream stays collectable while its
+    // timer is pending (the FinalizationRegistry fallback can then release its bytes before the timeout).
+    idle = setTimeout(sseIdleFire, l.idleMs, new WeakRef(me));
     (idle as { unref?: () => void }).unref?.();
   };
+  me.onIdle = () => { idle = null; if (!dead && ctlRef) fail(ctlRef, SSE_IDLE_TIMEOUT_FRAME); else finish(); };
   const clearLine = () => { budget.release(me, me.held); parts = []; };
   const finish = () => { dead = true; parts = []; stopIdle(); budget.unregister(me); };
   function fail(ctl: Ctl, frame: string) {
