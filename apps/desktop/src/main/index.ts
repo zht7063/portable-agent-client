@@ -177,6 +177,15 @@ app.whenReady().then(async () => {
       void srv.runCheck().then(reportServerCheck);
       return c;
     },
+    confirmServerChange: async (nextUrl, currentUrl) => {
+      const opts = {
+        type: 'warning' as const, buttons: ['取消', '切换到该服务器'], defaultId: 0, cancelId: 0, noLink: true,
+        title: PRODUCT.productName, message: '切换客户端连接的服务器？',
+        detail: `新服务器：${nextUrl}\n当前服务器：${currentUrl ?? '(未配置)'}\n\n登录密码、会话与 API key 将发送到新服务器。只有你信任该地址时才继续。当前会话会被清除。`,
+      };
+      const r = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
+      return r.response === 1;
+    },
     confirmForeignServer: async (profileOrigin, clientOrigin) => {
       const opts = {
         type: 'warning' as const, buttons: ['取消', '仍然使用该服务器'], defaultId: 0, cancelId: 0, noLink: true,

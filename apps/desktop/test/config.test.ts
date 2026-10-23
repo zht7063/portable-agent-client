@@ -121,11 +121,31 @@ describe('CoreHost', () => {
   it('invalid URL via IPC returns VALIDATION and changes nothing', async () => {
     const p = await tmp();
     const { h } = await host(p);
-    const handlers = createHandlers({ getCore: () => h.core, getConfig: () => h.config(), setConfig: (x) => h.set(x), harness: tmpHarnessHost().host.harness });
+    const handlers = createHandlers({ getCore: () => h.core, getConfig: () => h.config(), setConfig: (x) => h.set(x), harness: tmpHarnessHost().host.harness, confirmServerChange: async () => true });
     expect(await dispatch(handlers, 'config:set', { serverUrl: 'javascript:alert(1)' })).toMatchObject({ ok: false, error: { code: 'VALIDATION' } });
     expect(h.config().serverUrl).toBe(DEF);
     await expect(readFile(p, 'utf8')).rejects.toThrow();
     await dispatch(handlers, 'config:set', { serverUrl: 'https://b.example' });
     expect(await dispatch(handlers, 'config:get', {})).toEqual({ ok: true, data: { serverUrl: 'https://b.example', insecureTransport: false } });
+  });
+
+  it('Aegis #1: renderer server change needs native confirmation (absent or Cancel = refused, nothing saved)', async () => {
+    const p = await tmp();
+    const { h } = await host(p);
+    const asked: [string, string | null][] = [];
+    let answer = false;
+    const deps = { getCore: () => h.core, getConfig: () => h.config(), setConfig: (x: { serverUrl?: string }) => h.set(x), harness: tmpHarnessHost().host.harness };
+    const none = createHandlers(deps);
+    expect(await dispatch(none, 'config:set', { serverUrl: 'https://evil.example' })).toMatchObject({ ok: false, error: { code: 'CANCELLED' } });
+    const withDialog = createHandlers({ ...deps, confirmServerChange: async (n, c) => { asked.push([n, c]); return answer; } });
+    expect(await dispatch(withDialog, 'config:set', { serverUrl: 'https://evil.example/x' })).toMatchObject({ ok: false, error: { code: 'CANCELLED' } });
+    expect(asked).toEqual([['https://evil.example/x', DEF]]); // full URL shown
+    expect(h.config().serverUrl).toBe(DEF);
+    await expect(readFile(p, 'utf8')).rejects.toThrow();
+    // same server (normalised) -> no prompt
+    expect(await dispatch(withDialog, 'config:set', { serverUrl: DEF + '/' })).toMatchObject({ ok: true });
+    expect(asked.length).toBe(1);
+    answer = true;
+    expect(await dispatch(withDialog, 'config:set', { serverUrl: 'https://ok.example' })).toMatchObject({ ok: true, data: { serverUrl: 'https://ok.example' } });
   });
 });

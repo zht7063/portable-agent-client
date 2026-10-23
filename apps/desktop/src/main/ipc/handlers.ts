@@ -31,13 +31,31 @@ export interface HandlerDeps {
    * own. Absent = refuse. Never driven by the renderer.
    */
   confirmForeignServer?(profileOrigin: string, clientOrigin: string): Promise<boolean>;
+  /**
+   * Aegis (M3 review #1): the server URL decides where the main-only session, passwords and keys go, so a renderer
+   * request to change it needs a native main-process confirmation (full URL shown, Cancel default). Absent = refuse.
+   */
+  confirmServerChange?(nextUrl: string, currentUrl: string | null): Promise<boolean>;
 }
 
 /** Pure (no electron import) so it is unit-testable. */
-export function createHandlers({ getCore, getConfig, setConfig, harness, confirmForeignServer }: HandlerDeps): HandlerMap {
+export function createHandlers({ getCore, getConfig, setConfig, harness, confirmForeignServer, confirmServerChange }: HandlerDeps): HandlerMap {
   return {
     'config:get': async () => getConfig(),
-    'config:set': async (r) => setConfig(r),
+    'config:set': async (r) => {
+      if (r && typeof r === 'object' && 'serverUrl' in r) {
+        const next = r.serverUrl;
+        let nextUrl: string;
+        try { const u = new URL(String(next)); if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new Error('scheme'); nextUrl = u.href; }
+        catch { throw new PaException({ code: 'VALIDATION', message: 'Invalid server URL' }); }
+        const cur = getConfig().serverUrl;
+        const same = (() => { try { return !!cur && new URL(cur).href === nextUrl; } catch { return false; } })();
+        if (!same && !(await confirmServerChange?.(nextUrl, cur))) {
+          throw new PaException({ code: 'CANCELLED', message: 'Server change not confirmed; not saved' });
+        }
+      }
+      return setConfig(r);
+    },
     'harness:detect': async () => ({ harnesses: await harness.detect(), registered: harness.registered() }),
     'harness:plan': (r) => harness.plan(r.id, r.profileId),
     'harness:apply': async (r) => {

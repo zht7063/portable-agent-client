@@ -77,3 +77,10 @@ localStorage holds UI preferences, the public `/api/status` copy, the affiliate 
 `{type, sid}` (session id, not a credential — useless without the main-held refresh cookie). The session-hint cookie
 being invisible to the renderer only skips the optimistic boot refresh; route guards still call
 `/api/user/auth/refresh` (upstream `resolveAuthentication`), so sessions resume after a restart.
+
+## Server URL changes (Aegis review)
+
+The configured origin decides where passwords, the session and API keys go. `config:set { serverUrl }` from the
+renderer therefore requires a native main-process dialog (`confirmServerChange`: full new + current URL shown, Cancel
+is the default; no dialog wired = refused). Only `http:`/`https:` URLs are accepted; re-saving the same URL does not prompt.
+`PAC_SERVER_URL` (main-owned, dev) still seeds an unconfigured client.
