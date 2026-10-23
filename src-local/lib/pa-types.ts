@@ -91,7 +91,7 @@ export interface PaBridge {
   keys: {
     list(): P<KeysListRes>
     store(r: { tokenId: number; harness: HarnessId; profileId?: string }): P<StoredKeyInfo>
-    copy(r: { tokenId: number }): P<KeysCopyRes>
+    copy(r: { tokenId: number; curl?: { endpoint: string; model: string } }): P<KeysCopyRes>
     remove(r: { harness: HarnessId; profileId?: string }): P<{ removed: boolean }>
     show(r: { tokenId: number }): P<KeysShowRes>
   }

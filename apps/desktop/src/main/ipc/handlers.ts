@@ -61,7 +61,7 @@ export interface KeyServiceLike {
   fetchKey(tokenId: number): Promise<string>;
   store(tokenId: number, harness: HarnessId, profileId?: string): Promise<StoredKeyInfo>;
   list(): Promise<KeysListRes>;
-  copy(tokenId: number): Promise<KeysCopyRes>;
+  copy(tokenId: number, curl?: { endpoint: string; model: string }): Promise<KeysCopyRes>;
   remove(harness: HarnessId, profileId?: string): Promise<{ removed: boolean }>;
 }
 
@@ -137,7 +137,7 @@ export function createHandlers({ getCore, getConfig, setConfig, harness, confirm
     },
     'keys:list': async () => k().list(),
     'keys:store': async (r) => k().store(r?.tokenId, r?.harness, r?.profileId),
-    'keys:copy': async (r) => k().copy(r?.tokenId),
+    'keys:copy': async (r) => k().copy(r?.tokenId, r?.curl),
     'keys:delete': async (r) => k().remove(r?.harness, r?.profileId),
     'keys:show': async (r): Promise<KeysShowRes> => {
       const tokenId = r?.tokenId;

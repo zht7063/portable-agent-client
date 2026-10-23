@@ -32,6 +32,29 @@ type Meta = Record<string, Omit<StoredKeyInfo, 'present'>>; // account -> info
 const toSk = (raw: string) => (raw.startsWith('sk-') ? raw : `sk-${raw}`);
 const validId = (id: unknown): id is number => typeof id === 'number' && Number.isSafeInteger(id) && id > 0;
 
+/**
+ * Builds the dashboard's "Copy curl" text (same shape as upstream's buildCurlCommand) in main. Inputs come from the
+ * renderer and end up in a shell, so they are validated strictly: endpoint must be a plain http(s) URL without
+ * credentials or shell-significant characters; model a conservative charset.
+ */
+export function buildCurl(endpoint: unknown, model: unknown, key: string): string {
+  const bad = () => new PaException({ code: 'VALIDATION', message: 'Invalid curl endpoint/model' });
+  if (typeof endpoint !== 'string' || typeof model !== 'string' || endpoint.length > 2048) throw bad();
+  let u: URL;
+  try { u = new URL(endpoint); } catch { throw bad(); }
+  if ((u.protocol !== 'https:' && u.protocol !== 'http:') || u.username || u.password) throw bad();
+  const href = u.href;
+  // Single-quoted in the output, so only a quote could break out; allow RFC 3986 characters minus ' (and no $ or `).
+  if (!/^[A-Za-z0-9\-._~:/?#[\]@!&()*+,;=%]+$/.test(href)) throw bad();
+  if (!/^[A-Za-z0-9._:/@+-]{1,128}$/.test(model)) throw bad();
+  return [
+    `curl '${href}' \\`,
+    '  -H "Content-Type: application/json" \\',
+    `  -H "Authorization: Bearer ${key}" \\`,
+    `  -d '{"model":"${model}","messages":[{"role":"user","content":"Say hello in one sentence."}]}'`,
+  ].join('\n');
+}
+
 const digest = (s: string) => createHash('sha256').update(s).digest('hex');
 
 export class KeyService {
@@ -105,10 +128,13 @@ export class KeyService {
    * Full key goes main -> clipboard only. Aegis N1 (plan §2): auto-clear after `clipboardClearSeconds` (default 30)
    * and on quit, but only if the clipboard still holds that key (compared by hash in main; never logged).
    */
-  async copy(tokenId: number): Promise<KeysCopyRes> {
+  async copy(tokenId: number, curl?: { endpoint: string; model: string }): Promise<KeysCopyRes> {
+    if (curl !== undefined && (curl === null || typeof curl !== 'object')) throw new PaException({ code: 'VALIDATION', message: 'Invalid curl endpoint/model' });
+    if (curl) buildCurl(curl.endpoint, curl.model, 'sk-x'); // validate before fetching the key
     const key = await this.fetchKey(tokenId);
-    this.o.clipboard.writeText(key);
-    this.clipHash = digest(key);
+    const text = curl ? buildCurl(curl.endpoint, curl.model, key) : key;
+    this.o.clipboard.writeText(text);
+    this.clipHash = digest(text);
     if (this.clipTimer) clearTimeout(this.clipTimer);
     this.clipTimer = null;
     const secs = this.o.clipboardClearSeconds?.() ?? 30;

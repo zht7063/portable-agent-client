@@ -109,6 +109,29 @@ describe('M4 token -> keychain (main only)', () => {
     expect(t.clip.text).toBe(FULL);
     expect(r).toEqual({ copied: true, tokenId: 7, maskedKey: maskSecret(FULL) });
   });
+  it('copy with curl: main builds the curl with the real key; renderer gets masked info; auto-clear covers it', async () => {
+    const t = setup(); await t.ready;
+    const r = await t.keys.copy(7, { endpoint: 'https://api.example.com/v1/chat/completions', model: 'gpt-4.1-mini' });
+    expect(t.clip.text).toContain(`Authorization: Bearer ${FULL}`);
+    expect(t.clip.text.startsWith("curl 'https://api.example.com/v1/chat/completions' \\")).toBe(true);
+    expect(t.clip.text).toContain('"model":"gpt-4.1-mini"');
+    expect(r).toEqual({ copied: true, tokenId: 7, maskedKey: maskSecret(FULL) });
+    expect(JSON.stringify(r)).not.toContain(RAW);
+    expect(t.keys.clearClipboardIfOurs()).toBe(true);
+  });
+  it('copy with curl rejects shell-breaking endpoint/model before fetching the key', async () => {
+    const t = setup(); await t.ready;
+    const bad = [
+      { endpoint: "https://x.example/'; rm -rf ~; '", model: 'm' },
+      { endpoint: 'https://x.example/$(id)', model: 'm' },
+      { endpoint: 'file:///etc/passwd', model: 'm' },
+      { endpoint: 'https://u:p@x.example/', model: 'm' },
+      { endpoint: 'https://x.example/v1', model: 'm"; id; "' },
+      { endpoint: 'https://x.example/v1', model: '' },
+    ];
+    for (const c of bad) await expect(t.keys.copy(7, c)).rejects.toMatchObject({ error: { code: 'VALIDATION' } });
+    expect(t.clip.writeText).not.toHaveBeenCalled();
+  });
   it('harness apply (command mode) provisions the keychain via the main session (ensure), once per token', async () => {
     const t = setup(); await t.ready;
     const root = mkdtempSync(join(tmpdir(), 'pa-keys-h-'));

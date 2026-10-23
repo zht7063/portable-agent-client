@@ -45,7 +45,9 @@ export interface KeysListRes {
   entries: StoredKeyInfo[];
 }
 export interface KeysStoreReq { tokenId: number; harness: HarnessId; /** Only 'default' in M4 (no multi-profile). */ profileId?: string }
-export interface KeysCopyReq { tokenId: number }
+/** Optional `curl`: main copies a ready-to-run curl (dashboard "Copy curl") with the real key instead of the bare key.
+ *  endpoint/model are validated strictly in main (http(s) URL / model charset) since the result is pasted into a shell. */
+export interface KeysCopyReq { tokenId: number; curl?: { endpoint: string; model: string } }
 export interface KeysCopyRes { copied: true; tokenId: number; maskedKey: string }
 export interface KeysDeleteReq { harness: HarnessId; profileId?: string }
 /** M5: "Show key". Main asks for confirmation in a native dialog (Cancel default) and then shows the full key in a

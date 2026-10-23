@@ -31,3 +31,14 @@ export async function paStoreKey(tokenId: number, harness: HarnessId, t: (s: str
   } catch (e) { toast.error(errText(e)) }
 }
 
+
+/** Dashboard "Copy curl": main fetches the key, builds the curl command and writes it to the clipboard (auto-clear). */
+export async function paCopyCurl(tokenId: number, endpoint: string, model: string, t: (s: string, o?: Record<string, unknown>) => string): Promise<boolean> {
+  try {
+    await unwrap(pa().keys.copy({ tokenId, curl: { endpoint, model } }))
+    const c = await unwrap(pa().config.get()).catch(() => null)
+    const n = c?.clipboardClearSeconds ?? 0
+    toast.success(n > 0 ? t('Copied. The clipboard is cleared in {{n}}s.', { n }) : t('Copied'))
+    return true
+  } catch (e) { toast.error(errText(e)); return false }
+}
