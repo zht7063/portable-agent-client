@@ -1,0 +1,10 @@
+{
+  "$comment": "Known non-secret strings matched by scan-bundle's bare 48-char high-entropy rule. sha256 of the matched string + justification (string never stored). Inspected by hand before adding.",
+  "entries": [
+    {
+      "sha256": "a5979044b51b95dbe9c35b2f3fb0701ba9deb44b64e8fdb754635582dc255349",
+      "where": "dist/renderer/static/js/async/24151.*.js (also inside release app.asar)",
+      "reason": "SVG path data (attr d of a 512x512 react-icons icon: run of absolute H/V/z commands like 'H128V512H0V352...'), not a secret"
+    }
+  ]
+}

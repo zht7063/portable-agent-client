@@ -12,6 +12,7 @@
 // Upstream renderer code legitimately contains words like "token"; only concrete secret shapes are flagged.
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const SECRET = [
@@ -23,6 +24,29 @@ const SECRET = [
   ['Bearer literal', /Bearer [A-Za-z0-9._-]{32,}/],
   ['bare 48-char key', /(?:[Kk]ey|KEY|[Tt]oken|TOKEN|[Ss]ecret|SECRET|[Aa]uthorization|AUTHORIZATION|[Cc]redential|CREDENTIAL)["']?\s*[:=]\s*["'`](?=[A-Za-z0-9]{0,47}[a-z])(?=[A-Za-z0-9]{0,47}[A-Z])(?=[A-Za-z0-9]{0,47}[0-9])[A-Za-z0-9]{48}["'`]/],
 ];
+/*
+ * Bare 48-char high-entropy strings without keyword context. Same heuristic as looksLikeBareKey in
+ * apps/desktop/src/main/proxy/sanitize.ts: upper + lower + digit, not hex/UUID/single-case, not identifier+number,
+ * >= 6 switches between lower/upper/digit. Known non-secrets are suppressed via scripts/scan-bundle-allowlist.json
+ * (sha256 of the string + justification; the string itself is never stored or printed).
+ */
+const BARE48 = /(?<![A-Za-z0-9_+/-])[A-Za-z0-9]{48}(?![A-Za-z0-9_+/=-])/g;
+export function highEntropy(s) {
+  if (!/[a-z]/.test(s) || !/[A-Z]/.test(s) || !/[0-9]/.test(s)) return false;
+  if (/^[0-9a-f]+$/i.test(s) || /^[0-9a-z_-]+$/.test(s) || /^[0-9A-Z_-]+$/.test(s) || /^[A-Za-z_-]+[0-9]*$/.test(s)) return false;
+  const cls = (c) => (/[a-z]/.test(c) ? 0 : /[A-Z]/.test(c) ? 1 : 2);
+  let n = 0;
+  for (let i = 1; i < s.length; i++) if (cls(s[i]) !== cls(s[i - 1])) n++;
+  return n >= 6;
+}
+const sha = (s) => createHash('sha256').update(s).digest('hex');
+const ALLOW_FILE = join(ROOT, 'scripts/scan-bundle-allowlist.json');
+export function loadAllowlist(file = process.env.PA_SCAN_ALLOWLIST || ALLOW_FILE) {
+  if (!existsSync(file)) return new Set();
+  const list = JSON.parse(readFileSync(file, 'utf8')).entries ?? [];
+  for (const e of list) if (!/^[0-9a-f]{64}$/.test(e.sha256) || !e.reason) throw new Error(`allowlist entry needs sha256 + reason: ${JSON.stringify(e)}`);
+  return new Set(list.map((e) => e.sha256));
+}
 const MAIN_ONLY = [
   ['nodeIntegration: true', /nodeIntegration\s*:\s*(?:true|!0)/],
   ['contextIsolation: false', /contextIsolation\s*:\s*(?:false|!1)/],
@@ -62,7 +86,12 @@ export function* asarEntries(file) {
   yield* rec(header, '');
 }
 
-function check(findings, label, rel, text) {
+function check(findings, label, rel, text, allow) {
+  for (const m of text.matchAll(BARE48)) {
+    if (!highEntropy(m[0])) continue;
+    const h = sha(m[0]);
+    if (!allow.has(h)) findings.push({ file: label, rule: 'bare 48-char high-entropy string', at: m.index, sha256: h });
+  }
   const parts = rel.split(/[/\\]/);
   // main/preload rules apply to our own code only (not the renderer, not third-party node_modules).
   const isMain = !parts.includes('renderer') && !parts.includes('node_modules');
@@ -72,7 +101,7 @@ function check(findings, label, rel, text) {
   }
 }
 
-export function scan(dirs) {
+export function scan(dirs, allow = loadAllowlist()) {
   const findings = [];
   for (const dir of dirs) {
     for (const f of walk(dir)) {
@@ -80,10 +109,10 @@ export function scan(dirs) {
       if (f.endsWith('.asar')) {
         let entries;
         try { entries = [...asarEntries(f)]; } catch { findings.push({ file: relative(ROOT, f), rule: 'unreadable asar', at: 0 }); continue; }
-        for (const [p, data] of entries) if (EXT.test(p)) check(findings, `${relative(ROOT, f)}:${p}`, `${rel}/${p}`, data.toString('utf8'));
+        for (const [p, data] of entries) if (EXT.test(p)) check(findings, `${relative(ROOT, f)}:${p}`, `${rel}/${p}`, data.toString('utf8'), allow);
         continue;
       }
-      check(findings, relative(ROOT, f), rel, readFileSync(f, 'utf8'));
+      check(findings, relative(ROOT, f), rel, readFileSync(f, 'utf8'), allow);
     }
   }
   return findings;
@@ -95,8 +124,8 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename
     : [join(ROOT, 'apps/desktop/dist'), ...(existsSync(rel) ? [rel] : [])];
   for (const d of dirs) { try { statSync(d); } catch { console.error(`scan-bundle: ${d} does not exist (build first)`); process.exit(2); } }
   const found = scan(dirs);
-  // Never print the match itself (it may be a secret): file, rule and offset only.
-  for (const x of found) console.error(`scan-bundle: ${x.rule} in ${x.file} @${x.at}`);
+  // Never print the match itself (it may be a secret): file, rule, offset (and sha256 for allowlisting) only.
+  for (const x of found) console.error(`scan-bundle: ${x.rule} in ${x.file} @${x.at}${x.sha256 ? ` sha256=${x.sha256}` : ''}`);
   if (found.length) process.exit(1);
   console.log(`scan-bundle: clean (${dirs.map((d) => relative(ROOT, d) || '.').join(', ')})`);
 }
