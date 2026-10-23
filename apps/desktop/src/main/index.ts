@@ -187,6 +187,7 @@ app.whenReady().then(async () => {
     keyring, api: (m, p) => srv.mainApi(m, p), clipboard: { writeText: (t) => clipboard.writeText(t), readText: () => clipboard.readText(), clear: () => clipboard.clear() },
     clipboardClearSeconds: () => host.config().clipboardClearSeconds,
     metaFile: join(userData, 'keychain-entries.json'),
+    serverOrigin: () => srv.serverOrigin,
   });
   // Aegis N1: on quit, clear the clipboard if it still holds a key we copied.
   app.on('before-quit', () => { keys.clearClipboardIfOurs(); });

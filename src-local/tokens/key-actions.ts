@@ -35,7 +35,10 @@ export async function paStoreKey(tokenId: number, harness: HarnessId, t: (s: str
 /** Dashboard "Copy curl": main fetches the key, builds the curl command and writes it to the clipboard (auto-clear). */
 export async function paCopyCurl(tokenId: number, endpoint: string, model: string, t: (s: string, o?: Record<string, unknown>) => string): Promise<boolean> {
   try {
-    await unwrap(pa().keys.copy({ tokenId, curl: { endpoint, model } }))
+    // Only the path is sent: main joins it to the configured server origin (the renderer cannot choose the host).
+    let path: string
+    try { path = new URL(endpoint, 'http://placeholder.invalid').pathname } catch { path = '' }
+    await unwrap(pa().keys.copy({ tokenId, curl: { path, model } }))
     const c = await unwrap(pa().config.get()).catch(() => null)
     const n = c?.clipboardClearSeconds ?? 0
     toast.success(n > 0 ? t('Copied. The clipboard is cleared in {{n}}s.', { n }) : t('Copied'))
