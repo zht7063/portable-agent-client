@@ -36,11 +36,13 @@ const validId = (id: unknown): id is number => typeof id === 'number' && Number.
 
 /**
  * Builds the dashboard's "Copy curl" text (same shape as upstream's buildCurlCommand) in main. The text ends up in a
- * shell, so (Aegis M5 MUST 1):
+ * shell, so (Aegis M5 MUST 1/2):
  *  - the renderer supplies only a path; main joins it to the configured server origin (it cannot pick the host);
  *  - path and model use conservative charsets; every interpolated value is single-quoted;
+ *  - the key must match sk-[A-Za-z0-9_-]+ (refused otherwise) and is single-quoted too.
  */
 export const CURL_PATH = /^\/[A-Za-z0-9._~/-]{1,255}$/;
+export const CURL_KEY = /^sk-[A-Za-z0-9_-]{16,128}$/;
 export function buildCurl(origin: string | null, path: unknown, model: unknown, key: string): string {
   const bad = () => new PaException({ code: 'VALIDATION', message: 'Invalid curl endpoint/model' });
   if (typeof path !== 'string' || typeof model !== 'string') throw bad();
@@ -52,10 +54,11 @@ export function buildCurl(origin: string | null, path: unknown, model: unknown, 
   if ((o.protocol !== 'https:' && o.protocol !== 'http:') || o.username || o.password) throw bad();
   const href = new URL(path, o.origin).href;
   if (new URL(href).origin !== o.origin || !/^[A-Za-z0-9\-._~:/[\]%]+$/.test(href)) throw bad();
+  if (!CURL_KEY.test(key)) throw new PaException({ code: 'VALIDATION', message: 'Key has unexpected characters; not copied as curl' });
   return [
     `curl '${href}' \\`,
-    '  -H "Content-Type: application/json" \\',
-    `  -H "Authorization: Bearer ${key}" \\`,
+    "  -H 'Content-Type: application/json' \\",
+    `  -H 'Authorization: Bearer ${key}' \\`,
     `  -d '{"model":"${model}","messages":[{"role":"user","content":"Say hello in one sentence."}]}'`,
   ].join('\n');
 }

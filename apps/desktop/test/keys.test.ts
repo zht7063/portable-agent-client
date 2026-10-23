@@ -109,13 +109,13 @@ describe('M4 token -> keychain (main only)', () => {
     expect(t.clip.text).toBe(FULL);
     expect(r).toEqual({ copied: true, tokenId: 7, maskedKey: maskSecret(FULL) });
   });
-  it('copy with curl: main builds the curl against the configured origin with the real key', async () => {
+  it('copy with curl: main builds the curl against the configured origin with the real key, all single-quoted', async () => {
     const t = setup(); await t.ready;
     const r = await t.keys.copy(7, { path: '/v1/chat/completions', model: 'gpt-4.1-mini' });
     expect(t.clip.text.split('\n')).toEqual([
       `curl '${ORIGIN}/v1/chat/completions' \\`,
-      '  -H "Content-Type: application/json" \\',
-      `  -H "Authorization: Bearer ${FULL}" \\`,
+      "  -H 'Content-Type: application/json' \\",
+      `  -H 'Authorization: Bearer ${FULL}' \\`,
       `  -d '{"model":"gpt-4.1-mini","messages":[{"role":"user","content":"Say hello in one sentence."}]}'`,
     ]);
     expect(r).toEqual({ copied: true, tokenId: 7, maskedKey: maskSecret(FULL) });
@@ -137,6 +137,10 @@ describe('M4 token -> keychain (main only)', () => {
   it('buildCurl: origin comes only from main; no server configured -> refused', () => {
     expect(buildCurl('https://na.example.test/base', '/v1/chat/completions', 'm', FULL)).toContain("curl 'https://na.example.test/v1/chat/completions'");
     expect(() => buildCurl(null, '/v1/chat/completions', 'm', FULL)).toThrow(/No server/);
+  });
+  it('Aegis MUST 2: keys outside sk-[A-Za-z0-9_-] are refused, never interpolated', () => {
+    for (const k of ["sk-abc'def" + 'x'.repeat(20), 'sk-' + 'a'.repeat(20) + '$(id)', 'sk-' + 'a'.repeat(20) + ' b', 'nosk' + 'a'.repeat(30), 'sk-short', 'sk-' + 'a'.repeat(20) + '\n'])
+      expect(() => buildCurl(ORIGIN, '/v1/chat/completions', 'm', k)).toThrow(/unexpected characters/);
   });
   it('harness apply (command mode) provisions the keychain via the main session (ensure), once per token', async () => {
     const t = setup(); await t.ready;
