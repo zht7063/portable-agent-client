@@ -325,7 +325,7 @@ describe('Aegis #3/#4: unreachable retry, pre-login re-check, trailing slashes',
     for (const p of ['/api/user/login/', '/api/user/login//', '/api/user/login/2fa/', '/api/user/register/', '/api/user/auth/refresh/']) {
       const r = await req('POST', p, { 'content-type': 'application/json' }, '{}');
       expect(r.status, p).toBe(403);
-      expect((await r.json()).code).toBe('LOGIN_BLOCKED');
+      expect(((await r.json()) as { code: string }).code).toBe('LOGIN_BLOCKED');
     }
     expect(calls).toHaveLength(0);
   });

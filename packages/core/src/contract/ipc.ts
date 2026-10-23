@@ -61,8 +61,35 @@ export interface IpcEventMap {
 export type EventChannel = keyof IpcEventMap;
 export const EVENT_CHANNELS = ['session:changed'] as const satisfies readonly EventChannel[];
 
-/** Shape exposed on window.pa by the preload script. */
+type Call<C extends InvokeChannel> = (req: InvokeReq<C>) => Promise<InvokeRes<C>>;
+type Call0<C extends InvokeChannel> = () => Promise<InvokeRes<C>>;
+
+/**
+ * Shape exposed on window.pa by the preload script (Aegis review #5): named functions, each bound to exactly one
+ * channel inside the preload. There is no generic invoke(channel) / on(channel) passthrough.
+ */
 export interface PaBridge {
-  invoke<C extends InvokeChannel>(channel: C, req: InvokeReq<C>): Promise<InvokeRes<C>>;
-  on<E extends EventChannel>(channel: E, listener: (payload: IpcEventMap[E]) => void): () => void;
+  config: { get: Call0<'config:get'>; set: Call<'config:set'> };
+  harness: {
+    detect: Call0<'harness:detect'>;
+    plan: Call<'harness:plan'>;
+    apply: Call<'harness:apply'>;
+    rollback: Call<'harness:rollback'>;
+    history: Call<'harness:history'>;
+    rollbackPreview: Call<'harness:rollback:preview'>;
+    keyringStatus: Call<'harness:keyring:status'>;
+    listProfiles: Call0<'harness:profile:list'>;
+    upsertProfile: Call<'harness:profile:upsert'>;
+    probeChannel: Call<'harness:channel:probe'>;
+  };
+  onSessionChanged(listener: (payload: IpcEventMap['session:changed']) => void): () => void;
 }
+
+/** Bridge method -> channel (single source for the preload and its test). */
+export const BRIDGE_CHANNELS = {
+  'config.get': 'config:get', 'config.set': 'config:set',
+  'harness.detect': 'harness:detect', 'harness.plan': 'harness:plan', 'harness.apply': 'harness:apply',
+  'harness.rollback': 'harness:rollback', 'harness.history': 'harness:history', 'harness.rollbackPreview': 'harness:rollback:preview',
+  'harness.keyringStatus': 'harness:keyring:status', 'harness.listProfiles': 'harness:profile:list',
+  'harness.upsertProfile': 'harness:profile:upsert', 'harness.probeChannel': 'harness:channel:probe',
+} as const satisfies Record<string, InvokeChannel>;

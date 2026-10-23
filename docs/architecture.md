@@ -1,7 +1,7 @@
 # Architecture (state after M1)
 
 ```
-apps/desktop        Electron main + preload (contextIsolation, sandbox, no node in renderer); renderer = patched new-api web build served on the privileged `<scheme>://app/` protocol (`src/main/app-protocol.ts`, strict CSP); `/api/*` + `/pg/*` go to the main-process proxy (`src/main/proxy/`, M3, see docs/proxy.md)
+apps/desktop        Electron main + preload (contextIsolation, sandbox, no node in renderer; preload exposes named functions only, `src/preload/bridge.ts`, no generic invoke/channel passthrough); renderer = patched new-api web build served on the privileged `<scheme>://app/` protocol (`src/main/app-protocol.ts`, strict CSP); `/api/*` + `/pg/*` go to the main-process proxy (`src/main/proxy/`, M3, see docs/proxy.md)
   └─ uses @pac/core, @pac/harness, @pac/keychain, @pac/pa-key
 packages/core       contract/IPC, http (origin-pinned), session base, keys.secret, fs layer, product config
 packages/harness    Pi / Claude Code / Codex adapters (plan → apply → rollback, snapshots, ownership)

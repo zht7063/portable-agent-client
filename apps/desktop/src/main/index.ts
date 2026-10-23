@@ -101,7 +101,7 @@ function runSmoke(w: BrowserWindow) {
         let remoteBlocked = false; try { await fetch('https://example.com/'); } catch { remoteBlocked = true; }
         return {
           url: location.href,
-          bridge: typeof window.pa?.invoke === 'function' && typeof window.pa?.on === 'function',
+          bridge: typeof window.pa?.config?.get === 'function' && typeof window.pa?.onSessionChanged === 'function' && !('invoke' in window.pa),
           noNode: typeof require === 'undefined' && typeof process === 'undefined',
           rendered: (document.getElementById('root')?.childElementCount ?? 0) > 0,
           title: document.title,
@@ -109,7 +109,7 @@ function runSmoke(w: BrowserWindow) {
           csp: page.headers.get('content-security-policy'),
           inlineScripts: [...document.scripts].filter((x) => !x.src).length,
           evalBlocked, remoteBlocked,
-          config: (await window.pa.invoke('config:get', {})).ok,
+          config: (await window.pa.config.get()).ok,
         };
       })()`).then(async (r: Record<string, unknown>) => {
         clearTimeout(timer);
