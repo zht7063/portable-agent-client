@@ -20,6 +20,7 @@ import {
   type KeysListRes,
   type KeysShowRes,
   type ServerStatusRes,
+  type AppAboutRes,
   type StoredKeyInfo,
 } from '@pac/core';
 import { createModels, type Harness } from '@pac/harness';
@@ -54,6 +55,8 @@ export interface HandlerDeps {
   showKey?(fullKey: string, tokenId: number): Promise<void>;
   /** M5: server settings page status (public /api/status check cached in main). */
   serverStatus?(recheck: boolean): Promise<ServerStatusRes>;
+  /** M6: About & licenses data (static, non-secret). */
+  about?(): AppAboutRes;
 }
 
 /** Structural view of KeyService (main-only; full keys never leave it except to keychain/clipboard/probe). */
@@ -66,7 +69,7 @@ export interface KeyServiceLike {
 }
 
 /** Pure (no electron import) so it is unit-testable. */
-export function createHandlers({ getCore, getConfig, setConfig, harness, confirmForeignServer, confirmServerChange, keys, confirmRevealKey, showKey, serverStatus }: HandlerDeps): HandlerMap {
+export function createHandlers({ getCore, getConfig, setConfig, harness, confirmForeignServer, confirmServerChange, keys, confirmRevealKey, showKey, serverStatus, about }: HandlerDeps): HandlerMap {
   const k = () => { if (!keys) throw new PaException({ code: 'VALIDATION', message: 'Key storage is not available' }); return keys; };
   return {
     'config:get': async () => getConfig(),
@@ -152,6 +155,10 @@ export function createHandlers({ getCore, getConfig, setConfig, harness, confirm
     'server:status': async (r) => {
       if (!serverStatus) throw new PaException({ code: 'VALIDATION', message: 'Server status is not available' });
       return serverStatus(r?.recheck === true);
+    },
+    'app:about': async () => {
+      if (!about) throw new PaException({ code: 'VALIDATION', message: 'About is not available' });
+      return about();
     },
   };
 }

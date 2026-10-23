@@ -4,6 +4,7 @@
 //   node scripts/build-main.mjs --prod   -> production build: __PA_SMOKE__=false, smoke code folded away and
 //                                           tree-shaken; the build fails if any smoke marker survives.
 import { build } from 'esbuild';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,9 +12,11 @@ import { fileURLToPath } from 'node:url';
 const app = join(dirname(fileURLToPath(import.meta.url)), '..');
 const prod = process.argv.includes('--prod') || process.env.PA_BUILD === 'production';
 const out = process.env.PA_OUT_DIR ?? join(app, 'dist'); // tests build into a temp dir
+const git = (...a) => { try { return execFileSync('git', a, { cwd: app, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return ''; } };
+const commit = process.env.PA_BUILD_COMMIT ?? ((git('rev-parse', 'HEAD') || 'unknown') + (git('status', '--porcelain') ? '-dirty' : ''));
 const common = {
   bundle: true, platform: 'node', format: 'cjs', conditions: ['source'], mainFields: ['module', 'main'], logLevel: 'error',
-  define: { __PA_SMOKE__: prod ? 'false' : 'true' }, minifySyntax: prod, absWorkingDir: app,
+  define: { __PA_SMOKE__: prod ? 'false' : 'true', __PA_BUILD_COMMIT__: JSON.stringify(commit) }, minifySyntax: prod, absWorkingDir: app,
 };
 await build({ ...common, entryPoints: ['src/main/index.ts'], external: ['electron'], outfile: join(out, 'main/index.cjs') });
 await build({ ...common, entryPoints: ['src/preload/index.ts'], external: ['electron'], outfile: join(out, 'preload/index.cjs') });
@@ -23,4 +26,4 @@ if (prod) {
     .filter((f) => /PA_SMOKE|runLoginSmoke|runUiSmokeStep|runKeysSmokeStep|smoke/i.test(readFileSync(join(out, f), 'utf8')));
   if (bad.length) { console.error(`production build still contains smoke code: ${bad.join(', ')}`); process.exit(1); }
 }
-console.log(`built main/preload/key-helper (${prod ? 'production, no smoke code' : 'dev, smoke hooks included'})`);
+console.log(`built main/preload/key-helper @ ${commit} (${prod ? 'production, no smoke code' : 'dev, smoke hooks included'})`);

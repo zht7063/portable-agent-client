@@ -53,6 +53,21 @@ export interface KeysDeleteReq { harness: HarnessId; profileId?: string }
 /** M5: "Show key". Main asks for confirmation in a native dialog (Cancel default) and then shows the full key in a
  *  native message box. The renderer only learns whether it was shown, plus the masked key. */
 export interface KeysShowReq { tokenId: number }
+/** M6: About & licenses (no secrets). */
+export interface AppAboutRes {
+  productName: string;
+  version: string;
+  license: 'AGPL-3.0-only';
+  /** Corresponding Source (AGPL §6/§13): URL + offer text, and the exact build commit it must match. */
+  sourceUrl: string | null;
+  sourceOffer: string | null;
+  buildCommit: string;
+  upstream: { name: string; author: string; repo: string; license: string; tag: string; commit: string };
+  /** Upstream §7(b) attribution, verbatim. */
+  attribution: string;
+  /** Same-origin paths of the bundled license texts (served from the app's renderer root). */
+  licenseFiles: { title: string; path: string }[];
+}
 export interface KeysShowRes { shown: boolean; tokenId: number; maskedKey?: string }
 
 /** M5: server settings page. Public /api/status check result as cached in main (no credentials). */
@@ -110,6 +125,8 @@ export interface IpcInvokeMap {
   'keys:show': { req: KeysShowReq; res: KeysShowRes };
   /** M5: server URL / version / compat status for the server settings page. */
   'server:status': { req: ServerStatusReq; res: ServerStatusRes };
+  /** M6: About & licenses page data (AGPL notice, attribution, source offer). */
+  'app:about': { req: Empty; res: AppAboutRes };
 }
 export type InvokeChannel = keyof IpcInvokeMap;
 export type InvokeReq<C extends InvokeChannel> = IpcInvokeMap[C]['req'];
@@ -124,7 +141,7 @@ export const CREDENTIAL_EXCEPTION_CHANNELS = [] as const satisfies readonly Invo
 export const INVOKE_CHANNELS = [
   'config:get', 'config:set',
   'harness:detect', 'harness:plan', 'harness:apply', 'harness:rollback', 'harness:history', 'harness:rollback:preview', 'harness:keyring:status', 'harness:profile:list', 'harness:profile:upsert', 'harness:channel:probe',
-  'keys:list', 'keys:store', 'keys:copy', 'keys:delete', 'keys:show', 'server:status',
+  'keys:list', 'keys:store', 'keys:copy', 'keys:delete', 'keys:show', 'server:status', 'app:about',
 ] as const satisfies readonly InvokeChannel[];
 
 // ---------- Events (main -> renderer) ----------
@@ -159,6 +176,8 @@ export interface PaBridge {
   keys: { list: Call0<'keys:list'>; store: Call<'keys:store'>; copy: Call<'keys:copy'>; remove: Call<'keys:delete'>; show: Call<'keys:show'> };
   /** M5: server settings page (status only; URL changes go through config.set + native confirmation). */
   server: { status: Call<'server:status'> };
+  /** M6: About & licenses. */
+  app: { about: Call0<'app:about'> };
   onSessionChanged(listener: (payload: IpcEventMap['session:changed']) => void): () => void;
 }
 
@@ -171,4 +190,5 @@ export const BRIDGE_CHANNELS = {
   'harness.upsertProfile': 'harness:profile:upsert', 'harness.probeChannel': 'harness:channel:probe',
   'keys.list': 'keys:list', 'keys.store': 'keys:store', 'keys.copy': 'keys:copy', 'keys.remove': 'keys:delete', 'keys.show': 'keys:show',
   'server.status': 'server:status',
+  'app.about': 'app:about',
 } as const satisfies Record<string, InvokeChannel>;

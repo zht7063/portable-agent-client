@@ -145,7 +145,11 @@ export function ServerSetupPage() {
     <div className='bg-background flex min-h-svh items-start justify-center p-6 sm:p-10'>
       <div className='w-full max-w-2xl space-y-4'>
         <ServerSettingsCard />
-        <p className='text-center text-sm'><a className='text-primary hover:underline' href='/sign-in'>← Sign in</a></p>
+        <p className='text-center text-sm'>
+          <a className='text-primary hover:underline' href='/sign-in'>← Sign in</a>
+          {' · '}
+          <a className='text-primary hover:underline' href='/pa-about'>About &amp; licenses</a>
+        </p>
       </div>
     </div>
   )

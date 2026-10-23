@@ -30,6 +30,15 @@ export function installFakePa() {
       remove: vi.fn(() => ok({ removed: true })),
       show: vi.fn((r: { tokenId: number }) => ok({ shown: true, tokenId: r.tokenId, maskedKey: 'sk-ab**********yz' })),
     },
+    app: {
+      about: vi.fn(() => ok({
+        productName: 'Portable Agent', version: '0.0.1', license: 'AGPL-3.0-only' as const,
+        sourceUrl: 'https://github.com/example/portable-agent-client', sourceOffer: 'Source offer text', buildCommit: 'abc123',
+        upstream: { name: 'new-api', author: 'QuantumNous', repo: 'https://github.com/QuantumNous/new-api', license: 'AGPL-3.0', tag: 'v1.0.0-rc.46', commit: '7d8b912' },
+        attribution: 'Frontend design and development by New API contributors.',
+        licenseFiles: [{ title: 'LICENSE (GNU AGPL-3.0)', path: '/licenses/LICENSE.txt' }],
+      })),
+    },
     server: {
       status: vi.fn(() => ok({
         serverUrl: cfg.serverUrl, insecureTransport: cfg.insecureTransport, clientVersion: '0.5.0',

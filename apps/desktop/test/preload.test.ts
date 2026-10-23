@@ -6,7 +6,7 @@ describe('Aegis #5: narrow preload bridge', () => {
   it('exposes only named functions, each bound to its fixed channel; no generic invoke/on', async () => {
     const ipc = { invoke: vi.fn(async () => ({ ok: true })), on: vi.fn(), removeListener: vi.fn() };
     const b = createBridge(ipc) as unknown as Record<string, unknown>;
-    expect(Object.keys(b).sort()).toEqual(['config', 'harness', 'keys', 'onSessionChanged', 'server']);
+    expect(Object.keys(b).sort()).toEqual(['app', 'config', 'harness', 'keys', 'onSessionChanged', 'server']);
     expect('invoke' in b || 'on' in b || 'send' in b).toBe(false);
     for (const [path, ch] of Object.entries(BRIDGE_CHANNELS)) {
       const [ns, fn] = path.split('.') as [string, string];

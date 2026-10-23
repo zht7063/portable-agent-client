@@ -56,4 +56,9 @@ for pkg in @fontsource-variable/lora @fontsource-variable/public-sans isbot text
   [ -n "$lic" ] || { echo "missing license file for $pkg" >&2; exit 1; }
   cp "node_modules/$pkg/$lic" "$OUT/licenses/$(echo "$pkg" | tr '/@' '__' | sed 's/^_//').LICENSE.txt"
 done
+# M6: our own license materials, served same-origin for the in-app About & licenses page (and copied into the
+# packaged app's resources/licenses by electron-builder extraResources).
+cp "$ROOT/LICENSE" "$OUT/licenses/LICENSE.txt"
+cp "$ROOT/NOTICE" "$OUT/licenses/NOTICE.txt"
+cp "$ROOT/THIRD-PARTY-LICENSES.md" "$OUT/licenses/THIRD-PARTY-LICENSES.txt"
 echo "built new-api web -> $OUT"

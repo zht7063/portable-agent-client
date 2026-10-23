@@ -1,7 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, safeStorage, session as electronSession, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, protocol, safeStorage, session as electronSession, shell } from 'electron';
 import { INVOKE_CHANNELS, PRODUCT, type InvokeChannel } from '@pac/core';
 import { createKeyring } from '@pac/keychain';
 import { installWrapper } from '@pac/pa-key';
@@ -20,6 +20,7 @@ import { runUiSmokeStep } from './smoke-ui';
 import { runKeysSmokeStep } from './smoke-keys';
 import { KeyService } from './key-service';
 import { serverChangeDialog } from './dialogs';
+import { buildAbout } from './about';
 
 /*
  * Main process: isolated window showing the patched upstream new-api web build on the privileged app protocol
@@ -31,6 +32,8 @@ import { serverChangeDialog } from './dialogs';
  * builds, where every smoke branch below folds to dead code and the smoke modules are tree-shaken out entirely.
  */
 declare const __PA_SMOKE__: boolean;
+/** Build-time: git commit (+ '-dirty') of the source this build was made from (Corresponding Source, AGPL §6). */
+declare const __PA_BUILD_COMMIT__: string;
 let win: BrowserWindow | null = null;
 let serverSession: ServerSession | null = null;
 let smokeExtra: SmokeExtra | undefined;
@@ -241,6 +244,7 @@ app.whenReady().then(async () => {
       if ((__PA_SMOKE__ && process.env.PA_SMOKE === '1')) { smokeRevealShown = true; return; } // smoke: never render/print the key
       await (win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts));
     },
+    about: () => buildAbout({ product: PRODUCT, compat: compat as { tag: string; commit: string }, version: app.getVersion(), buildCommit: __PA_BUILD_COMMIT__ }),
     serverStatus: async (recheck) => {
       if (recheck) await srv.runCheck();
       const c = host.config();
@@ -273,7 +277,19 @@ app.whenReady().then(async () => {
   await srv.runCheck();
   // Handlers are registered before the renderer loads, so its first invoke never races.
   win = createWindow();
+  installMenu();
 });
+
+/** M6: standard menus plus Help -> "About & licenses" (AGPL notice, new-api attribution, source offer). */
+function installMenu() {
+  const about = { label: 'About & licenses', click: () => { void win?.loadURL(`${APP_URL}pa-about`); } };
+  const template: Electron.MenuItemConstructorOptions[] = [
+    ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
+    { role: 'fileMenu' }, { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' },
+    { role: 'help', submenu: [about] },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
 
 /** Shows compatibility / Turnstile / non-HTTPS findings once (warning only for HTTP; blocking states also gate login). */
 let lastReported = '';

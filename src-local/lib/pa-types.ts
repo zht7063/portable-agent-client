@@ -73,6 +73,14 @@ export interface ServerStatusRes {
   check: ServerCheckView | null
 }
 
+export interface AppAboutRes {
+  productName: string; version: string; license: 'AGPL-3.0-only'
+  sourceUrl: string | null; sourceOffer: string | null; buildCommit: string
+  upstream: { name: string; author: string; repo: string; license: string; tag: string; commit: string }
+  attribution: string
+  licenseFiles: { title: string; path: string }[]
+}
+
 type P<T> = Promise<Result<T>>
 export interface PaBridge {
   config: { get(): P<ClientConfig>; set(r: ConfigSetReq): P<ClientConfig> }
@@ -96,5 +104,6 @@ export interface PaBridge {
     show(r: { tokenId: number }): P<KeysShowRes>
   }
   server: { status(r: { recheck?: boolean }): P<ServerStatusRes> }
+  app: { about(): P<AppAboutRes> }
   onSessionChanged(l: (v: unknown) => void): () => void
 }

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiKeyCell } from '@/features/keys/components/api-keys-cells'
 
+import { AboutCard } from '../about/about-page'
 import { HarnessCard } from '../harness/harness-card'
 import { KeychainSection } from '../keychain/keychain-section'
 import { isPaDesktop } from '../lib/pa'
@@ -129,5 +130,23 @@ describe('harness card', () => {
     fake.harness.detect.mockImplementationOnce(() => fail('SERVER', 'detect failed') as never)
     render(<HarnessCard harness='pi' serverUrl={null} tokens={[]} models={[]} />)
     expect(await screen.findByText('detect failed')).toBeInTheDocument()
+  })
+})
+
+describe('about & licenses (M6)', () => {
+  it('shows AGPL notice, new-api attribution with link, source offer + build commit, and bundled license texts', async () => {
+    const f = vi.fn(() => Promise.resolve(new Response('GNU AFFERO GENERAL PUBLIC LICENSE')))
+    vi.stubGlobal('fetch', f)
+    render(<AboutCard />)
+    expect(await screen.findByTestId('pa-about-license')).toHaveTextContent('GNU Affero General Public License version 3 (AGPL-3.0-only)')
+    expect(screen.getByTestId('pa-about-upstream')).toHaveTextContent('based on new-api by QuantumNous (AGPL-3.0)')
+    expect(screen.getByTestId('pa-about-upstream')).toHaveTextContent('Frontend design and development by New API contributors.')
+    expect(screen.getByRole('link', { name: 'https://github.com/QuantumNous/new-api' })).toHaveAttribute('href', 'https://github.com/QuantumNous/new-api')
+    expect(screen.getByRole('link', { name: 'https://github.com/example/portable-agent-client' })).toBeInTheDocument()
+    expect(screen.getByTestId('pa-about-source')).toHaveTextContent('Build commit: abc123')
+    fireEvent.click(screen.getByRole('button', { name: 'LICENSE (GNU AGPL-3.0)' }))
+    expect(await screen.findByTestId('pa-license-text')).toHaveTextContent('GNU AFFERO GENERAL PUBLIC LICENSE')
+    expect(f).toHaveBeenCalledWith('/licenses/LICENSE.txt')
+    vi.unstubAllGlobals()
   })
 })

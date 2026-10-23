@@ -22,6 +22,7 @@ export function createBridge(ipc: IpcRendererLike): PaBridge {
     },
     keys: { list: call('keys:list'), store: call('keys:store'), copy: call('keys:copy'), remove: call('keys:delete'), show: call('keys:show') },
     server: { status: call('server:status') },
+    app: { about: call('app:about') },
     onSessionChanged: (listener) => {
       const wrapped = (_e: unknown, payload: unknown) => listener(payload as IpcEventMap['session:changed']);
       ipc.on('session:changed', wrapped);
