@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createPublicKey, randomBytes } from 'node:crypto';
 
 /*
  * M3: response cleaning before anything reaches the renderer (plan v2 §2, §8 "遗漏清洗即泄露").
@@ -56,7 +56,7 @@ const BARE_RUN = /(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{16,128}(?![A-Za-z0-9_-])/g;
  */
 const BARE_RUN_B64_IMAGE = /(?<=[^A-Za-z0-9_+/=\r\n-])[A-Za-z0-9_-]{32,128}(?=[^A-Za-z0-9_+/=\r\n-])/g;
 export const MIN_B64_PAYLOAD = 64;
-const B64_IMAGE = /\bdata:image\/[a-z0-9.+-]+;base64,([A-Za-z0-9+/]{62,}[A-Za-z0-9+/=]{2})(?![A-Za-z0-9+/=_-])/gi;
+const B64_IMAGE_PREFIX = /\bdata:image\/[a-z0-9.+-]+;base64,/gi;
 const validB64 = (p: string, min: number) => p.length >= min && p.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(p);
 const IMAGE_MAGIC = [[0x89, 0x50, 0x4e, 0x47], [0xff, 0xd8, 0xff], [0x47, 0x49, 0x46, 0x38], [0x52, 0x49, 0x46, 0x46], [0x3c]];
 function imageMagic(p: string): boolean {
@@ -101,13 +101,29 @@ const isMasked = (s: string) => s.includes('****') || s.startsWith(HANDLE_PREFIX
 /** Masks secret-shaped substrings in free text (used for JSON strings and non-JSON text bodies). */
 export function maskString(s: string, bare = true): string {
   let out = '', last = 0;
-  for (const m of s.matchAll(B64_IMAGE)) {
-    if (!validB64(m[1]!, MIN_B64_PAYLOAD) || !imageMagic(m[1]!)) continue;
-    const start = m.index + m[0].length - m[1]!.length; // only the verified payload span gets the base64 treatment
-    out += maskPlain(s.slice(last, start), bare) + maskPlain(m[1]!, bare, BARE_RUN_B64_IMAGE);
-    last = m.index + m[0].length;
+  for (const m of imageSpans(s)) {
+    if (!validB64(m.payload, MIN_B64_PAYLOAD) || !imageMagic(m.payload)) continue;
+    // only the verified payload span gets the base64 treatment
+    out += maskPlain(s.slice(last, m.start), bare) + maskPlain(m.payload, bare, BARE_RUN_B64_IMAGE);
+    last = m.start + m.payload.length;
   }
   return out + maskPlain(s.slice(last), bare);
+}
+/**
+ * Finds `data:image/<subtype>;base64,<payload>` spans. Same semantics as B64_IMAGE, but the (multi-MB) payload is
+ * scanned with a loop: a backtracking regex over a 5 MB payload overflows the regex stack (SSE b64 images).
+ */
+function* imageSpans(s: string): Generator<{ start: number; payload: string }> {
+  const B64 = (c: number) => (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 43 || c === 47 || c === 61;
+  for (const m of s.matchAll(B64_IMAGE_PREFIX)) {
+    const start = m.index + m[0].length;
+    let j = start; while (j < s.length && B64(s.charCodeAt(j))) j++;
+    if (j < s.length && (s[j] === '_' || s[j] === '-')) continue;
+    const payload = s.slice(start, j);
+    const eq = payload.indexOf('=');
+    if (payload.length < 64 || (eq >= 0 && eq < payload.length - 2)) continue;
+    yield { start, payload };
+  }
 }
 function maskPlain(s: string, bare: boolean, run: RegExp = BARE_RUN): string {
   let out = s.replace(BEARER, (_m, pre: string, tok: string) => (tok.startsWith(HANDLE_PREFIX) ? pre + tok : pre + maskSecret(tok)));
@@ -200,35 +216,42 @@ export function sanitizeJson(v: unknown, vault: AccessTokenVault, stats: Sanitiz
 }
 
 /** A PEM public key (`-----BEGIN PUBLIC KEY-----` + base64 lines). Public by definition; only known values are masked. */
-export const isPemPublicKey = (s: unknown): s is string =>
-  typeof s === 'string' && s.length < 8192 && /^-----BEGIN (?:RSA )?PUBLIC KEY-----\r?\n[A-Za-z0-9+/=\r\n]+-----END (?:RSA )?PUBLIC KEY-----\s*$/.test(s);
+export function isPemPublicKey(s: unknown): s is string {
+  if (typeof s !== 'string' || s.length >= 8192) return false;
+  // Header check first: createPublicKey() would also accept a PRIVATE key (deriving its public half).
+  if (!/^-----BEGIN (?:RSA )?PUBLIC KEY-----\r?\n[A-Za-z0-9+/=\r\n]+-----END (?:RSA )?PUBLIC KEY-----\s*$/.test(s)) return false;
+  try { return createPublicKey(s).type === 'public'; } catch { return false; }
+}
 
 /**
  * Aegis M7 3: line-wise sanitizer for text/event-stream. Each complete line (SSE frames are line-based) is masked
  * like any text body (known values, then heuristics) and forwarded immediately, so latency is one line. A partial
- * line is held until its newline arrives; a single line longer than SSE_MAX_LINE is flushed in pieces, keeping a
- * tail of SSE_TAIL chars (> longest heuristic run) so a key at the cut point is still seen whole by the next piece.
+ * line is held until its newline arrives. Lines are never cut (a cut inside a data:image payload would break the
+ * image-span recognition): a line may grow up to maxLine (= LIMITS.responseBody, the same cap as a buffered body);
+ * beyond that the stream is terminated with an `event: error` frame (SSE_LINE_TOO_LARGE) and nothing of the line is sent.
  */
-export const SSE_MAX_LINE = 64 * 1024;
-const SSE_TAIL = 256;
-export function sseSanitizer(known: readonly string[]): TransformStream<Uint8Array, Uint8Array> {
+export const SSE_MAX_LINE = 32 << 20;
+export const SSE_TOO_LARGE_FRAME = '\n\nevent: error\ndata: {"success":false,"code":"SSE_LINE_TOO_LARGE"}\n\n';
+export function sseSanitizer(known: readonly string[], maxLine = SSE_MAX_LINE): TransformStream<Uint8Array, Uint8Array> {
   const dec = new TextDecoder(); const enc = new TextEncoder();
   const clean = (t: string) => maskString(replaceKnown(t, known));
-  let buf = '';
+  const parts: string[] = []; let pending = 0; // partial line, kept as pieces (no O(n^2) concatenation)
   return new TransformStream({
     transform(chunk, ctl) {
-      buf += dec.decode(chunk, { stream: true });
-      const nl = buf.lastIndexOf('\n');
-      if (nl >= 0) { ctl.enqueue(enc.encode(buf.slice(0, nl + 1).split('\n').map(clean).join('\n'))); buf = buf.slice(nl + 1); }
-      if (buf.length > SSE_MAX_LINE) {
-        // cut at a non-key char before the tail so no run is split
-        let cut = buf.length - SSE_TAIL;
-        while (cut > 0 && /[A-Za-z0-9_+/=-]/.test(buf[cut - 1]!)) cut--;
-        if (cut === 0) cut = buf.length - SSE_TAIL;
-        ctl.enqueue(enc.encode(clean(buf.slice(0, cut)))); buf = buf.slice(cut);
+      const t = dec.decode(chunk, { stream: true });
+      const nl = t.lastIndexOf('\n');
+      if (nl < 0) {
+        parts.push(t); pending += t.length;
+        if (pending > maxLine) { parts.length = 0; pending = 0; ctl.enqueue(enc.encode(SSE_TOO_LARGE_FRAME)); ctl.terminate(); }
+        return;
       }
+      const lines = (parts.join('') + t.slice(0, nl)).split('\n');
+      parts.length = 0; pending = 0;
+      if (lines.some((l) => l.length > maxLine)) { ctl.enqueue(enc.encode(SSE_TOO_LARGE_FRAME)); ctl.terminate(); return; }
+      ctl.enqueue(enc.encode(lines.map(clean).join('\n') + '\n'));
+      const rest = t.slice(nl + 1); if (rest) { parts.push(rest); pending = rest.length; }
     },
-    flush(ctl) { buf += dec.decode(); if (buf) ctl.enqueue(enc.encode(clean(buf))); },
+    flush(ctl) { const r = parts.join('') + dec.decode(); if (r) ctl.enqueue(enc.encode(clean(r))); },
   });
 }
 

@@ -186,7 +186,9 @@ export class ServerProxy {
       if (path === '/api/status' && method === 'GET') parsed = rewriteStatus(parsed);
       // The RSA public key for password encryption must reach the renderer intact (masking breaks login); public by
       // definition, so only exact known values are masked in it.
-      const pem = path === '/api/user/login/encryption-key' ? (_o: Record<string, unknown>, k: string, v: unknown) => k === 'public_key' && isPemPublicKey(v) : undefined;
+      // Only the top-level data.public_key, only if it parses as a public key.
+      const top = (parsed as { data?: unknown } | null)?.data;
+      const pem = path === '/api/user/login/encryption-key' ? (o: Record<string, unknown>, k: string, v: unknown) => o === top && k === 'public_key' && isPemPublicKey(v) : undefined;
       const clean = sanitizeJson(parsed, this.o.vault, undefined, known, pem);
       return new Response(JSON.stringify(clean), { status: res.status, headers: { ...outHeaders, 'content-type': 'application/json; charset=utf-8' } });
     }

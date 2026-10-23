@@ -2,7 +2,7 @@
 // base64-ish secret fields, 3 SSE line-wise sanitising.
 import { describe, expect, it, vi } from 'vitest';
 import { CookieJar } from '../../src/main/proxy/cookie-jar';
-import { AccessTokenVault, HANDLE_PREFIX, MIN_KNOWN, knownSet, maskString, replaceKnown, sanitizeJson, sseSanitizer } from '../../src/main/proxy/sanitize';
+import { AccessTokenVault, HANDLE_PREFIX, MIN_KNOWN, knownSet, maskString, replaceKnown, sanitizeJson, sseSanitizer, SSE_TOO_LARGE_FRAME, isPemPublicKey } from '../../src/main/proxy/sanitize';
 import { ServerProxy } from '../../src/main/proxy/api-proxy';
 import { evaluateStatus } from '../../src/main/proxy/server-status';
 
@@ -97,11 +97,32 @@ describe('3 SSE is sanitised line-wise across chunk boundaries', () => {
     let rest = ''; for (;;) { const x = await r.read(); if (x.done) break; rest += new TextDecoder().decode(x.value); }
     expect(rest).toBe('\ndata: [DONE]');
   });
-  it('unterminated very long line is flushed in pieces without splitting a key', async () => {
-    const pad = 'a b '.repeat(20000);
-    const out = await run([`data: ${pad}`, `${K} end`]);
+  const bigImage = (mb: number) => {
+    const png = Buffer.alloc(Math.floor((mb << 20) / 3) * 3); // multiple of 3 -> no padding
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png);
+    let x = 7; for (let i = 8; i < png.length; i++) { x = (x * 1103515245 + 12345) >>> 0; png[i] = x >>> 24; }
+    return png.toString('base64');
+  };
+  const chunked = (s: string, n: number) => { const out: string[] = []; for (let i = 0; i < s.length; i += n) out.push(s.slice(i, i + n)); return out; };
+  it('4 MB data:image line across ~1000 chunks: byte-identical, no hard cut', async () => {
+    const line = `data: {"data":[{"url":"data:image/png;base64,${bigImage(4)}"}]}\n\ndata: [DONE]\n\n`;
+    expect(line.length).toBeGreaterThan(5 << 20);
+    const out = await run(chunked(line, 5000));
+    expect(out.length).toBe(line.length);
+    expect(out === line).toBe(true);
+  });
+  it('known key inside a 2 MB data:image payload (bounded by + /) across chunks is masked', async () => {
+    const b = bigImage(2);
+    const line = `data: {"url":"data:image/png;base64,${b.slice(0, 4000)}+${K}/${b.slice(4000)}AA"}\n\n`;
+    const out = await run(chunked(line, 4096), [K]);
     expect(out).not.toContain(K);
-    expect(out.length).toBeGreaterThan(pad.length);
+  });
+  it('a line beyond the limit is not forwarded; the stream ends with an SSE error frame', async () => {
+    const t = sseSanitizer([], 1000);
+    const enc = new TextEncoder();
+    const rs = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(enc.encode('data: ok\n')); for (let i = 0; i < 5; i++) c.enqueue(enc.encode(`x${K}`.repeat(10))); c.close(); } });
+    const out = await new Response(rs.pipeThrough(t)).text();
+    expect(out).toBe(`data: ok\n${SSE_TOO_LARGE_FRAME}`);
   });
   it('known value (not key-shaped) masked in SSE', async () => {
     expect(await run(['data: tok=lowercase-known-', 'secret-value\n'], ['lowercase-known-secret-value'])).not.toContain('lowercase-known-secret-value');
@@ -132,11 +153,35 @@ describe('2 masked values from base64-ish secret fields are never submitted upst
     expect(res.status).toBe(409);
     expect(fetch).not.toHaveBeenCalled();
   });
-  it('PEM public key for password encryption reaches the renderer intact', async () => {
-    const pub = `-----BEGIN PUBLIC KEY-----\n${'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzQ7Rw2Lp9Xv4Tm8Nk3Hd6Jf1Bc5Gs0Ye'}\n-----END PUBLIC KEY-----\n`;
-    expect(maskString(pub)).not.toBe(pub); // would be broken by heuristic masking
-    const body = JSON.stringify({ success: true, data: { kid: 'k1', public_key: pub } });
-    const res = await proxyWith(body, 'application/json')('/api/user/login/encryption-key');
-    expect(((await res.json()) as { data: { public_key: string } }).data.public_key).toBe(pub);
+
+});
+
+describe('3 login PEM exemption: parsed public key, top-level data.public_key only', () => {
+  const { generateKeyPairSync } = require('node:crypto') as typeof import('node:crypto');
+  const kp = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const pub = kp.publicKey.export({ type: 'spki', format: 'pem' }) as string;
+  const priv = kp.privateKey.export({ type: 'pkcs8', format: 'pem' }) as string;
+  const garbage = `-----BEGIN PUBLIC KEY-----\n${K}AAAA\n-----END PUBLIC KEY-----\n`;
+  const get = async (body: unknown) => (await (await proxyWith(JSON.stringify(body), 'application/json')('/api/user/login/encryption-key')).json()) as { data: Record<string, unknown> };
+  it('valid PEM passes intact', async () => {
+    expect(isPemPublicKey(pub)).toBe(true);
+    expect((await get({ success: true, data: { kid: 'k', public_key: pub } })).data.public_key).toBe(pub);
+  });
+  it('garbage PEM-looking text is not exempt', async () => {
+    expect(isPemPublicKey(garbage)).toBe(false);
+    expect((await get({ success: true, data: { public_key: garbage } })).data.public_key).not.toContain(K);
+  });
+  it('a private key (even relabelled) is not exempt', async () => {
+    expect(isPemPublicKey(priv)).toBe(false);
+    expect(isPemPublicKey(priv.replace(/PRIVATE KEY/g, 'PUBLIC KEY'))).toBe(false);
+    expect((await get({ success: true, data: { public_key: priv } })).data.public_key).not.toBe(priv);
+  });
+  it('nested or top-level-outside-data public_key is not exempt', async () => {
+    const r = await get({ success: true, public_key: pub, data: { inner: { public_key: pub }, list: [{ public_key: pub }] } });
+    expect(JSON.stringify(r)).not.toContain(pub.split('\n')[1]);
+  });
+  it('on other paths data.public_key is not exempt', async () => {
+    const res = await proxyWith(JSON.stringify({ data: { public_key: pub } }), 'application/json')('/api/user/self');
+    expect(((await res.json()) as { data: { public_key: string } }).data.public_key).not.toBe(pub);
   });
 });
