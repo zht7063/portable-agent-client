@@ -47,7 +47,14 @@ const SECRET_SHAPE = [
  */
 // Plain text: a run is delimited only by non-[A-Za-z0-9_-] chars, so K in `https://h/K`, `K/x`, `K+`, `K=`, `x+K` is
 // masked. The + / = special case applies only inside a recognised base64 span (below).
-const BARE_RUN = /(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{16,128}(?![A-Za-z0-9_-])/g;
+// Aegis M7: no upper bound -- a key glued with - or _ into a longer run (`uuid-K`, `K_<100 chars>`) is found by
+// checking the whole run (if <= 128) and then each [-_]-separated segment (see maskRun).
+const BARE_RUN = /(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{16,}(?![A-Za-z0-9_-])/g;
+function maskRun(m: string): string {
+  if (m.length <= 128 && looksLikeBareKey(m)) return maskSecret(m);
+  if (!/[-_]/.test(m)) return m;
+  return m.split(/([-_])/).map((seg) => (looksLikeBareKey(seg) ? maskSecret(seg) : seg)).join('');
+}
 /**
  * The only base64 exception (Aegis M7): a word-boundary `data:image/<subtype>;base64,` whose payload is valid base64
  * (alphabet, <= 2 trailing '=', length % 4 == 0, >= MIN_B64_PAYLOAD chars) AND decodes to a PNG/JPEG/GIF/WebP/SVG
@@ -66,7 +73,7 @@ function imageMagic(p: string, svg = true): boolean {
 }
 const ID_LIKE = [
   /^[0-9a-f]+$/i,                                                          // hex digests / hex IDs (any case)
-  /^[0-9a-f]{8}(?:-?[0-9a-f]{4}){3}-?[0-9a-f]{12}(?:[-_][0-9a-z]+)*$/i,     // UUID-ish (optionally suffixed)
+  /^[0-9a-f]{8}(?:-?[0-9a-f]{4}){3}-?[0-9a-f]{12}(?:[-_][0-9a-z]+)*$/,      // UUID-ish, lowercase only (uuid-K must not pass)
   /^[0-9a-z_-]+$/,                                                         // single-case: request IDs, slugs, names
   /^[0-9A-Z_-]+$/,                                                         // single-case upper: CONSTANT_NAMES, base32
 ];
@@ -128,7 +135,7 @@ function* imageSpans(s: string): Generator<{ start: number; payload: string }> {
 function maskPlain(s: string, bare: boolean, run: RegExp = BARE_RUN): string {
   let out = s.replace(BEARER, (_m, pre: string, tok: string) => (tok.startsWith(HANDLE_PREFIX) ? pre + tok : pre + maskSecret(tok)));
   for (const re of SECRET_SHAPE) out = out.replace(re, (m) => maskSecret(m));
-  if (bare) out = out.replace(run, (m) => (looksLikeBareKey(m) ? maskSecret(m) : m));
+  if (bare) out = out.replace(run, (m) => (run === BARE_RUN ? maskRun(m) : looksLikeBareKey(m) ? maskSecret(m) : m));
   return out;
 }
 
