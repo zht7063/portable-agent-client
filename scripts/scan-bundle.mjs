@@ -45,7 +45,7 @@ const ALLOW_FILE = join(ROOT, 'scripts/scan-bundle-allowlist.json');
  * Allowlist entries: { sha256, paths: [glob...], reason }. A hit is suppressed only if BOTH the sha256 matches AND its
  * path matches one of the globs. Paths are relative to the scanned directory; files inside an archive use
  * `<path-to.asar>:<path-inside-asar>`. Glob: `**` followed by a slash = any directories, `*` = any chars except / and :.
- * PA_SCAN_ALLOWLIST (alternate file) is for local testing only and is refused in CI (CI / GITHUB_ACTIONS = true).
+ * PA_SCAN_ALLOWLIST (alternate file) is for local testing only and is refused in CI (CI / GITHUB_ACTIONS = true or 1, any case).
  */
 export function globToRegExp(g) {
   let re = '';
@@ -55,10 +55,12 @@ export function globToRegExp(g) {
   }
   return new RegExp(`^${re}$`);
 }
+const truthy = (v) => /^(?:true|1)$/i.test(String(v ?? '').trim());
+export const isCI = (env = process.env) => truthy(env.CI) || truthy(env.GITHUB_ACTIONS);
 export function loadAllowlist(env = process.env) {
   let file = ALLOW_FILE;
   if (env.PA_SCAN_ALLOWLIST) {
-    if (env.CI === 'true' || env.GITHUB_ACTIONS === 'true') throw new Error('PA_SCAN_ALLOWLIST override is refused in CI');
+    if (isCI(env)) throw new Error('PA_SCAN_ALLOWLIST override is refused in CI');
     file = env.PA_SCAN_ALLOWLIST;
   }
   if (!existsSync(file)) return [];

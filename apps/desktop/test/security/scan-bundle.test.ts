@@ -130,11 +130,15 @@ describe('scan-bundle', () => {
     expect(r.stderr).not.toContain('renderer/a.js');
     expect(r.stderr).not.toContain('app.asar:');
   });
-  it.each([['CI', 'true'], ['GITHUB_ACTIONS', 'true']])('PA_SCAN_ALLOWLIST override is refused when %s=%s', (k, v) => {
+  it.each([['CI', 'true'], ['CI', 'TRUE'], ['CI', '1'], ['GITHUB_ACTIONS', 'true'], ['GITHUB_ACTIONS', 'True'], ['GITHUB_ACTIONS', '1']])('PA_SCAN_ALLOWLIST override is refused when %s=%s', (k, v) => {
     fixture({ 'renderer/a.js': 'ok', '/allow.json': JSON.stringify({ entries: [] }) });
     const r = run({ PA_SCAN_ALLOWLIST: join(dir, 'allow.json'), [k]: v });
     expect(r.status).toBe(2);
     expect(r.stderr).toContain('refused in CI');
+  });
+  it.each([['CI', 'false'], ['CI', '0'], ['CI', '']])('override allowed locally when %s=%s', (k, v) => {
+    fixture({ 'renderer/a.js': 'ok', '/allow.json': JSON.stringify({ entries: [] }) });
+    expect(run({ PA_SCAN_ALLOWLIST: join(dir, 'allow.json'), [k]: v }).status).toBe(0);
   });
   it('allowlist entries need sha256, paths and a reason', () => {
     for (const e of [{ sha256: 'a'.repeat(64), paths: ['x'] }, { sha256: 'a'.repeat(64), reason: 'no paths here' }]) {
