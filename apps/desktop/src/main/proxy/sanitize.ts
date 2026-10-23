@@ -389,8 +389,10 @@ export function sseSanitizer(known: readonly string[], limits: Partial<SseLimits
     dead = true; releaseAll(); ctl.enqueue(enc.encode(frame)); ctl.terminate();
   };
   const tooLarge = (ctl: TransformStreamDefaultController<Uint8Array>) => fail(ctl, SSE_TOO_LARGE_FRAME);
-  return new TransformStream({
-    transform(chunk, ctl) {
+  type Ctl = TransformStreamDefaultController<Uint8Array>;
+  // `cancel` (Streams spec 2023, Node >= 21) is not in this lib's Transformer type.
+  const transformer = {
+    transform(chunk: Uint8Array, ctl: Ctl) {
       if (dead) return;
       const t = dec.decode(chunk, { stream: true });
       let out = '', from = 0;
@@ -410,10 +412,11 @@ export function sseSanitizer(known: readonly string[], limits: Partial<SseLimits
       }
       if (out) ctl.enqueue(enc.encode(out));
     },
-    flush(ctl) { if (dead) return; const r = parts.join('') + dec.decode(); releaseAll(); dead = true; if (r) ctl.enqueue(enc.encode(clean(r))); },
+    flush(ctl: Ctl) { if (dead) return; const r = parts.join('') + dec.decode(); releaseAll(); dead = true; if (r) ctl.enqueue(enc.encode(clean(r))); },
     // Consumer cancel / upstream abort: release this stream's share of the global budget (no leaks).
     cancel() { dead = true; releaseAll(); },
-  } as Transformer<Uint8Array, Uint8Array>);
+  };
+  return new TransformStream<Uint8Array, Uint8Array>(transformer);
 }
 
 /** Response headers the renderer may see; everything else (Set-Cookie, auth, server internals) is dropped. */
