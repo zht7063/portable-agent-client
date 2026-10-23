@@ -22,9 +22,14 @@ Changing CSP, the preload surface or the allowlist requires updating the snapsho
   below that length the random-vs-identifier heuristic produces too many false positives. `sk-` keys are covered from
   16 characters; values in secret-named fields are masked regardless of shape.
 - **Base64-encoded keys** (a key wrapped in base64, e.g. inside a Basic auth header or an encoded blob) are not
-  decoded and therefore not detected/masked for now. Likewise keys **inside base64 runs or `data:` URIs** are not
-  masked: sanitize leaves `data:` URIs untouched and never masks part of a base64 run (so inline images are not
-  corrupted).
+  decoded and therefore not detected/masked for now.
+- **Inline base64 images**: only a word-boundary `data:image/<subtype>;base64,` span whose payload is valid base64
+  (alphabet `A-Za-z0-9+/`, <= 2 `=` of padding, length % 4 == 0, >= 64 chars) gets base64 treatment, and only the
+  payload span: inside it a 32+ high-entropy run is still masked unless it is bounded by `+` `/` `=` (i.e. looks like
+  ordinary base64 data). A key placed in such a payload between base64 separators, or glued to base64 characters, is
+  therefore not masked. Every other `data:` form (`data:,K`, `data:x,K`, `data:;base64,K`, `metadata:,K`, short or
+  invalid payloads) is ordinary text and masked normally. Outside image spans a run preceded by `+`/`/` or followed by
+  `+`/`/`/`=` is treated as part of a base64 run and not masked (a preceding `=`/`==`, e.g. `key=K`, `abc==K`, is masked).
 - The high-entropy heuristic (upper + lower + digit, >= 6 class switches, not hex/UUID/single-case/identifier+number)
   can miss keys that happen to look low-entropy and can flag non-secrets; scan-bundle false positives go into
   `scripts/scan-bundle-allowlist.json` (sha256 + justification only).

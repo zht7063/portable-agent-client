@@ -43,12 +43,20 @@ const SECRET_SHAPE = [
  * M7 (Aegis): bare (unprefixed) keys in free text. A run of 16-128 [A-Za-z0-9_-] chars counts as a key only if it
  * looks random (see looksLikeBareKey); ordinary IDs (hex digests, UUIDs, numeric/lowercase request IDs) do not.
  */
-// Boundaries also exclude base64 chars (+ / =) so a substring of a base64 run is never partially masked. Exception:
-// a single '=' before the run is allowed (key=value text like `raw=<key>` must still be masked); base64 padding is
-// trailing, so it is excluded after the run and as '==' before it.
-const BARE_RUN = /(?<![A-Za-z0-9_+/-])(?<!==)[A-Za-z0-9_-]{16,128}(?![A-Za-z0-9_+/=-])/g;
-/** data: URIs (inline images etc.) are left untouched entirely; keys hidden inside them are a known limitation. */
-const DATA_URI = /data:[a-z0-9.+/-]*(?:;[^,\s"']*)?,[A-Za-z0-9+/=%._~-]*/gi;
+// Outside base64 image spans: a run may not be preceded by + or / (inside a base64 run) nor followed by + / = (padding
+// is trailing), but a preceding '=' is fine (`key=K`, `abc==K` must still be masked).
+const BARE_RUN = /(?<![A-Za-z0-9_+/-])[A-Za-z0-9_-]{16,128}(?![A-Za-z0-9_+/=-])/g;
+// Inside a base64 image payload: runs bounded by + / = on both sides are base64 data; a 32+ high-entropy run that is
+// not bounded by + / = is still masked (looksLikeBareKey requires >= 32).
+const BARE_RUN_B64 = /(?<![A-Za-z0-9_+/=-])[A-Za-z0-9_-]{32,128}(?![A-Za-z0-9_+/=-])/g;
+/**
+ * Only genuine inline base64 images get the base64 treatment: word-boundary `data:image/<subtype>;base64,` followed by
+ * a payload of >= 64 chars of the base64 alphabet, length % 4 === 0, at most two '=' of padding at the end. Every other
+ * `data:` form (`data:,K`, `data:x,K`, `data:;base64,K`, `metadata:,K`, short/invalid payloads) is ordinary text.
+ */
+const B64_IMAGE = /\bdata:image\/[a-z0-9.+-]+;base64,([A-Za-z0-9+/]{62,}[A-Za-z0-9+/=]{2})(?![A-Za-z0-9+/=_-])/gi;
+export const MIN_B64_IMAGE_PAYLOAD = 64;
+const validB64 = (p: string) => p.length >= MIN_B64_IMAGE_PAYLOAD && p.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(p);
 const ID_LIKE = [
   /^[0-9a-f]+$/i,                                                          // hex digests / hex IDs (any case)
   /^[0-9a-f]{8}(?:-?[0-9a-f]{4}){3}-?[0-9a-f]{12}(?:[-_][0-9a-z]+)*$/i,     // UUID-ish (optionally suffixed)
@@ -85,15 +93,19 @@ const isMasked = (s: string) => s.includes('****') || s.startsWith(HANDLE_PREFIX
 
 /** Masks secret-shaped substrings in free text (used for JSON strings and non-JSON text bodies). */
 export function maskString(s: string, bare = true): string {
-  if (!s.includes('data:')) return maskPlain(s, bare);
   let out = '', last = 0;
-  for (const m of s.matchAll(DATA_URI)) { out += maskPlain(s.slice(last, m.index), bare) + m[0]; last = m.index + m[0].length; }
+  for (const m of s.matchAll(B64_IMAGE)) {
+    if (!validB64(m[1]!)) continue;
+    const start = m.index + m[0].length - m[1]!.length; // only the payload span gets the base64 treatment
+    out += maskPlain(s.slice(last, start), bare) + maskPlain(m[1]!, bare, BARE_RUN_B64);
+    last = m.index + m[0].length;
+  }
   return out + maskPlain(s.slice(last), bare);
 }
-function maskPlain(s: string, bare: boolean): string {
+function maskPlain(s: string, bare: boolean, run: RegExp = BARE_RUN): string {
   let out = s.replace(BEARER, (_m, pre: string, tok: string) => (tok.startsWith(HANDLE_PREFIX) ? pre + tok : pre + maskSecret(tok)));
   for (const re of SECRET_SHAPE) out = out.replace(re, (m) => maskSecret(m));
-  if (bare) out = out.replace(BARE_RUN, (m) => (looksLikeBareKey(m) ? maskSecret(m) : m));
+  if (bare) out = out.replace(run, (m) => (looksLikeBareKey(m) ? maskSecret(m) : m));
   return out;
 }
 

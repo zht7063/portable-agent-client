@@ -72,3 +72,36 @@ describe('base64 and data: URIs are not corrupted', () => {
     expect(maskString(`error: raw=${KEY48}`)).not.toContain(KEY48);
   });
 });
+
+describe('data: bypass regressions (Aegis): K is masked in every non-image / invalid form', () => {
+  const b64 = (n: number) => Buffer.from(Array.from({ length: n }, (_, i) => (i * 37 + 11) & 255)).toString('base64');
+  it.each([
+    ['data:,K', `data:,${KEY48}`],
+    ['data:x,K', `data:x,${KEY48}`],
+    ['data:;base64,K', `data:;base64,${KEY48}`],
+    ['img src data:…,K', `<img src="data:text/plain,${KEY48}">`],
+    ['img src data:image short payload', `<img src="data:image/png;base64,${KEY48}">`],
+    ['metadata:,K', `metadata:,${KEY48}`],
+    ['metadata:image/png;base64,…K', `metadata:image/png;base64,${b64(48)} ${KEY48}`],
+    ['abc==K', `abc==${KEY48}`],
+    ['key=K', `key=${KEY48}`],
+    ['K after a valid image span', `data:image/png;base64,${b64(60)} ${KEY48}`],
+  ])('%s', (_n, text) => {
+    expect(maskString(text)).not.toContain(KEY48);
+    expect(JSON.stringify(sanitizeJson({ v: text }, new AccessTokenVault()))).not.toContain(KEY48);
+  });
+  it('a key embedded verbatim in a valid image payload, not bounded by + / =, is masked', () => {
+    const text = `data:image/png;base64,${KEY48}${KEY48}`; // valid 96-char payload; the run has no + / = around it
+    expect(maskString(text)).not.toContain(KEY48);
+  });
+  it('legit inline PNG base64 (valid alphabet, padding, >= 64 chars) stays intact, incl. high-entropy runs bounded by + / =', () => {
+    for (const n of [48, 49, 50, 300]) {
+      const uri = `data:image/png;base64,${b64(n)}`;
+      expect(maskString(uri)).toBe(uri);
+      expect(maskString(`<img src="${uri}" alt="x">`)).toBe(`<img src="${uri}" alt="x">`);
+    }
+    const inner = `data:image/png;base64,${b64(30)}+${KEY48}/${b64(30)}AA`;
+    expect(inner.split(',')[1]!.length % 4).toBe(0);
+    expect(maskString(inner)).toBe(inner);
+  });
+});
