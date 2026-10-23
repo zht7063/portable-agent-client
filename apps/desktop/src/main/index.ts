@@ -1,7 +1,7 @@
-import { pathToFileURL } from 'node:url';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { app, BrowserWindow, dialog, ipcMain, session as electronSession, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, protocol, session as electronSession, shell } from 'electron';
 import { INVOKE_CHANNELS, PRODUCT, type InvokeChannel } from '@pac/core';
 import { createKeyring } from '@pac/keychain';
 import { installWrapper } from '@pac/pa-key';
@@ -11,73 +11,124 @@ import { createHandlers, dispatch } from './ipc/handlers';
 import { ConfigStore } from './config-store';
 import { CoreHost } from './core-host';
 import { HarnessHost } from './harness-host';
+import { appOrigin, buildCsp, handleAppRequest, isAppUrl, navigationDecision } from './app-protocol';
 
 /*
- * M1 minimal main process: isolated window + IPC (config/harness) + keychain/pa-key wiring.
- * M2 replaces the placeholder renderer (file://) with the upstream web build on app://; M3 adds the API proxy.
+ * Main process: isolated window showing the patched upstream new-api web build on the privileged app protocol
+ * (M2), IPC (config/harness) + keychain/pa-key wiring (M1). The /api proxy is M3 (stubbed 503 in app-protocol.ts).
  */
 let win: BrowserWindow | null = null;
 
-const RENDERER_PATH = join(__dirname, '../renderer/index.html');
-/** The only origin allowed to call IPC: our bundled renderer. */
-const RENDERER_URL = pathToFileURL(RENDERER_PATH).href;
+const SCHEME = PRODUCT.protocolScheme;
+const RENDERER_ROOT = join(__dirname, '../renderer');
+const APP_URL = `${appOrigin(SCHEME)}/`;
+/** IPC is accepted only from our app:// origin (any SPA route). */
+const isRendererUrl = (u: string) => isAppUrl(u, SCHEME);
+
+// Must run before app 'ready': standard+secure so the origin behaves like https (storage, fetch, CSP 'self').
+protocol.registerSchemesAsPrivileged([
+  { scheme: SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: false, stream: true, codeCache: true } },
+]);
 
 app.setName(PRODUCT.productName);
 
+async function openExternalConfirmed(url: string) {
+  const opts = {
+    type: 'question' as const, buttons: ['取消', '在浏览器中打开'], defaultId: 0, cancelId: 0, noLink: true,
+    title: PRODUCT.productName, message: '在系统浏览器中打开外部链接？', detail: url,
+  };
+  const r = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
+  if (r.response === 1) await shell.openExternal(url);
+}
+
 function createWindow(): BrowserWindow {
   const w = new BrowserWindow({
-    width: 1100,
-    height: 760,
+    width: 1280,
+    height: 820,
     title: PRODUCT.productName,
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
+      nodeIntegrationInSubFrames: false,
       webSecurity: true,
+      allowRunningInsecureContent: false,
       webviewTag: false,
       spellcheck: false,
+      navigateOnDragDrop: false,
     },
   });
-  // Block navigation and new windows; external https links open in the OS browser only.
-  w.webContents.on('will-navigate', (e) => e.preventDefault());
+  // Navigation only within app://; http(s) goes to the OS browser after confirmation; all else denied.
+  const onNav = (e: Electron.Event, url: string) => {
+    const d = navigationDecision(url, SCHEME, 'navigate');
+    if (d.action === 'allow') return;
+    e.preventDefault();
+    if (d.action === 'external' && process.env.PA_SMOKE !== '1') void openExternalConfirmed(d.url);
+  };
+  w.webContents.on('will-navigate', onNav);
+  w.webContents.on('will-redirect', onNav);
+  w.webContents.on('will-attach-webview', (e) => e.preventDefault());
   w.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('https://')) void shell.openExternal(url);
+    const d = navigationDecision(url, SCHEME, 'open');
+    if (d.action === 'external' && process.env.PA_SMOKE !== '1') void openExternalConfirmed(d.url);
     return { action: 'deny' };
   });
-  w.webContents.on('did-finish-load', () => {
-    void w.webContents.executeJavaScript(`document.title = ${JSON.stringify(PRODUCT.productName)}; document.getElementById('product').textContent = document.title;`);
-  });
   if (process.env.PA_SMOKE === '1') runSmoke(w);
-  void w.loadFile(RENDERER_PATH);
+  void w.loadURL(APP_URL);
   return w;
 }
 
-/** Dev smoke check (PA_SMOKE=1): verify isolation + bridge + first render, print JSON, quit. */
+/** Dev smoke check (PA_SMOKE=1): isolation + bridge + upstream UI render + CSP + /api stub; optional screenshot. */
 function runSmoke(w: BrowserWindow) {
   const finish = (r: unknown, code: number) => { console.log('PA_SMOKE ' + JSON.stringify(r)); app.exit(code); };
-  const timer = setTimeout(() => finish({ ok: false, reason: 'timeout' }, 1), 20000);
+  const timer = setTimeout(() => finish({ ok: false, reason: 'timeout' }, 1), 45000);
   w.webContents.once('did-finish-load', () => {
     setTimeout(() => {
-      w.webContents.executeJavaScript(`(async () => ({
-        bridge: typeof window.pa?.invoke === 'function' && typeof window.pa?.on === 'function',
-        noNode: typeof require === 'undefined' && typeof process === 'undefined',
-        title: document.getElementById('product')?.textContent ?? null,
-        config: (await window.pa.invoke('config:get', {})).ok,
-      }))()`).then((r: Record<string, unknown>) => {
+      w.webContents.executeJavaScript(`(async () => {
+        const res = await fetch('/api/status');
+        const page = await fetch('/');
+        let evalBlocked = false; try { new Function('return 1')(); } catch { evalBlocked = true; }
+        let remoteBlocked = false; try { await fetch('https://example.com/'); } catch { remoteBlocked = true; }
+        return {
+          url: location.href,
+          bridge: typeof window.pa?.invoke === 'function' && typeof window.pa?.on === 'function',
+          noNode: typeof require === 'undefined' && typeof process === 'undefined',
+          rendered: (document.getElementById('root')?.childElementCount ?? 0) > 0,
+          title: document.title,
+          apiStatus: res.status,
+          csp: page.headers.get('content-security-policy'),
+          inlineScripts: [...document.scripts].filter((x) => !x.src).length,
+          evalBlocked, remoteBlocked,
+          config: (await window.pa.invoke('config:get', {})).ok,
+        };
+      })()`).then(async (r: Record<string, unknown>) => {
         clearTimeout(timer);
-        finish(r, r.bridge && r.noNode && r.title === PRODUCT.productName && r.config ? 0 : 1);
+        if (process.env.PA_SMOKE_SCREENSHOT) {
+          const img = await w.webContents.capturePage();
+          writeFileSync(process.env.PA_SMOKE_SCREENSHOT, img.toPNG());
+        }
+        const ok = r.bridge && r.noNode && r.rendered && r.apiStatus === 503 && r.csp === buildCsp(SCHEME) && r.inlineScripts === 0 && r.evalBlocked && r.remoteBlocked && r.config;
+        finish(r, ok ? 0 : 1);
       }, (e: unknown) => { clearTimeout(timer); finish({ ok: false, reason: String(e) }, 1); });
-    }, 1000);
+    }, Number(process.env.PA_SMOKE_WAIT_MS ?? 6000));
   });
 }
 
 if (process.env.PA_SMOKE === '1' && process.env.PA_USER_DATA) app.setPath('userData', process.env.PA_USER_DATA);
 
 app.whenReady().then(async () => {
-  // Deny all permission requests; cancel downloads.
-  electronSession.defaultSession.setPermissionRequestHandler((_wc, _p, cb) => cb(false));
-  electronSession.defaultSession.on('will-download', (e) => e.preventDefault());
+  // Deny all permission requests/checks; cancel downloads; no webviews.
+  const ses = electronSession.defaultSession;
+  ses.setPermissionRequestHandler((_wc, _p, cb) => cb(false));
+  ses.setPermissionCheckHandler(() => false);
+  ses.setDevicePermissionHandler(() => false);
+  ses.on('will-download', (e) => e.preventDefault());
+  ses.protocol.handle(SCHEME, (req) => handleAppRequest({ url: req.url, method: req.method }, RENDERER_ROOT, SCHEME));
+  app.on('web-contents-created', (_e, wc) => {
+    wc.on('will-attach-webview', (ev) => ev.preventDefault());
+    wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+  });
 
   const userData = app.getPath('userData');
   const host = await CoreHost.start({
@@ -111,7 +162,7 @@ app.whenReady().then(async () => {
     },
   });
   for (const ch of INVOKE_CHANNELS) {
-    ipcMain.handle(ch, (e, req) => (isTrustedSender(e, win, RENDERER_URL) ? dispatch(handlers, ch as InvokeChannel, req) : untrustedSender()));
+    ipcMain.handle(ch, (e, req) => (isTrustedSender(e, win, isRendererUrl) ? dispatch(handlers, ch as InvokeChannel, req) : untrustedSender()));
   }
   // Handlers are registered before the renderer loads, so its first invoke never races.
   win = createWindow();

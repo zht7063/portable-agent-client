@@ -21,4 +21,4 @@ This repository was started fresh (no git history carried over). The M1 code was
 - Renderer panels (login, balance/redeem, keys, chat, settings) and the React renderer. The HarnessPanel UI returns in M5 on top of the upstream component stack.
 - `electron-builder.yml` and `electronVersion` pinning (now `electron-builder.config.cjs` using the local Electron dist).
 
-Upstream new-api code (M2 onward) is vendored separately under `vendor/` with its own `PATCHES.md`; see NOTICE.
+Upstream new-api web (M2) is vendored pristine under `vendor/new-api-web/` (see `UPSTREAM`); our changes to it are the patch queue in `patches/new-api-web/` (README lists each patch and why). See NOTICE.

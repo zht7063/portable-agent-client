@@ -8,7 +8,7 @@ The source of truth is `packages/core/src/contract/`; this page only explains it
 - `@pac/keychain`: OS keychain backends (napi keyring on macOS/Windows, `secret-tool` on Linux, plus memory and none).
 - `@pac/pa-key`: the `pa-key` credential helper CLI and its wrapper installer.
 - `@pac/cli` (`pac`): dev/test tool only, not shipped. It uses `FileTokenStore`.
-- `@pac/desktop`: Electron main and preload, plus an M1 placeholder renderer.
+- `@pac/desktop`: Electron main and preload, serving the patched new-api web build on the app protocol (M2).
 
 ## Result and errors
 Every IPC call resolves to `Result<T> = {ok:true,data} | {ok:false,error:{code,message}}`. The codes are `VALIDATION`, `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`, `RATE_LIMITED`, `SERVER`, `NETWORK`, `TIMEOUT` and `CANCELLED`. Messages are always redacted (`redact()`): no keys, JWTs, cookies, URLs or hosts. Any response containing a credential-looking field or value is replaced with `SERVER` (`findCredentialLeaks`).

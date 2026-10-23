@@ -1,7 +1,7 @@
 # Architecture (state after M1)
 
 ```
-apps/desktop        Electron main + preload (contextIsolation, sandbox, no node in renderer), placeholder renderer
+apps/desktop        Electron main + preload (contextIsolation, sandbox, no node in renderer); renderer = patched new-api web build served on the privileged `<scheme>://app/` protocol (`src/main/app-protocol.ts`, strict CSP, /api stubbed 503 until M3)
   └─ uses @pac/core, @pac/harness, @pac/keychain, @pac/pa-key
 packages/core       contract/IPC, http (origin-pinned), session base, keys.secret, fs layer, product config
 packages/harness    Pi / Claude Code / Codex adapters (plan → apply → rollback, snapshots, ownership)

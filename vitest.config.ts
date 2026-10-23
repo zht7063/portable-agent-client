@@ -18,6 +18,6 @@ export default defineConfig({
   },
   test: {
     include: ['packages/*/test/**/*.test.ts', 'apps/*/test/**/*.test.ts'],
-    exclude: ['**/node_modules/**', '**/dist/**', 'test/live/**', 'vendor/**'],
+    exclude: ['**/node_modules/**', '**/dist/**', 'test/live/**', 'vendor/**', '.build/**'],
   },
 });

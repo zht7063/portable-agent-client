@@ -1,6 +1,6 @@
 # Portable Agent client (placeholder name)
 
-A desktop client for [new-api](https://github.com/QuantumNous/new-api) servers. It configures local coding agents (Pi, Claude Code, Codex) against your relay, and keeps keys in the OS keychain. Status: **M0 + M1** of plan v2 (repo skeleton and migrated core). The UI is a placeholder until the upstream new-api frontend is vendored (M2).
+A desktop client for [new-api](https://github.com/QuantumNous/new-api) servers. It configures local coding agents (Pi, Claude Code, Codex) against your relay, and keeps keys in the OS keychain. Status: **M0–M2** of plan v2. The UI is the upstream new-api web frontend (vendored, patched, built with bun + Rsbuild via `scripts/build-new-api-web.sh`); it cannot reach a server yet — the `/api` proxy is M3.
 
 Licensed **AGPL-3.0-only** (see `LICENSE`, `NOTICE`). Based on new-api: *Frontend design and development by New API contributors.* https://github.com/QuantumNous/new-api
 
@@ -12,7 +12,7 @@ Licensed **AGPL-3.0-only** (see `LICENSE`, `NOTICE`). Based on new-api: *Fronten
 | `packages/keychain` (`@pac/keychain`) | OS keychain backends. |
 | `packages/pa-key` (`@pac/pa-key`) | Credential helper the harnesses call; reads only the keychain. |
 | `packages/cli` (`@pac/cli`, `pac`) | Dev/test CLI. **Not shipped.** |
-| `apps/desktop` (`@pac/desktop`) | Electron main + preload, placeholder renderer. |
+| `apps/desktop` (`@pac/desktop`) | Electron main + preload; loads the new-api web build on `pac://app/`. |
 
 See `docs/architecture.md`, `docs/contracts.md`, `docs/harness.md`, `docs/compat.md` and `docs/PROVENANCE.md`.
 

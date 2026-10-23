@@ -9,15 +9,17 @@ const stripUrl = (u: string) => { try { const x = new URL(u); x.hash = ''; x.sea
 
 /**
  * Accept IPC only from the top-level frame of our own BrowserWindow, showing our bundled renderer.
+ * `allowed` is an exact URL (hash/query ignored) or a predicate (M2: any path on our app:// origin, SPA routes).
  * Rejects: other webContents, sub-frames/iframes, destroyed or not-yet-created windows, any other URL.
  */
-export function isTrustedSender(e: SenderEventLike, win: WindowLike | null | undefined, allowedUrl: string): boolean {
+export function isTrustedSender(e: SenderEventLike, win: WindowLike | null | undefined, allowed: string | ((url: string) => boolean)): boolean {
   if (!win || win.isDestroyed?.()) return false;
   const frame = e.senderFrame;
   if (!frame) return false; // frame navigated away or was destroyed
   if (e.sender !== win.webContents) return false;
   if (frame !== win.webContents.mainFrame || frame.parent !== null) return false;
-  const want = stripUrl(allowedUrl);
+  if (typeof allowed === 'function') return allowed(frame.url);
+  const want = stripUrl(allowed);
   return want !== null && stripUrl(frame.url) === want;
 }
 
