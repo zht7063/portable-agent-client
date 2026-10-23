@@ -23,32 +23,31 @@ Changing CSP, the preload surface or the allowlist requires updating the snapsho
   16 characters; values in secret-named fields are masked regardless of shape.
 - **Base64-encoded keys** (a key wrapped in base64, e.g. inside a Basic auth header or an encoded blob) are not
   decoded and therefore not detected/masked for now.
-- **Base64 spans** (sanitize). Plain text uses only `[A-Za-z0-9_-]` as run delimiters, so a key next to `/ + =`
-  (`https://h/K`, `https://h/v1/K/x`, `path/K`, `/K end`, `K/x`, `K+`, `K=`, `x+K`, `abc==K`) is masked. The base64
-  exception (runs bounded by `+ / =` or a line break are data, not keys) applies only inside a recognised span:
-  1. `data:image/<subtype>;base64,` at a word boundary, payload valid base64 (alphabet, <= 2 trailing `=`,
-     length % 4 == 0, >= 64 chars) whose decoded header is PNG/JPEG/GIF/WebP/SVG;
-  2. an unprefixed block: a maximal base64-alphabet run (line wraps allowed), >= 64 chars, length % 4 == 0, containing
-     `+` or `/`, with `+`/`/` density <= 1/16 (random base64 ≈ 1/32; URL paths have many short segments), not
-     adjacent to `[A-Za-z0-9_.:%~@?&#=-]` (so nothing after `https:` or `host.tld` qualifies), and not starting with `/`
-     unless >= 128 chars or an image header.
-  Spans of >= 128 chars and image payloads treat their own edges as base64 boundaries too (otherwise e.g. every PNG's
-  leading `iVBORw0KGgo…` run would be masked); 64-127-char blocks still mask a 32+ high-entropy run at their edge.
-  Every other `data:` form (`data:,K`, `data:x,K`, `data:;base64,K`, `metadata:,K`, short/invalid/non-image payloads)
-  is ordinary text. **Not masked**: a key inside a recognised span between `+ / =` / line breaks, or at the edge of a
-  >= 128-char span (e.g. `K/` followed by >= 79 chars of low-separator path-like base64 alphabet with valid length).
+- **Base64 (sanitize)**. Plain text uses only `[A-Za-z0-9_-]` as run delimiters, so a key next to `/ + =` is masked
+  (`https://h/K`, `/v1/K/x`, `K/R…`, `R…+K`, `AAAA/K+R…`, `{"sig":"R…+K"}`, `abc==K`, …). There is **no** exception
+  for unprefixed base64 (the former block heuristic was bypassable and was deleted). The single exception is a
+  word-boundary `data:image/<subtype>;base64,` whose payload is valid base64 (alphabet, <= 2 trailing `=`, length
+  % 4 == 0, >= 64 chars, no line breaks) **and** decodes to a PNG/JPEG/GIF/WebP/SVG header. **Not masked** (pinned by
+  tests in `bare-key-masking.test.ts`): inside such a verified payload, any key-shaped run is left alone when it is
+  bounded by `+`, `/`, `=`, or the payload's own start/end — in practice the whole verified payload is untouched,
+  including a key glued to its end when the total length stays valid. A key after the payload separated by any
+  non-base64 char (`"`, space, `>`) is masked; payloads that are invalid or lack the header are plain text.
 - **False positives on ordinary base64** (`apps/desktop/test/security/base64-fp.test.ts`, 10k deterministic blobs:
-  random/PNG/JPEG/gzip bytes, unwrapped or wrapped at 64/76, bare or as `data:image`): altered = output != input.
+  random/PNG/JPEG/gzip bytes, unwrapped or wrapped at 64/76, bare or as `data:image`). Altered = output != input; it
+  only over-masks (a 32+ high-entropy run becomes `xxxx**********xxxx`, display corruption), never leaks.
 
-  | encoded length | blobs | altered |
+  | blobs | count | altered |
   |---|---|---|
-  | < 64 | 1063 | 36.31% (plain text by design: indistinguishable from a key) |
-  | 64-127 | 732 | 8.33% |
-  | 128-511 | 2143 | 0.51% |
-  | >= 512 | 6062 | 0.02% |
-  | all | 10000 | 4.59% |
+  | png as `data:image` | 647 | 7.57% (payloads < 64 chars, plain text) |
+  | jpeg as `data:image` | 725 | 2.21% |
+  | unprefixed random (unwrapped / wrap 64 / wrap 76) | 1973 / 988 / 1027 | 87.99% / 88.06% / 89.78% |
+  | unprefixed png / jpeg / gzip (unwrapped) | 661 / 649 / 990 | 95.16% / 89.98% / 96.36% |
+  | by length: <64 / 64-127 / 128-511 / >=512 | 1063 / 732 / 2143 / 6062 | 36.31% / 71.31% / 84.04% / 86.77% |
+  | all | 10000 | 79.69% |
 
-  Altering means a 32+ high-entropy run is replaced by `xxxx**********xxxx` (display corruption, never a leak).
+  Rationale: unprefixed base64 cannot be told apart from text that embeds a key without being bypassable, so it is
+  treated as plain text and over-masked. Bench bounds: png(data:image) <= 9%, jpeg(data:image) <= 3%, all <= 82%.
 - The high-entropy heuristic (upper + lower + digit, >= 6 class switches, not hex/UUID/single-case/identifier+number)
   can miss keys that happen to look low-entropy and can flag non-secrets; scan-bundle false positives go into
-  `scripts/scan-bundle-allowlist.json` (sha256 + justification only).
+  `scripts/scan-bundle-allowlist.json` (sha256 + path glob + justification). Inline images in renderer text: a
+  `data:image` with a payload < 64 chars or without a recognised header may be over-masked (display only).

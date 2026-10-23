@@ -1,4 +1,5 @@
 // M7 (Aegis): false-positive rate of bare-key masking on ordinary base64 (how often a legit blob gets altered).
+// Only header-verified data:image payloads are exempt; unprefixed base64 is plain text (rule (b) was removed).
 // 10k deterministic blobs: random / PNG / JPEG / gzip bytes, base64-encoded, unwrapped or wrapped at 64 / 76 cols,
 // bare or as a data:image URI. Prints a table (also: PA_B64_BENCH=1 for the per-kind table) and pins upper bounds.
 import { gzipSync } from 'node:zlib';
@@ -41,10 +42,11 @@ describe('base64 false-positive bench', () => {
     const rows = [...stats].map(([k, v]) => `${k.padEnd(22)} ${String(v.n).padStart(5)}  altered ${String(v.alt).padStart(4)}  ${((100 * v.alt) / v.n).toFixed(2)}%`);
     console.info(`base64 FP bench (10k blobs)\n${rows.join('\n')}`);
     const pct = (k: string) => { const v = stats.get(k)!; return (100 * v.alt) / v.n; };
-    // measured at commit time: >=512 0.02%, 128-511 0.51%, 64-127 8.33%, <64 36.31% (short blobs are plain text), all 4.59%
-    expect(pct('>=512')).toBeLessThanOrEqual(0.5);
-    expect(pct('128-511')).toBeLessThanOrEqual(1.5);
-    expect(pct('64-127')).toBeLessThanOrEqual(12);
-    expect(pct('all')).toBeLessThanOrEqual(6);
+    // Measured after rule (b) was deleted (only header-verified data:image payloads are exempt). Unprefixed base64
+    // is ordinary text by design and is mostly altered; false positives only over-mask (display), never leak.
+    // measured: png(data:image) 7.57%, jpeg(data:image) 2.21% (payloads < 64 chars), all 79.69%. Bounds = measured + margin.
+    expect(pct('png(data:image)')).toBeLessThanOrEqual(9);
+    expect(pct('jpeg(data:image)')).toBeLessThanOrEqual(3);
+    expect(pct('all')).toBeLessThanOrEqual(82);
   });
 });
