@@ -43,7 +43,11 @@ Guarantees:
    right after `"b64_json":"` or `data:image/<type>;base64,` (the first one within 8 KiB of the line start) whose first
    24 base64 chars decode to a PNG/JPEG/GIF/WebP (SVG for data:image) header. Text outside verified spans is limited
    to 1 MiB per line and counted incrementally, so a fake marker is rejected after ~1 MiB, not after buffering 32 MiB.
-   Total bytes per stream are capped at 64 MiB. Beyond any limit the line is
+   A process-wide budget caps bytes currently buffered (unflushed partial lines) across all concurrent SSE streams at
+   64 MiB (counted in UTF-16 code units, = bytes for ASCII/base64). There is no cumulative per-stream cap, so long
+   sessions are never cut. The stream whose buffering would push the global total over 64 MiB ends with `event: error` /
+   `SSE_BUFFER_LIMIT` and releases its share; other streams continue. Each stream's share is released on line flush,
+   stream end, error frames and consumer cancel/upstream abort (`sseBudget.held` returns to 0). Beyond a per-line limit the line is
    dropped and the stream ends with `event: error` / `SSE_LINE_TOO_LARGE`. `data:image` spans are found with a linear
    scan (no backtracking regex), so multi-MB images pass byte-identical.
    **`b64_json` exception (Iris decision; no generic base64 exception).** In a JSON body, or the JSON of an SSE
