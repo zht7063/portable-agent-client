@@ -1,9 +1,9 @@
 {
-  "$comment": "Upstream pin (plan v2 §4). tag/commit = vendored new-api web snapshot (M2). minServer/maxServerTested are provisional until verified in M3 (/api/status) and the CI matrix (M7).",
+  "$comment": "Upstream pin (plan v2 §4). tag/commit = vendored new-api web snapshot (M2). maxServerTested verified in M3 against the official v1.0.0-rc.46 release binary (local integration: scripts/integration-local-newapi.sh). minServer stays provisional (= pin) until the M7 CI matrix tests older servers.",
   "upstream": "https://github.com/QuantumNous/new-api",
   "tag": "v1.0.0-rc.46",
   "commit": "7d8b91268dab69d7150f345c448b5e250163146a",
   "minServer": "v1.0.0-rc.46",
-  "maxServerTested": null,
+  "maxServerTested": "v1.0.0-rc.46",
   "policy": "same-minor-line"
 }

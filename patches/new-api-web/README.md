@@ -19,6 +19,10 @@ preserved (upstream UI footer/about untouched; also in our NOTICE).
 |---|---|---|---|
 | `0001-csp-move-inline-theme-script.patch` | `index.html`, new `public/theme-init.js` | The desktop renderer runs under a strict CSP (`script-src 'self'`, no inline scripts). Upstream's pre-paint theme script was inline in `index.html`; it is moved verbatim into a same-origin file. No behaviour change. | 2026-10-24 (M2) |
 
+M3 (main-process `/api` proxy, login option A) needed **no frontend patch**: upstream keeps the access token in an
+in-memory store only and nothing credential-bearing in localStorage; the proxy hands the renderer an opaque handle and
+masks keys server-side of the renderer (see `docs/proxy.md`).
+
 No base-path or router-mode patch is needed: the app is served from the root of a standard, secure custom
 origin (`<scheme>://app/`), so upstream's absolute `/static/...` asset URLs and browser-history routing work as-is
 (main serves `index.html` for extension-less routes).

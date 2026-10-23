@@ -1,0 +1,151 @@
+import { decide, normalisePath } from './allowlist';
+import type { CookieJar } from './cookie-jar';
+import { AccessTokenVault, HANDLE_PREFIX, filterRequestHeaders, filterResponseHeaders, sanitizeJson, maskSecret } from './sanitize';
+import type { FetchLike, ServerCheck } from './server-status';
+
+/*
+ * M3 (plan v2 §2): main-process proxy for renderer requests to <scheme>://app/{api,pg}/*.
+ *  - allowlisted path + method only; forwarded to the configured server origin only (origin pinned, no redirects)
+ *  - Cookie comes from the main-only jar; Set-Cookie is captured there and never returned
+ *  - Authorization: the renderer only ever holds an opaque handle; main swaps in the real access token
+ *  - JSON responses are sanitised (auth bundle -> handle, secrets masked) before reaching the renderer
+ *  - login is refused while the startup /api/status check says so (too old / not new-api / Turnstile)
+ */
+
+export const LIMITS = { requestBody: 8 << 20, responseBody: 32 << 20 } as const;
+/** Endpoints that create a session: gated by the server compatibility check. */
+const LOGIN_PATHS = new Set(['/api/user/login', '/api/user/login/2fa', '/api/user/login/verify', '/api/user/register', '/api/user/auth/refresh']);
+const LOGOUT_PATHS = new Set(['/api/user/auth/logout', '/api/user/logout']);
+/** /api/status flags for login methods the client cannot carry: hidden so upstream does not offer them. */
+const STATUS_DISABLE = ['github_oauth', 'discord_oauth', 'linuxdo_oauth', 'telegram_oauth', 'wechat_login', 'oidc_enabled', 'passkey_login'];
+
+export interface ProxyRequest { method: string; url: string; headers: Headers; body: ArrayBuffer | null }
+export interface ServerProxyOptions {
+  getOrigin(): string | null;
+  getCheck(): ServerCheck | null;
+  getJar(): CookieJar;
+  vault: AccessTokenVault;
+  fetch: FetchLike;
+  timeoutMs?: number;
+  /** Fired after a successful logout or a 401 on refresh (session gone). */
+  onSessionCleared?(): void;
+}
+
+export function jsonResponse(status: number, body: unknown, extra: Record<string, string> = {}): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...extra } });
+}
+const fail = (status: number, code: string, message: string) => jsonResponse(status, { success: false, code, message });
+
+export class ServerProxy {
+  constructor(private readonly o: ServerProxyOptions) {}
+
+  async handle(req: ProxyRequest): Promise<Response> {
+    let u: URL;
+    try { u = new URL(req.url); } catch { return fail(400, 'BAD_REQUEST', 'bad url'); }
+    const path = normalisePath(u.pathname);
+    if (!path) return fail(400, 'BAD_REQUEST', 'bad path');
+    const method = req.method.toUpperCase();
+    const d = decide(method, path);
+    if (!d.allow) return fail(d.status, d.code, d.message);
+
+    const origin = this.o.getOrigin();
+    if (!origin) return fail(503, 'NO_SERVER', '尚未配置服务器地址（设置 PAC_SERVER_URL 或在配置中填写 serverUrl）。');
+    const target = new URL(path + u.search, origin);
+    if (target.origin !== origin) return fail(400, 'BAD_REQUEST', 'origin mismatch'); // defence in depth
+
+    if (LOGIN_PATHS.has(path) && method === 'POST') {
+      const c = this.o.getCheck();
+      if (!c || !c.allowLogin) {
+        return fail(403, 'LOGIN_BLOCKED', c ? c.messages.filter((m) => !m.includes('HTTPS')).join(' ') || '登录已被客户端阻止。' : '尚未完成服务器兼容性检查，请稍后重试。');
+      }
+    }
+
+    if (req.body && req.body.byteLength > LIMITS.requestBody) return fail(413, 'TOO_LARGE', 'request body too large');
+
+    const headers: Record<string, string> = filterRequestHeaders(req.headers);
+    const cookie = this.o.getJar().header(path, origin.startsWith('https://'));
+    if (cookie) headers.cookie = cookie;
+    const auth = req.headers.get('authorization');
+    if (auth?.startsWith(`Bearer ${HANDLE_PREFIX}`)) {
+      const real = this.o.vault.resolve(auth.slice('Bearer '.length));
+      if (real) headers.authorization = `Bearer ${real}`;
+    }
+
+    let res: Response;
+    try {
+      res = await this.o.fetch(target.href, {
+        method, headers, redirect: 'manual', credentials: 'omit',
+        body: method === 'GET' || method === 'HEAD' ? undefined : (req.body ?? undefined),
+        signal: AbortSignal.timeout(this.o.timeoutMs ?? 120000),
+      });
+    } catch (e) {
+      return fail(502, 'UPSTREAM_UNREACHABLE', `无法连接服务器：${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    const setCookies = typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : [];
+    if (setCookies.length) this.o.getJar().store(setCookies, path);
+
+    if (LOGOUT_PATHS.has(path) && res.ok) { this.o.vault.clear(); this.o.getJar().clear(); this.o.onSessionCleared?.(); }
+
+    const outHeaders = filterResponseHeaders(res.headers);
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get('location');
+      let same = false;
+      try { same = !!loc && new URL(loc, target).origin === origin; } catch { /* bad location */ }
+      await res.body?.cancel();
+      if (!same) return fail(502, 'CROSS_ORIGIN_REDIRECT', '服务器尝试重定向到其他站点，已阻止。');
+      const l = new URL(loc as string, target);
+      return new Response(null, { status: res.status, headers: { ...outHeaders, location: l.pathname + l.search } });
+    }
+
+    const ct = (res.headers.get('content-type') ?? '').toLowerCase();
+    if (method === 'HEAD' || res.status === 204 || res.status === 304) { await res.body?.cancel(); return new Response(null, { status: res.status, headers: outHeaders }); }
+    if (ct.includes('text/event-stream')) {
+      // Playground SSE: model output only. Streamed through unchanged (headers filtered).
+      return new Response(res.body, { status: res.status, headers: outHeaders });
+    }
+
+    const buf = await readLimited(res, LIMITS.responseBody);
+    if (!buf) return fail(502, 'TOO_LARGE', 'upstream response too large');
+    if (ct.includes('json') || ct.startsWith('text/')) {
+      const text = new TextDecoder().decode(buf);
+      let parsed: unknown; let isJson = false;
+      try { parsed = JSON.parse(text); isJson = true; } catch { /* not JSON */ }
+      if (!isJson) return new Response(maskText(text), { status: res.status, headers: outHeaders });
+      if (path === '/api/status' && method === 'GET') parsed = rewriteStatus(parsed);
+      const clean = sanitizeJson(parsed, this.o.vault);
+      return new Response(JSON.stringify(clean), { status: res.status, headers: { ...outHeaders, 'content-type': 'application/json; charset=utf-8' } });
+    }
+    return new Response(buf, { status: res.status, headers: outHeaders });
+  }
+}
+
+function maskText(s: string): string {
+  return s.replace(/\bsk-[A-Za-z0-9_-]{16,}/g, (m) => maskSecret(m)).replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g, (m) => maskSecret(m));
+}
+
+export function rewriteStatus(body: unknown): unknown {
+  if (!body || typeof body !== 'object') return body;
+  const data = (body as { data?: unknown }).data;
+  if (!data || typeof data !== 'object') return body;
+  const d: Record<string, unknown> = { ...(data as Record<string, unknown>) };
+  for (const f of STATUS_DISABLE) if (f in d) d[f] = false;
+  if (Array.isArray(d.custom_oauth_providers)) d.custom_oauth_providers = [];
+  return { ...(body as object), data: d };
+}
+
+async function readLimited(res: Response, max: number): Promise<Uint8Array | null> {
+  if (!res.body) return new Uint8Array();
+  const reader = res.body.getReader();
+  const parts: Uint8Array[] = []; let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > max) { await reader.cancel(); return null; }
+    parts.push(value);
+  }
+  const out = new Uint8Array(n); let o = 0;
+  for (const p of parts) { out.set(p, o); o += p.byteLength; }
+  return out;
+}

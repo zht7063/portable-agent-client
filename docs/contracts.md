@@ -29,5 +29,5 @@ The v0 `auth:*`, `billing:*`, `keys:*`, `models:list` and `chat:*` channels were
 ## HTTP (core)
 - The origin is pinned. Paths must be absolute (`/…`), with no `//`, backslash or whitespace. Redirects are refused (`redirect: 'manual'`, any 3xx becomes `SERVER`).
 - There is no built-in server. A server is configured through `config:set` / `pac config set-url` / `PAC_SERVER_URL`. Non-HTTPS is allowed with a warning only (`insecureTransport: true`).
-- Session refresh (`session/refresh.ts`) is single-flight and backs off on transient errors. This is the base that the M3 main-only proxy session replaces.
+- Session refresh (`session/refresh.ts`) is single-flight and backs off on transient errors. The desktop renderer's login session is the M3 main-only proxy session (docs/proxy.md); `@pac/core`'s session remains for the CLI.
 - `keys.secret(id)` (`POST /api/token/:id/key`) is used only in main, to provision a harness key into the keychain. It is never returned over IPC.

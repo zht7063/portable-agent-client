@@ -1,6 +1,6 @@
 # Portable Agent client (placeholder name)
 
-A desktop client for [new-api](https://github.com/QuantumNous/new-api) servers. It configures local coding agents (Pi, Claude Code, Codex) against your relay, and keeps keys in the OS keychain. Status: **M0–M2** of plan v2. The UI is the upstream new-api web frontend (vendored, patched, built with bun + Rsbuild via `scripts/build-new-api-web.sh`); it cannot reach a server yet — the `/api` proxy is M3.
+A desktop client for [new-api](https://github.com/QuantumNous/new-api) servers. It configures local coding agents (Pi, Claude Code, Codex) against your relay, and keeps keys in the OS keychain. Status: **M0–M3** of plan v2. The UI is the upstream new-api web frontend (vendored, patched, built with bun + Rsbuild via `scripts/build-new-api-web.sh`); renderer `/api/*` requests are forwarded by the main process to the configured server with a main-only session (M3, see `docs/proxy.md`).
 
 Licensed **AGPL-3.0-only** (see `LICENSE`, `NOTICE`). Based on new-api: *Frontend design and development by New API contributors.* https://github.com/QuantumNous/new-api
 
@@ -40,3 +40,7 @@ URLs must be http/https, with no credentials, query or fragment. Plain `http://`
 
 ## Live test
 `PAC_LIVE=1 PAC_SERVER_URL=https://… bun run test:live` runs a read-only `/api/status` smoke. It is skipped by default.
+
+M3 local integration (official new-api release binary, throwaway DB and fake account, loopback-only network namespace;
+runs the live proxy test and an xvfb Electron login smoke, then deletes everything):
+`NEWAPI_BIN=/path/new-api-v1.0.0-rc.46 unshare -rn scripts/integration-local-newapi.sh`. Never point it at a real server.

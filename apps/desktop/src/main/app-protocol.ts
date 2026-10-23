@@ -7,7 +7,7 @@ import { readFile, stat } from 'node:fs/promises';
  *  - read-only, confined to the renderer directory (path traversal / encoded separators / NUL rejected)
  *  - SPA fallback to index.html for extension-less routes
  *  - strict CSP + hardening headers on every response
- *  - /api/* (and other server paths) are NOT proxied in M2: stub 503 (proxy lands in M3)
+ *  - /api/* (and other server paths) go to the M3 main-process proxy when one is supplied (else 503 stub)
  */
 
 export const APP_HOST = 'app';
@@ -58,7 +58,7 @@ export const SERVER_PATH = /^\/(api|v1|mj|pg)(\/|$)/;
 export type Resolved =
   | { kind: 'file'; path: string }
   | { kind: 'spa' }           // serve index.html (client-side route)
-  | { kind: 'server' }        // /api/* etc. → 503 stub in M2
+  | { kind: 'server' }        // /api/* etc. → main-process proxy (M3)
   | { kind: 'reject'; status: 400 | 403 | 404 };
 
 /**
@@ -97,12 +97,23 @@ export const nodeFs: FsLike = {
 export const M2_API_STUB = { success: false, message: 'not implemented in M2: the /api proxy lands in M3', code: 'NOT_IMPLEMENTED' };
 
 /** Build the protocol response. Only GET/HEAD are served; everything carries the security headers. */
-export async function handleAppRequest(req: { url: string; method: string }, root: string, scheme: string, fs: FsLike = nodeFs): Promise<Response> {
+/** Server-path handler (M3: the main-process proxy). Without one, server paths get the 503 stub. */
+export type ServerHandler = (req: { url: string; method: string }) => Promise<Response>;
+
+export async function handleAppRequest(req: { url: string; method: string }, root: string, scheme: string, fs: FsLike = nodeFs, server?: ServerHandler): Promise<Response> {
   const base = securityHeaders(scheme);
   const text = (status: number, body: string) => new Response(body, { status, headers: { ...base, 'Content-Type': 'text/plain; charset=utf-8' } });
   const r = resolveRequest(req.url, root, scheme);
   if (r.kind === 'reject') return text(r.status, r.status === 404 ? 'Not found' : r.status === 403 ? 'Forbidden' : 'Bad request');
   if (r.kind === 'server') {
+    if (server) {
+      const res = await server(req);
+      // Proxy output never carries Set-Cookie (stripped in the proxy); CSP/hardening headers are re-applied here.
+      const h = new Headers(res.headers);
+      h.delete('set-cookie');
+      for (const [k, v] of Object.entries(base)) h.set(k, v);
+      return new Response(res.body, { status: res.status, headers: h });
+    }
     return new Response(JSON.stringify(M2_API_STUB), { status: 503, headers: { ...base, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } });
   }
   if (req.method !== 'GET' && req.method !== 'HEAD') return text(405, 'Method not allowed');
