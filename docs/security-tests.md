@@ -34,10 +34,20 @@ Guarantees:
 2. **Unknown secrets are masked heuristically** (`sk-…`, JWT, `otpauth://`, `Bearer …`, 32–128 char high-entropy runs).
    Best effort; see limitations below.
 3. **SSE** (`text/event-stream`, playground) is sanitised line by line (`sseSanitizer`): each complete line is masked
-   and forwarded at once (latency = one line); partial lines are buffered; a line > 64 KiB is flushed in pieces cut at
-   a non-key character with a 256-char tail so no key is split. Decision: the earlier pass-through was not
+   and forwarded at once (latency = one line); partial lines are buffered. Lines are **never cut** (a cut inside a
+   `data:image` payload would break span recognition and either corrupt the image or let a heuristic decision differ):
+   a single line may grow to 32 MiB (= `LIMITS.responseBody`, the cap for buffered bodies); beyond that the line is
+   dropped and the stream ends with `event: error` / `SSE_LINE_TOO_LARGE`. `data:image` spans are found with a linear
+   scan (no backtracking regex), so multi-MB images pass byte-identical. Raw `b64_json` (no `data:image` prefix) is
+   ordinary text and gets over-masked (display corruption only). Decision: the earlier pass-through was not
    intentional-by-design (model output can echo prompts and upstream errors), so it was fixed.
-4. **Masked values are never saved back**: a request body carrying our mask (`**********` / `ab****yz`) or a handle to
+4. **Paths are decided on their decoded form.** The vendored frontend puts `encodeURIComponent()` values in path
+   segments (session ids, plugin keys/versions, task/container ids, node names), so `%` cannot be refused outright.
+   Each segment is decoded once; malformed escapes, a decoded `%` (double encoding), `/`, `\\`, control chars or dot
+   segments are refused (400). DENY, the allowlist, the 409 guards and login/logout gates all see the decoded path, and
+   its canonical re-encoding is what is sent upstream. The query string is forwarded verbatim (it may legitimately
+   carry `%`) and is never used for decisions.
+5. **Masked values are never saved back**: a request body carrying our mask (`**********` / `ab****yz`) or a handle to
    a secret-round-tripping endpoint is refused with 409 before leaving main (see the field list below).
 
 ## UI fields that can display base64 / key material (vendored new-api web, rc.46)
@@ -52,7 +62,7 @@ Guarantees:
 | Deployments `/api/deployments` | `registry_secret`, `secret_env_variables` | yes |
 | Profile notifications `PUT /api/user/setting` | `webhook_secret` (inside JSON `setting`) | **added in this round** |
 | Profile `PUT /api/user/self` | `password` | yes (password fields only) |
-| Login `GET /api/user/login/encryption-key` | `public_key` (RSA PEM, public) | n/a — passed through intact (only known values masked) because masking breaks password encryption |
+| Login `GET /api/user/login/encryption-key` | `public_key` (RSA PEM, public) | n/a — only the top-level `data.public_key` on that path, only if it has a PUBLIC KEY PEM header and `crypto.createPublicKey` parses it; passed through intact (known values still masked) because masking breaks password encryption |
 | Any response | `ETag` header | header values are now `maskString`-ed |
 
 Read-only displays (passkey public keys, Gemini thought signatures) are not saved by the client.
@@ -63,6 +73,11 @@ Read-only displays (passkey public keys, Gemini thought signatures) are not save
   (bounded by `+`/`/`/`=`), or by encoding/splitting them (base64, short pieces, homoglyphs). Only known secrets are
   guaranteed masked there. This is by design (see threat model): the client cannot defend secrets it does not know
   against the server that holds them.
+- **Known values come only from SECRET_FIELDS.** A key under a field name not in `SECRET_FIELDS` (e.g. a custom
+  `upstream_cred`), or one that only appears in free text, is not collected as a known value; it is masked only if the
+  heuristic catches it (so not inside a header-valid `data:image` payload).
+- **A known key inside a data:image payload corrupts that image**: after exact replacement the payload is no longer
+  valid base64, so the rest of the span is treated as plain text and over-masked.
 - **Unprefixed keys shorter than 32 characters** are not detected (scan-bundle) or masked (sanitize `looksLikeBareKey`):
   below that length the random-vs-identifier heuristic produces too many false positives. `sk-` keys are covered from
   16 characters; values in secret-named fields are masked regardless of shape.
