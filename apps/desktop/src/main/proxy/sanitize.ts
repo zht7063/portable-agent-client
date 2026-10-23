@@ -36,11 +36,39 @@ const SECRET_FIELDS = new Set([
 ]);
 /** `key` is also an ordinary field (e.g. /api/option returns {key: "SMTPServer", value}). Mask only secret-shaped. */
 const AMBIGUOUS = new Set(['key', 'token', 'sk']);
-const SECRET_SHAPE = [
-  /\bsk-[A-Za-z0-9_-]{16,}/g,                          // sk- keys: any custom length (16-128 and beyond), may contain - and _
-  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g, // JWT-like
-  /otpauth:\/\/[^\s"']+/g,
-];
+/*
+ * Secret shapes, matched by hand-written linear scanners (Aegis M7 6: the equivalent regexes -- /\bsk-[..]{16,}/,
+ * JWT, Bearer -- overflow the regexp stack on multi-MB runs):
+ *   sk- keys (\bsk-[A-Za-z0-9_-]{16,}: any custom length, may contain - and _), JWT-like
+ *   (\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*), otpauth:// URIs (up to whitespace or a quote).
+ */
+const isWordC = (c: number) => (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95;
+const isUrlB64C = (c: number) => isWordC(c) || c === 45;
+const spanOf = (s: string, i: number, ok: (c: number) => boolean) => { while (i < s.length && ok(s.charCodeAt(i))) i++; return i; };
+/** Replaces every match of a literal-anchored shape. `end(i)` returns the match end for a candidate at i, or -1. */
+function replaceShape(s: string, lit: string, wordStart: boolean, end: (i: number) => number, repl: (m: string, i: number) => string, ci = false): string {
+  const hay = ci ? s.toLowerCase() : s;
+  let out = '', last = 0, from = 0;
+  for (;;) {
+    const i = hay.indexOf(lit, from); if (i < 0) break;
+    if (wordStart && i > 0 && isWordC(s.charCodeAt(i - 1))) { from = i + 1; continue; }
+    const e = end(i); if (e < 0) { from = i + 1; continue; }
+    out += s.slice(last, i) + repl(s.slice(i, e), i); last = from = e;
+  }
+  return last === 0 ? s : out + s.slice(last);
+}
+function maskShapes(s: string): string {
+  let out = replaceShape(s, 'sk-', true, (i) => { const e = spanOf(s, i + 3, isUrlB64C); return e - i - 3 >= 16 ? e : -1; }, maskSecret);
+  const o2 = out;
+  out = replaceShape(o2, 'eyJ', true, (i) => {
+    const a = spanOf(o2, i + 3, isUrlB64C); if (a - i - 3 < 8 || o2[a] !== '.') return -1;
+    const b = spanOf(o2, a + 1, isUrlB64C); if (b - a - 1 < 8 || o2[b] !== '.') return -1;
+    return spanOf(o2, b + 1, isUrlB64C);
+  }, maskSecret);
+  const o3 = out;
+  out = replaceShape(o3, 'otpauth://', false, (i) => { const e = spanOf(o3, i + 10, (c) => !(c === 34 || c === 39 || /\s/.test(String.fromCharCode(c)))); return e > i + 10 ? e : -1; }, maskSecret);
+  return out;
+}
 /*
  * M7 (Aegis): bare (unprefixed) keys in free text. A run of 16-128 [A-Za-z0-9_-] chars counts as a key only if it
  * looks random (see looksLikeBareKey); ordinary IDs (hex digests, UUIDs, numeric/lowercase request IDs) do not.
@@ -137,8 +165,17 @@ export function looksLikeBareKey(s: string): boolean {
   return switches >= 6;
 }
 
-/** M7: `Bearer <token>` anywhere in free text (upstream error messages echoing the request). */
-const BEARER = /\b(bearer\s+)([A-Za-z0-9._~+/=-]{12,})/gi;
+/** M7: `Bearer <token>` anywhere in free text (upstream error messages echoing the request); linear scanner. */
+const isBearerC = (c: number) => isUrlB64C(c) || c === 46 || c === 126 || c === 43 || c === 47 || c === 61;
+function maskBearer(s: string): string {
+  return replaceShape(s, 'bearer', true, (i) => {
+    const ws = spanOf(s, i + 6, (c) => /\s/.test(String.fromCharCode(c))); if (ws === i + 6) return -1;
+    const e = spanOf(s, ws, isBearerC); return e - ws >= 12 ? e : -1;
+  }, (m) => {
+    const ws = spanOf(m, 6, (c) => /\s/.test(String.fromCharCode(c))); const tok = m.slice(ws);
+    return tok.startsWith(HANDLE_PREFIX) ? m : m.slice(0, ws) + maskSecret(tok);
+  }, true);
+}
 const isRawKey = (x: string) => /^sk-[A-Za-z0-9_-]{16,}$/.test(x) || looksLikeBareKey(x); // new-api keys: 48 alnum, stored without sk-
 
 export function maskSecret(s: string): string {
@@ -176,8 +213,7 @@ function* imageSpans(s: string): Generator<{ start: number; payload: string }> {
   }
 }
 function maskPlain(s: string, bare: boolean, run: RegExp | null = null): string {
-  let out = s.replace(BEARER, (_m, pre: string, tok: string) => (tok.startsWith(HANDLE_PREFIX) ? pre + tok : pre + maskSecret(tok)));
-  for (const re of SECRET_SHAPE) out = out.replace(re, (m) => maskSecret(m));
+  let out = maskShapes(maskBearer(s));
   if (bare) out = run ? out.replace(run, (m) => (looksLikeBareKey(m) ? maskSecret(m) : m)) : maskBareRuns(out);
   return out;
 }
@@ -190,7 +226,14 @@ export function maskErrorText(s: string, known: (string | null | undefined)[] = 
   let out = String(s);
   for (const k of known) if (k && k.length >= 4) out = out.split(k).join(maskSecret(k));
   out = maskString(out);
-  return out.replace(/[A-Za-z0-9_-]{24,}/g, (m) => maskSecret(m));
+  let r = '', last = 0;
+  for (let i = 0; i < out.length;) {
+    if (!isUrlB64C(out.charCodeAt(i))) { i++; continue; }
+    const e = spanOf(out, i, isUrlB64C);
+    if (e - i >= 24) { r += out.slice(last, i) + maskSecret(out.slice(i, e)); last = e; }
+    i = e;
+  }
+  return last === 0 ? out : r + out.slice(last);
 }
 
 /**
@@ -226,6 +269,12 @@ const imageItems = (root: unknown): Set<unknown> => {
 };
 
 export interface SanitizeStats { masked: number; handles: number }
+/**
+ * Aegis M7 6: JSON.parse accepts arbitrarily deep nesting, but sanitizeJson walks recursively, so a deeply nested
+ * body would overflow the stack. Beyond MAX_JSON_DEPTH the body is refused (callers turn this into a 502).
+ */
+export const MAX_JSON_DEPTH = 256;
+export class JsonTooDeepError extends Error { constructor() { super('JSON nesting too deep'); this.name = 'JsonTooDeepError'; } }
 
 function isAuthBundle(o: Record<string, unknown>): boolean {
   return typeof o.access_token === 'string' && o.access_token.length > 0 && typeof o.token_type === 'string'
@@ -236,14 +285,19 @@ function isAuthBundle(o: Record<string, unknown>): boolean {
 export function sanitizeJson(v: unknown, vault: AccessTokenVault, stats: SanitizeStats = { masked: 0, handles: 0 }, extraKnown: Iterable<string | null | undefined> = [], exempt?: (o: Record<string, unknown>, k: string, v: unknown) => boolean): unknown {
   // Pass 1: collect known secrets (values under secret-named fields + vault tokens + caller-supplied).
   const found: string[] = [];
-  const collect = (x: unknown, field: string | null): void => {
+  const collect = (x: unknown, field: string | null, d = 0): void => {
+    if (d > MAX_JSON_DEPTH) throw new JsonTooDeepError();
     if (typeof x === 'string') {
-      if (field === 'setting' && x.startsWith('{')) { try { collect(JSON.parse(x), null); } catch { /* not JSON */ } }
+      if (field === 'setting' && x.startsWith('{')) {
+        let inner: unknown; let ok = true;
+        try { inner = JSON.parse(x); } catch { ok = false; /* not JSON */ }
+        if (ok) collect(inner, null, d + 1); // JsonTooDeepError must propagate
+      }
       if (field !== null && SECRET_FIELDS.has(field) && (!AMBIGUOUS.has(field) || isRawKey(x) || /^sk-/.test(x))) found.push(x);
     } else if (Array.isArray(x)) {
-      for (const e of x) collect(e, field !== null && SECRET_FIELDS.has(field) && !AMBIGUOUS.has(field) ? field : null);
+      for (const e of x) collect(e, field !== null && SECRET_FIELDS.has(field) && !AMBIGUOUS.has(field) ? field : null, d + 1);
     } else if (x && typeof x === 'object') {
-      for (const [k, val] of Object.entries(x as Record<string, unknown>)) collect(val, k.toLowerCase());
+      for (const [k, val] of Object.entries(x as Record<string, unknown>)) collect(val, k.toLowerCase(), d + 1);
     }
   };
   collect(v, null);
@@ -298,60 +352,105 @@ export function isPemPublicKey(s: unknown): s is string {
 }
 
 /**
- * Aegis M7 3: line-wise sanitizer for text/event-stream. Each complete line (SSE frames are line-based) is masked
- * like any text body (known values, then heuristics) and forwarded immediately, so latency is one line. A partial
- * line is held until its newline arrives. Lines are never cut (a cut inside a data:image payload would break the
- * image-span recognition): a line may grow up to maxLine (= LIMITS.responseBody, the same cap as a buffered body);
- * beyond that the stream is terminated with an `event: error` frame (SSE_LINE_TOO_LARGE) and nothing of the line is sent.
+ * Aegis M7: the image spans of one SSE line, decided by the SAME predicates as the buffered-body path:
+ *  - top-level `data[i].b64_json` of a `data: {json}` line accepted by isB64JsonImage (as in sanitizeJson), located
+ *    as the exact quoted value in the raw line (escaped / reordered values are not spans);
+ *  - `data:image/...;base64,` payloads accepted by isDataImagePayload (as in maskString).
+ * A value containing a known secret is never a span. Spans are [start, end) offsets into t (base64: 1 char = 1 byte).
  */
-/**
- * One SSE line. For a `data: {json}` line whose top-level data[i].b64_json is a confirmed image (see isB64JsonImage),
- * that exact quoted value is kept as an image payload and the rest of the line is masked as text; the line is not
- * re-serialised, so it stays byte-identical when nothing secret is in it.
- */
-function sseLine(t: string, known: readonly string[]): string {
-  const plain = (x: string) => maskString(replaceKnown(x, known));
+function sseImageSpans(t: string, known: readonly string[]): { b64: [number, number][]; all: [number, number][] } {
+  const b64: [number, number][] = [];
   const m = /^data:[ \t]?/.exec(t);
-  if (!m || !t.includes('"b64_json"')) return plain(t);
-  let parsed: unknown;
-  try { parsed = JSON.parse(t.slice(m[0].length)); } catch { return plain(t); }
-  const imgs = [...imageItems(parsed)].map((e) => (e as Record<string, unknown>).b64_json)
-    .filter((p): p is string => isB64JsonImage(p) && replaceKnown(p, known) === p);
-  let out = '', last = 0;
-  for (const p of imgs) {
-    const at = t.indexOf(`"b64_json":"${p}"`, last) >= 0 ? t.indexOf(`"b64_json":"${p}"`, last) : t.indexOf(`"b64_json": "${p}"`, last);
-    if (at < 0) continue; // escaped (e.g. \/) or reordered: plain text
-    const start = t.indexOf(`"${p}"`, at) + 1;
-    out += plain(t.slice(last, start)) + maskImagePayload(p);
-    last = start + p.length;
+  if (m && t.includes('"b64_json"')) {
+    let parsed: unknown; let ok = true;
+    try { parsed = JSON.parse(t.slice(m[0].length)); } catch { ok = false; }
+    if (ok) {
+      let last = 0;
+      for (const e of imageItems(parsed)) {
+        const p = (e as Record<string, unknown>).b64_json;
+        if (!isB64JsonImage(p) || replaceKnown(p, known) !== p) continue;
+        let at = t.indexOf(`"b64_json":"${p}"`, last); if (at < 0) at = t.indexOf(`"b64_json": "${p}"`, last);
+        if (at < 0) continue; // escaped (e.g. \/) or reordered: plain text
+        const start = t.indexOf(`"${p}"`, at) + 1;
+        b64.push([start, start + p.length]); last = start + p.length;
+      }
+    }
   }
+  const all = [...b64];
+  for (const sp of imageSpans(t)) {
+    const e = sp.start + sp.payload.length;
+    if (b64.some(([x, y]) => sp.start < y && e > x)) continue;
+    if (isDataImagePayload(sp.payload) && replaceKnown(sp.payload, known) === sp.payload) all.push([sp.start, e]);
+  }
+  return { b64, all };
+}
+
+/**
+ * One SSE line. Confirmed b64_json image values are kept as image payloads and the rest of the line is masked as
+ * text; the line is not re-serialised, so it stays byte-identical when nothing secret is in it. A line over
+ * `maxText` bytes is accepted only if its bytes OUTSIDE confirmed image spans are <= maxText; otherwise null
+ * (-> SSE_LINE_TOO_LARGE) without ever running the text masker over the giant line.
+ */
+function sseLine(t: string, known: readonly string[], maxText: number): string | null {
+  const plain = (x: string) => maskString(replaceKnown(x, known));
+  const big = t.length > maxText || Buffer.byteLength(t, 'utf8') > maxText;
+  if (!big && !t.includes('"b64_json"')) return plain(t);
+  const { b64, all } = sseImageSpans(t, known);
+  if (big) {
+    let img = 0; for (const [x, y] of all) img += y - x;
+    if (Buffer.byteLength(t, 'utf8') - img > maxText) return null;
+  }
+  let out = '', last = 0;
+  for (const [x, y] of b64) { out += plain(t.slice(last, x)) + maskImagePayload(t.slice(x, y)); last = y; }
   return out + plain(t.slice(last));
 }
 
-export const SSE_MAX_LINE = 32 << 20;        // a line with a structurally verified image payload
-export const SSE_MAX_TEXT_LINE = 1 << 20;    // text on any line (outside verified image spans)
-export const SSE_IMAGE_WINDOW = 8 << 10;     // the first image span must start within this many chars of the line
-export const SSE_MAX_BUFFERED = 64 << 20;    // global: buffered (unflushed) chars across ALL live SSE streams
+export const SSE_MAX_LINE = 32 << 20;        // bytes: a line with a structurally verified image payload
+export const SSE_MAX_TEXT_LINE = 1 << 20;    // bytes: text on any line (outside verified image spans)
+export const SSE_IMAGE_WINDOW = 8 << 10;     // the first image span must start within this many bytes of the line
+export const SSE_MAX_BUFFERED = 64 << 20;    // global: buffered (unflushed) bytes across ALL live SSE streams
+export const SSE_MAX_STREAM_BUFFERED = 32 << 20; // per stream: buffered (unflushed) bytes
 export const SSE_TOO_LARGE_FRAME = '\n\nevent: error\ndata: {"success":false,"code":"SSE_LINE_TOO_LARGE"}\n\n';
 export const SSE_BUFFER_LIMIT_FRAME = '\n\nevent: error\ndata: {"success":false,"code":"SSE_BUFFER_LIMIT"}\n\n';
 export interface SseLimits { maxLine: number; maxText: number; window: number }
-/** Process-wide accounting of bytes held in SSE partial-line buffers (UTF-16 code units; 1 per byte for ASCII/base64). */
+/** One live stream's share of the budget. */
+export interface SseHolder { held: number; kill(): void }
+/**
+ * Process-wide accounting of UTF-8 bytes held in SSE partial-line buffers. Per stream <= perStream; when the global
+ * total would exceed `limit`, the stream with the LARGEST buffered usage is killed (error frame, bytes released) --
+ * possibly not the one that asked -- until the request fits or the requester itself is the largest (then it fails).
+ */
 export class SseBudget {
   held = 0;
-  constructor(readonly limit: number = SSE_MAX_BUFFERED) {}
-  /** Reserve n; false (nothing reserved) if the global total would exceed the limit. */
-  reserve(n: number): boolean { if (this.held + n > this.limit) return false; this.held += n; return true; }
-  release(n: number): void { this.held -= n; if (this.held < 0) this.held = 0; }
+  private readonly live = new Set<SseHolder>();
+  constructor(readonly limit: number = SSE_MAX_BUFFERED, readonly perStream: number = SSE_MAX_STREAM_BUFFERED) {}
+  get streams(): number { return this.live.size; }
+  register(h: SseHolder): void { this.live.add(h); }
+  /** Releases everything h holds and forgets it. Idempotent. */
+  unregister(h: SseHolder): void { this.release(h, h.held); this.live.delete(h); }
+  reserve(h: SseHolder, n: number): boolean {
+    if (h.held + n > this.perStream) return false;
+    while (this.held + n > this.limit) {
+      let v = h; let vh = h.held + n;
+      for (const s of this.live) if (s !== h && s.held > vh) { v = s; vh = s.held; }
+      if (v === h) return false;
+      v.kill(); this.unregister(v); // kill() normally unregisters itself; this guarantees progress
+    }
+    h.held += n; this.held += n; return true;
+  }
+  release(h: SseHolder, n: number): void { const x = Math.min(n, h.held); h.held -= x; this.held -= x; if (this.held < 0) this.held = 0; }
 }
 export const sseBudget = new SseBudget();
 const B64C = (c: number) => (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 43 || c === 47 || c === 61;
+/** UTF-8 bytes of one UTF-16 code unit (a surrogate pair = 2 + 2 = 4). */
+const u8 = (c: number) => (c < 0x80 ? 1 : c < 0x800 ? 2 : c >= 0xd800 && c <= 0xdfff ? 2 : 3);
 
 /**
- * Aegis M7: incremental, structural accounting for one SSE line. Only a `data: {` / `data:{` line can carry image
- * spans; a span starts right after `"b64_json":"` (or `"b64_json": "`) or `data:image/<type>;base64,`, the first one
- * within `window` chars, and counts as image only once its first 24 base64 chars decode to an image header
- * (PNG/JPEG/GIF/WebP; SVG too for data:image). Everything else is text and limited to maxText, so a fake marker
- * cannot buy the 32 MiB allowance: rejection happens as soon as ~maxText non-image chars have been seen.
+ * Aegis M7: incremental, structural accounting for one SSE line (UTF-8 bytes). Only a `data: {` / `data:{` line can
+ * carry image spans; a span starts right after `"b64_json":"` (or `"b64_json": "`) or `data:image/<type>;base64,`,
+ * the first one within `window` bytes, and counts as image only once its first 24 base64 chars decode to an image
+ * header. Everything else is text and limited to maxText, so a fake marker is rejected after ~maxText bytes. This is
+ * only an early cut-off; the final decision for a line > maxText is sseLine's check with the shared predicates.
  */
 class SseLineMeter {
   len = 0; text = 0; private head = ''; private structured: boolean | null = null; private tail = '';
@@ -360,7 +459,7 @@ class SseLineMeter {
   /** false = limit exceeded */
   feed(t: string): boolean {
     for (let i = 0; i < t.length; i++) {
-      const c = t.charCodeAt(i); this.len++;
+      const c = t.charCodeAt(i); const w = u8(c); this.len += w;
       if (this.structured === null) {
         this.head += t[i];
         if (this.head === 'data:{' || this.head === 'data: {') this.structured = true;
@@ -379,7 +478,7 @@ class SseLineMeter {
         if (this.span < 24) this.text += this.span;
         this.inSpan = false;
       }
-      if (++this.text > this.l.maxText) return false;
+      if ((this.text += w) > this.l.maxText) return false;
       if (this.structured && (this.verified || this.len <= this.l.window)) {
         this.tail = (this.tail + t[i]).slice(-64);
         if (c === 34 && (this.tail.endsWith('"b64_json":"') || this.tail.endsWith('"b64_json": "'))) this.open(false);
@@ -391,42 +490,65 @@ class SseLineMeter {
   private open(svg: boolean) { this.inSpan = true; this.span = 0; this.spanHead = ''; this.svg = svg; }
 }
 
+/**
+ * Aegis M7 3: line-wise sanitizer for text/event-stream. Each complete line is masked like any text body and
+ * forwarded immediately (latency = one line); a partial line is buffered. Buffered bytes are charged to the
+ * process-wide SseBudget and released on line flush, stream end, error frames, exceptions and cancel/abort.
+ */
 export function sseSanitizer(known: readonly string[], limits: Partial<SseLimits> = {}, budget: SseBudget = sseBudget): TransformStream<Uint8Array, Uint8Array> {
   const l: SseLimits = { maxLine: SSE_MAX_LINE, maxText: SSE_MAX_TEXT_LINE, window: SSE_IMAGE_WINDOW, ...limits };
   const dec = new TextDecoder(); const enc = new TextEncoder();
-  const clean = (t: string) => sseLine(t, known);
-  let parts: string[] = []; let meter = new SseLineMeter(l); let held = 0; let dead = false;
-  const releaseAll = () => { budget.release(held); held = 0; parts = []; };
-  const fail = (ctl: TransformStreamDefaultController<Uint8Array>, frame: string) => {
-    dead = true; releaseAll(); ctl.enqueue(enc.encode(frame)); ctl.terminate();
-  };
-  const tooLarge = (ctl: TransformStreamDefaultController<Uint8Array>) => fail(ctl, SSE_TOO_LARGE_FRAME);
   type Ctl = TransformStreamDefaultController<Uint8Array>;
-  // `cancel` (Streams spec 2023, Node >= 21) is not in this lib's Transformer type.
+  let ctlRef: Ctl | null = null;
+  let parts: string[] = []; let meter = new SseLineMeter(l); let dead = false;
+  const me: SseHolder = { held: 0, kill: () => { if (!dead && ctlRef) fail(ctlRef, SSE_BUFFER_LIMIT_FRAME); } };
+  const clearLine = () => { budget.release(me, me.held); parts = []; };
+  const finish = () => { dead = true; parts = []; budget.unregister(me); };
+  function fail(ctl: Ctl, frame: string) {
+    finish();
+    try { ctl.enqueue(enc.encode(frame)); ctl.terminate(); } catch { /* stream already closed/errored */ }
+  }
+  /** Runs fn; on any exception releases this stream's bytes before rethrowing (no leaks). */
+  const guarded = (fn: () => void) => { try { fn(); } catch (e) { finish(); throw e; } };
   const transformer = {
+    start(ctl: Ctl) { ctlRef = ctl; budget.register(me); },
     transform(chunk: Uint8Array, ctl: Ctl) {
-      if (dead) return;
-      const t = dec.decode(chunk, { stream: true });
-      let out = '', from = 0;
-      for (;;) {
-        const nl = t.indexOf('\n', from);
-        const piece = nl < 0 ? t.slice(from) : t.slice(from, nl);
-        if (!meter.feed(piece)) { if (out) ctl.enqueue(enc.encode(out)); tooLarge(ctl); return; }
-        if (nl < 0) {
-          if (piece) {
-            if (!budget.reserve(piece.length)) { if (out) ctl.enqueue(enc.encode(out)); fail(ctl, SSE_BUFFER_LIMIT_FRAME); return; }
-            held += piece.length; parts.push(piece);
+      guarded(() => {
+        if (dead) return;
+        const t = dec.decode(chunk, { stream: true });
+        let out = '', from = 0;
+        for (;;) {
+          const nl = t.indexOf('\n', from);
+          const piece = nl < 0 ? t.slice(from) : t.slice(from, nl);
+          if (!meter.feed(piece)) { if (out) ctl.enqueue(enc.encode(out)); fail(ctl, SSE_TOO_LARGE_FRAME); return; }
+          if (nl < 0) {
+            if (piece) {
+              if (!budget.reserve(me, Buffer.byteLength(piece, 'utf8'))) { if (out) ctl.enqueue(enc.encode(out)); fail(ctl, SSE_BUFFER_LIMIT_FRAME); return; }
+              parts.push(piece);
+            }
+            break;
           }
-          break;
+          parts.push(piece);
+          const line = sseLine(parts.join(''), known, l.maxText);
+          if (line === null) { if (out) ctl.enqueue(enc.encode(out)); fail(ctl, SSE_TOO_LARGE_FRAME); return; }
+          out += line + '\n'; clearLine(); meter = new SseLineMeter(l);
+          from = nl + 1;
         }
-        parts.push(piece); out += clean(parts.join('')) + '\n'; releaseAll(); meter = new SseLineMeter(l);
-        from = nl + 1;
-      }
-      if (out) ctl.enqueue(enc.encode(out));
+        if (out) ctl.enqueue(enc.encode(out));
+      });
     },
-    flush(ctl: Ctl) { if (dead) return; const r = parts.join('') + dec.decode(); releaseAll(); dead = true; if (r) ctl.enqueue(enc.encode(clean(r))); },
+    flush(ctl: Ctl) {
+      guarded(() => {
+        if (dead) return;
+        const r = parts.join('') + dec.decode(); finish();
+        if (!r) return;
+        const line = sseLine(r, known, l.maxText);
+        ctl.enqueue(enc.encode(line === null ? SSE_TOO_LARGE_FRAME : line));
+      });
+    },
     // Consumer cancel / upstream abort: release this stream's share of the global budget (no leaks).
-    cancel() { dead = true; releaseAll(); },
+    // (`cancel` is Streams spec 2023 / Node >= 21 and not in this lib's Transformer type.)
+    cancel() { finish(); },
   };
   return new TransformStream<Uint8Array, Uint8Array>(transformer);
 }

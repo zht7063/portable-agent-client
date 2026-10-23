@@ -3,7 +3,7 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { CookieJar } from '../../src/main/proxy/cookie-jar';
-import { AccessTokenVault, HANDLE_PREFIX, MIN_KNOWN, knownSet, maskString, replaceKnown, sanitizeJson, sseSanitizer, SSE_TOO_LARGE_FRAME, SSE_BUFFER_LIMIT_FRAME, SSE_MAX_BUFFERED, SseBudget, sseBudget, isPemPublicKey } from '../../src/main/proxy/sanitize';
+import { AccessTokenVault, HANDLE_PREFIX, MIN_KNOWN, knownSet, maskString, replaceKnown, sanitizeJson, sseSanitizer, SSE_TOO_LARGE_FRAME, SSE_BUFFER_LIMIT_FRAME, SSE_MAX_BUFFERED, SSE_MAX_STREAM_BUFFERED, SseBudget, sseBudget, isPemPublicKey } from '../../src/main/proxy/sanitize';
 import { ServerProxy } from '../../src/main/proxy/api-proxy';
 import { evaluateStatus } from '../../src/main/proxy/server-status';
 
@@ -221,6 +221,74 @@ describe('3 SSE is sanitised line-wise across chunk boundaries', () => {
     const r3 = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(enc.encode('data: {"x":"' + 'e'.repeat(3000))); c.close(); } });
     expect(await new Response(r3.pipeThrough(sseSanitizer([], { maxLine: 1000, maxText: 1000 }, budget))).text()).toBe(SSE_TOO_LARGE_FRAME);
     expect(budget.held).toBe(0);
+  });
+  // --- Aegis review 12 ---
+  it('promotion uses the exact b64_json / data:image predicates: structurally-marked but invalid images -> SSE_LINE_TOO_LARGE', async () => {
+    const img = bigImage(2);
+    const bad = [
+      `data: {"x":{"data":[{"b64_json":"${img}"}]}}\n\n`,                 // nested, not top-level data[i]
+      `data: {"data":{"b64_json":"${img}"}}\n\n`,                         // data is not an array
+      `data: {"data":[{"b64_json":"${img}A"}]}\n\n`,                      // length % 4 != 0 (meter passes, predicate fails)
+      `data: {"data":[{"b64_json":"${img.slice(0, -4)}====" }]}\n\n`,     // bad padding
+      `data: {"data":[{"b64_json":"${img}", "x":1]}\n\n`,                // not JSON
+      `data: {"u":"data:image/png;base64,${img}A"}\n\n`,                  // data:image fails validB64
+    ];
+    for (const line of bad) {
+      const t0 = Date.now();
+      expect(await run(chunked(line, CH))).toBe(SSE_TOO_LARGE_FRAME);
+      expect(Date.now() - t0).toBeLessThan(5000);
+    }
+  });
+  it('an image span containing a known value is not promoted (-> SSE_LINE_TOO_LARGE, value never emitted)', async () => {
+    const img = bigImage(2); const k = img.slice(500_000, 500_048);
+    const out = await run(chunked(`data: {"data":[{"b64_json":"${img}"}]}\n\n`, CH), [k]);
+    expect(out).toBe(SSE_TOO_LARGE_FRAME);
+  });
+  it('valid top-level b64_json and data:image lines > 1 MiB still pass byte-identical', async () => {
+    const a = `data: {"data":[{"b64_json":"${bigImage(2)}","revised_prompt":"x"}]}\n\n`;
+    expect(await run(chunked(a, CH))).toBe(a);
+    const b = `data: {"choices":[{"delta":{"content":"![](data:image/png;base64,${bigImage(2)})"}}]}\n\n`;
+    expect(await run(chunked(b, CH))).toBe(b);
+  });
+  it('counter returns to 0 when sanitising throws (try/finally)', async () => {
+    const budget = new SseBudget(1 << 20); const enc = new TextEncoder();
+    const boom = new Proxy([] as string[], { get(t, k) { if (k === Symbol.iterator) throw new Error('boom'); return Reflect.get(t, k); } });
+    const rs = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(enc.encode('data: {"x":"' + 'p'.repeat(5000))); c.enqueue(enc.encode('"}\n')); c.close(); } });
+    await expect(new Response(rs.pipeThrough(sseSanitizer(boom, {}, budget))).text()).rejects.toThrow('boom');
+    expect(budget.held).toBe(0); expect(budget.streams).toBe(0);
+  });
+  it('global overflow kills the stream with the LARGEST buffered usage, not necessarily the requester', async () => {
+    const enc = new TextEncoder(); const budget = new SseBudget(10_000, 9_000);
+    const mk = () => { let c!: ReadableStreamDefaultController<Uint8Array>; const rs = new ReadableStream<Uint8Array>({ start(x) { c = x; } }); return { c, out: new Response(rs.pipeThrough(sseSanitizer([], {}, budget))).text() }; };
+    const big = mk(), small = mk(), req = mk();
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    big.c.enqueue(enc.encode('data: {"x":"' + 'b'.repeat(6000))); await tick();
+    small.c.enqueue(enc.encode('data: {"x":"' + 's'.repeat(1000))); await tick();
+    req.c.enqueue(enc.encode('data: {"x":"' + 'r'.repeat(3500))); await tick(); // total would be ~10.5k > 10k
+    expect(await big.out).toBe(SSE_BUFFER_LIMIT_FRAME);                        // largest killed
+    small.c.enqueue(enc.encode('"}\n')); small.c.close(); req.c.enqueue(enc.encode('"}\n')); req.c.close();
+    expect(await small.out).toBe('data: {"x":"' + 's'.repeat(1000) + '"}\n');
+    expect(await req.out).toBe('data: {"x":"' + 'r'.repeat(3500) + '"}\n');
+    expect(budget.held).toBe(0); expect(budget.streams).toBe(0);
+  });
+  it('per-stream buffered cap (default 32 MiB) -> SSE_BUFFER_LIMIT for that stream only', async () => {
+    expect(SSE_MAX_STREAM_BUFFERED).toBe(32 << 20); expect(sseBudget.perStream).toBe(32 << 20);
+    const enc = new TextEncoder(); const budget = new SseBudget(1 << 20, 2000);
+    const rs = new ReadableStream<Uint8Array>({ start(c) { for (let i = 0; i < 5; i++) c.enqueue(enc.encode('data: {"x":"' + 'z'.repeat(500))); c.close(); } });
+    expect(await new Response(rs.pipeThrough(sseSanitizer([], {}, budget))).text()).toBe(SSE_BUFFER_LIMIT_FRAME);
+    expect(budget.held).toBe(0);
+  });
+  it('accounting is in UTF-8 bytes (multi-byte text)', async () => {
+    const enc = new TextEncoder(); const budget = new SseBudget(1 << 20);
+    let c!: ReadableStreamDefaultController<Uint8Array>;
+    const r = new ReadableStream<Uint8Array>({ start(x) { c = x; } }).pipeThrough(sseSanitizer([], {}, budget)).getReader();
+    void r.read().catch(() => undefined);
+    c.enqueue(enc.encode('data: ' + '€'.repeat(1000) + '😀'.repeat(100))); await new Promise((x) => setTimeout(x, 0));
+    expect(budget.held).toBe(6 + 3000 + 400);
+    await r.cancel(); expect(budget.held).toBe(0);
+    // text limit counts bytes too: 400k x 3-byte chars (1.2 MB) > 1 MiB
+    expect(await run([`data: ${'€'.repeat(400_000)}\n`])).toBe(SSE_TOO_LARGE_FRAME);
+    expect(await run([`data: ${'€'.repeat(300_000)}\n`])).toBe(`data: ${'€'.repeat(300_000)}\n`);
   });
   it('known value (not key-shaped) masked in SSE', async () => {
     expect(await run(['data: tok=lowercase-known-', 'secret-value\n'], ['lowercase-known-secret-value'])).not.toContain('lowercase-known-secret-value');

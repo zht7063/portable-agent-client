@@ -1,6 +1,6 @@
 import { canonicalisePath, decide } from './allowlist';
 import type { CookieJar } from './cookie-jar';
-import { AccessTokenVault, HANDLE_PREFIX, filterRequestHeaders, filterResponseHeaders, sanitizeJson, maskString, knownSet, replaceKnown, sseSanitizer, isPemPublicKey } from './sanitize';
+import { AccessTokenVault, HANDLE_PREFIX, filterRequestHeaders, filterResponseHeaders, sanitizeJson, maskString, knownSet, replaceKnown, sseSanitizer, isPemPublicKey, JsonTooDeepError } from './sanitize';
 import type { FetchLike, ServerCheck } from './server-status';
 
 /*
@@ -189,7 +189,11 @@ export class ServerProxy {
       // Only the top-level data.public_key, only if it parses as a public key.
       const top = (parsed as { data?: unknown } | null)?.data;
       const pem = path === '/api/user/login/encryption-key' ? (o: Record<string, unknown>, k: string, v: unknown) => o === top && k === 'public_key' && isPemPublicKey(v) : undefined;
-      const clean = sanitizeJson(parsed, this.o.vault, undefined, known, pem);
+      let clean: unknown;
+      try { clean = sanitizeJson(parsed, this.o.vault, undefined, known, pem); } catch (e) {
+        if (e instanceof JsonTooDeepError) return fail(502, 'TOO_DEEP', 'upstream JSON nested too deeply');
+        throw e;
+      }
       return new Response(JSON.stringify(clean), { status: res.status, headers: { ...outHeaders, 'content-type': 'application/json; charset=utf-8' } });
     }
     return new Response(buf, { status: res.status, headers: outHeaders });

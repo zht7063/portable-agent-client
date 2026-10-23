@@ -1,6 +1,6 @@
 // Aegis M7: keys glued with - / _ into longer runs, and false-positive probes for common ID shapes.
 import { describe, expect, it } from 'vitest';
-import { AccessTokenVault, ID_PREFIX_SHAPES, MAX_BARE_RUN, knownSet, maskString, replaceKnown, sanitizeJson } from '../../src/main/proxy/sanitize';
+import { AccessTokenVault, ID_PREFIX_SHAPES, JsonTooDeepError, MAX_BARE_RUN, knownSet, maskString, replaceKnown, sanitizeJson } from '../../src/main/proxy/sanitize';
 
 const K = 'Zq7Rw2Lp9Xv4Tm8Nk3Hd6Jf1Bc5Gs0YeQa2Wu7Ir4Ot9Pl3S';
 let seed = 3;
@@ -128,5 +128,23 @@ describe('linear bare-run scanner', () => {
     const a = maskString(at(MAX_BARE_RUN));
     expect(a).not.toContain(K); expect(a.length).toBeGreaterThan(MAX_BARE_RUN - 100);
     expect(maskString(at(MAX_BARE_RUN + 1)).length).toBeLessThan(40);
+  });
+});
+
+describe('large / deep inputs do not overflow the stack (Aegis 6)', () => {
+  it('deeply nested JSON (100k levels) -> JsonTooDeepError, not RangeError; 256 levels are fine', () => {
+    const deep = JSON.parse('['.repeat(100_000) + ']'.repeat(100_000));
+    expect(() => sanitizeJson(deep, new AccessTokenVault())).toThrow(JsonTooDeepError);
+    const deepSetting = { setting: '{"a":'.repeat(100_000) + '1' + '}'.repeat(100_000) };
+    expect(() => sanitizeJson(deepSetting, new AccessTokenVault())).toThrow(JsonTooDeepError);
+    const ok = JSON.parse('['.repeat(200) + `"${K}"` + ']'.repeat(200));
+    expect(JSON.stringify(sanitizeJson(ok, new AccessTokenVault()))).not.toContain(K);
+  });
+  it('multi-MB inputs through every masker (eyJ run, sk- run, Bearer run, data:image, b64_json) complete', () => {
+    const n = 16 << 20;
+    for (const s of [`eyJ${'a'.repeat(n)}`, `sk-${'A1b'.repeat(n / 3)}`, `Bearer ${'Ab1+'.repeat(n / 4)}`, `data:image/png;base64,${'A'.repeat(n)}`, `x ${'Ab1/'.repeat(n / 4)} y`]) {
+      expect(() => maskString(s)).not.toThrow();
+    }
+    expect(() => sanitizeJson({ data: [{ b64_json: 'iVBORw0KGgo' + 'A'.repeat(8 << 20) + 'A' }] }, new AccessTokenVault())).not.toThrow();
   });
 });
