@@ -80,3 +80,13 @@ Rules for any future distribution (not done yet):
 ## Not done (needs decisions)
 
 Branding (name, logo/icon, app ID), code signing/notarization, macOS/Windows packaging on real hosts, any publishing.
+
+## CI: vendored web page checks
+
+`bun run test` = root vitest + `scripts/test-local-pages.sh --no-install` (offline; typecheck of the whole prepared
+new-api web tree with only `scripts/local-pages-tsc-baseline.txt` upstream files tolerated, oxlint on our pages/patched
+files, vitest for `src/pa-local`). Its dependencies need network once, as a separate CI step before `bun run test`:
+
+    bun run install:web   # = build-new-api-web.sh --prepare-only (bun install --frozen-lockfile in .build/new-api-web)
+
+Without it the test fails fast with "vendored web dependencies not installed".
