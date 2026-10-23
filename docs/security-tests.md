@@ -57,12 +57,15 @@ Guarantees:
    **Idle timeout**: while a stream holds a partial line, no new data for 120 s (`SSE_IDLE_MS`) ends it with
    `event: error` / `SSE_IDLE_TIMEOUT` and releases its bytes, so a stream dropped without cancel cannot pin budget.
    The budget references streams only through `WeakRef`s; a `FinalizationRegistry` releases the bytes of a stream
-   that is garbage-collected without end/cancel (fallback). The timer is armed only while a half line is buffered,
+   that is garbage-collected without end/cancel (fallback). The idle timer's callback is module-level and holds only
+   a `WeakRef` to the stream (timer `unref()`ed), so a dropped stream with a non-empty buffer stays collectable and
+   the GC fallback can release it before the timeout (forced-GC test). The timer is armed only while a half line is buffered,
    so quiet sessions between complete lines are never cut.
    **Frontend note**: several concurrent large image responses (each up to 32 MiB buffered) can together hit the
    64 MiB global budget; the largest stream then ends with `SSE_BUFFER_LIMIT`. This is a transient condition: the
    UI should show the error and offer a retry. This repo has no client-side handler for these SSE error codes (the
-   playground UI is upstream's), so the retry hint is a documented follow-up for the frontend.
+   playground UI is upstream's), so the retry hint is a documented follow-up for the frontend, tracked in
+   https://github.com/zht7063/portable-agent-client/issues/1.
    Over-long lines end the stream with `event: error` / `SSE_LINE_TOO_LARGE`. `data:image` spans are found with a
    linear scan (no backtracking regex), so multi-MB images pass byte-identical.
    **`b64_json` exception (Iris decision; no generic base64 exception).** In a JSON body, or the JSON of an SSE
@@ -182,3 +185,33 @@ Read-only displays (passkey public keys, Gemini thought signatures) are not save
   can miss keys that happen to look low-entropy and can flag non-secrets; scan-bundle false positives go into
   `scripts/scan-bundle-allowlist.json` (sha256 + path glob + justification). Inline images in renderer text: a
   `data:image` with a payload < 64 chars or without a recognised header may be over-masked (display only).
+
+## Verification (environment and scope)
+
+Reviewed state: branch `feat/m7` (no PR). Commands, from the repo root with a temporary `HOME` (Node 22.19, bun):
+`bun run typecheck && bun run lint && bun run test && bun run compat && bun run licenses && node scripts/scan-bundle.mjs`.
+CI (`.github/workflows/ci.yml`) runs the same plus `bun run install:web` and `bun run build:prod` before the scan,
+with `PA_REQUIRE_WEB_DEPS=1`.
+
+- **Main vitest suite** (`vitest run`, all workspaces): at this revision 769 passed / 3 skipped in a working tree
+  that has been built, and **768 passed / 4 skipped in a clean checkout**. The difference is one test:
+  `apps/desktop/test/packaging.test.ts` "stage: linux has no native modules ..." is `skipIf(!built)` and runs only
+  when `apps/desktop/dist/main/index.cjs` and `apps/desktop/dist/renderer` exist (after `bun run build` /
+  `build:prod`). The other 3 skips are always skipped without opt-in: the offline harness e2e tests
+  (`packages/harness/test/harness-{codex,claude,pi}-e2e.test.ts`) need `PA_HARNESS_E2E=1` plus `CODEX_BIN` /
+  `CLAUDE_BIN` / `PI_BIN`. (Aegis' 767/4 vs our 768/3 on 2f1c0f3 is this same packaging test.) No test depends on
+  `--expose-gc`: the forced-GC tests enable `gc` themselves via `v8.setFlagsFromString` + `vm.runInNewContext`.
+- **Second suite (37/37 in 5 files)**: the second half of `bun run test`, `scripts/test-local-pages.sh --no-install`:
+  typecheck + oxlint + vitest for our `src-local` pages and patched upstream files inside the prepared new-api web
+  tree (`.build/new-api-web`). It needs `bun run install:web` (network) first; without those deps it prints
+  `local-pages: SKIPPED` and exits 0, except in CI (`PA_REQUIRE_WEB_DEPS=1`), where that is a failure.
+- **Bundle scan**: `node scripts/scan-bundle.mjs` over `apps/desktop/dist` and `apps/desktop/release` (incl. `.asar`);
+  "clean" = no findings.
+- **Base64 false-positive metric (79.69%)**: `apps/desktop/test/security/base64-fp.test.ts` (part of the main suite;
+  `PA_B64_BENCH=1` prints the per-kind table). Dataset: 10,000 deterministic blobs (mulberry32, seed `0x5eed`) of
+  random / PNG-headed / JPEG-headed / gzip bytes, 8-~2400 bytes, base64-encoded, unwrapped or wrapped at 64/76
+  columns, about a third of PNG/JPEG ones as `data:image/...;base64,` URIs. Metric: share of blobs for which
+  `maskString(text) !== text` (any alteration). 79.69% overall is expected: unprefixed base64 is deliberately plain text
+  (high-entropy runs look like keys); the exempt `data:image` forms are 7.57% (PNG) / 2.21% (JPEG), the remainder
+  being payloads whose random bytes happen to contain `sk-`/JWT/Bearer-like or out-of-span shapes. The test pins
+  upper bounds so a regression fails it.
