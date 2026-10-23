@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, protocol, safeStorage, session as electronSession, shell } from 'electron';
+import { menuTemplate, windowWebPreferences } from './window-policy';
 import { INVOKE_CHANNELS, PRODUCT, type InvokeChannel } from '@pac/core';
 import { createKeyring } from '@pac/keychain';
 import { installWrapper } from '@pac/pa-key';
@@ -70,18 +71,7 @@ function createWindow(): BrowserWindow {
     width: 1280,
     height: 820,
     title: PRODUCT.productName,
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.cjs'),
-      contextIsolation: true,
-      sandbox: true,
-      nodeIntegration: false,
-      nodeIntegrationInSubFrames: false,
-      webSecurity: true,
-      allowRunningInsecureContent: false,
-      webviewTag: false,
-      spellcheck: false,
-      navigateOnDragDrop: false,
-    },
+    webPreferences: windowWebPreferences({ preload: join(__dirname, '../preload/index.cjs'), isPackaged: app.isPackaged }),
   });
   // Navigation only within app://; http(s) goes to the OS browser after confirmation; all else denied.
   const onNav = (e: Electron.Event, url: string) => {
@@ -290,14 +280,10 @@ app.whenReady().then(async () => {
   installMenu();
 });
 
-/** M6: standard menus plus Help -> "About & licenses" (AGPL notice, new-api attribution, source offer). */
+/** M6: standard menus (no View menu / reload / DevTools when packaged, see window-policy.ts) plus Help -> "About & licenses" (AGPL notice, new-api attribution, source offer). */
 function installMenu() {
   const about = { label: 'About & licenses', click: () => { void win?.loadURL(`${APP_URL}pa-about`); } };
-  const template: Electron.MenuItemConstructorOptions[] = [
-    ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
-    { role: 'fileMenu' }, { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' },
-    { role: 'help', submenu: [about] },
-  ];
+  const template = menuTemplate({ isPackaged: app.isPackaged, platform: process.platform, about });
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
