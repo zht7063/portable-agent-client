@@ -53,3 +53,22 @@ describe('bare key masking: ordinary IDs are not masked', () => {
     expect(out).toEqual({ data: [{ key: 'SMTPServer', value: 'smtp.example.com' }] });
   });
 });
+
+describe('base64 and data: URIs are not corrupted', () => {
+  const b64 = (n: number) => Buffer.from(Array.from({ length: n }, (_, i) => (i * 37 + 11) & 255)).toString('base64');
+  it('data:image/png;base64,... is unchanged (also with an embedded high-entropy run and inside JSON)', () => {
+    const uri = `data:image/png;base64,${b64(60)}+${KEY48}/${b64(30)}`;
+    expect(maskString(uri)).toBe(uri);
+    expect(maskString(`<img src="${uri}">`)).toBe(`<img src="${uri}">`);
+    expect(sanitizeJson({ avatar: uri, logo: `data:image/svg+xml;base64,${b64(90)}` }, new AccessTokenVault())).toEqual({ avatar: uri, logo: `data:image/svg+xml;base64,${b64(90)}` });
+  });
+  it('a plain base64 blob with an embedded high-entropy 48-run is unchanged', () => {
+    for (const blob of [`${b64(30)}/${KEY48}+${b64(30)}`, `${b64(24)}+${KEY48}==`]) expect(maskString(blob)).toBe(blob);
+  });
+  it('a normal bare key next to a data: URI is still masked', () => {
+    const out = maskString(`img data:image/png;base64,${b64(30)} key ${KEY48} end`);
+    expect(out).not.toContain(KEY48);
+    expect(out).toContain(`data:image/png;base64,${b64(30)}`);
+    expect(maskString(`error: raw=${KEY48}`)).not.toContain(KEY48);
+  });
+});

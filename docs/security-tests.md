@@ -22,7 +22,9 @@ Changing CSP, the preload surface or the allowlist requires updating the snapsho
   below that length the random-vs-identifier heuristic produces too many false positives. `sk-` keys are covered from
   16 characters; values in secret-named fields are masked regardless of shape.
 - **Base64-encoded keys** (a key wrapped in base64, e.g. inside a Basic auth header or an encoded blob) are not
-  decoded and therefore not detected/masked for now.
+  decoded and therefore not detected/masked for now. Likewise keys **inside base64 runs or `data:` URIs** are not
+  masked: sanitize leaves `data:` URIs untouched and never masks part of a base64 run (so inline images are not
+  corrupted).
 - The high-entropy heuristic (upper + lower + digit, >= 6 class switches, not hex/UUID/single-case/identifier+number)
   can miss keys that happen to look low-entropy and can flag non-secrets; scan-bundle false positives go into
   `scripts/scan-bundle-allowlist.json` (sha256 + justification only).

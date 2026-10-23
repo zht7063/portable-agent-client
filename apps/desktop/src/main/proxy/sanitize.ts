@@ -43,7 +43,12 @@ const SECRET_SHAPE = [
  * M7 (Aegis): bare (unprefixed) keys in free text. A run of 16-128 [A-Za-z0-9_-] chars counts as a key only if it
  * looks random (see looksLikeBareKey); ordinary IDs (hex digests, UUIDs, numeric/lowercase request IDs) do not.
  */
-const BARE_RUN = /(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{16,128}(?![A-Za-z0-9_-])/g;
+// Boundaries also exclude base64 chars (+ / =) so a substring of a base64 run is never partially masked. Exception:
+// a single '=' before the run is allowed (key=value text like `raw=<key>` must still be masked); base64 padding is
+// trailing, so it is excluded after the run and as '==' before it.
+const BARE_RUN = /(?<![A-Za-z0-9_+/-])(?<!==)[A-Za-z0-9_-]{16,128}(?![A-Za-z0-9_+/=-])/g;
+/** data: URIs (inline images etc.) are left untouched entirely; keys hidden inside them are a known limitation. */
+const DATA_URI = /data:[a-z0-9.+/-]*(?:;[^,\s"']*)?,[A-Za-z0-9+/=%._~-]*/gi;
 const ID_LIKE = [
   /^[0-9a-f]+$/i,                                                          // hex digests / hex IDs (any case)
   /^[0-9a-f]{8}(?:-?[0-9a-f]{4}){3}-?[0-9a-f]{12}(?:[-_][0-9a-z]+)*$/i,     // UUID-ish (optionally suffixed)
@@ -80,6 +85,12 @@ const isMasked = (s: string) => s.includes('****') || s.startsWith(HANDLE_PREFIX
 
 /** Masks secret-shaped substrings in free text (used for JSON strings and non-JSON text bodies). */
 export function maskString(s: string, bare = true): string {
+  if (!s.includes('data:')) return maskPlain(s, bare);
+  let out = '', last = 0;
+  for (const m of s.matchAll(DATA_URI)) { out += maskPlain(s.slice(last, m.index), bare) + m[0]; last = m.index + m[0].length; }
+  return out + maskPlain(s.slice(last), bare);
+}
+function maskPlain(s: string, bare: boolean): string {
   let out = s.replace(BEARER, (_m, pre: string, tok: string) => (tok.startsWith(HANDLE_PREFIX) ? pre + tok : pre + maskSecret(tok)));
   for (const re of SECRET_SHAPE) out = out.replace(re, (m) => maskSecret(m));
   if (bare) out = out.replace(BARE_RUN, (m) => (looksLikeBareKey(m) ? maskSecret(m) : m));
