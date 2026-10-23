@@ -212,6 +212,7 @@ with `PA_REQUIRE_WEB_DEPS=1`.
   random / PNG-headed / JPEG-headed / gzip bytes, 8-~2400 bytes, base64-encoded, unwrapped or wrapped at 64/76
   columns, about a third of PNG/JPEG ones as `data:image/...;base64,` URIs. Metric: share of blobs for which
   `maskString(text) !== text` (any alteration). 79.69% overall is expected: unprefixed base64 is deliberately plain text
-  (high-entropy runs look like keys); the exempt `data:image` forms are 7.57% (PNG) / 2.21% (JPEG), the remainder
-  being payloads whose random bytes happen to contain `sk-`/JWT/Bearer-like or out-of-span shapes. The test pins
+  (high-entropy runs look like keys); the exempt `data:image` forms are 7.57% (PNG) / 2.21% (JPEG); those that are still altered are
+  ones the exemption does not cover (e.g. payloads that fail the base64/header checks, or key-shaped runs at
+  `+`/`/`-bounded positions inside them). The test pins
   upper bounds so a regression fails it.
