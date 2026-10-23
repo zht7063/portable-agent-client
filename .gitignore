@@ -1,0 +1,11 @@
+node_modules/
+dist/
+out/
+.env
+.env.local
+*.log
+.pa-session.json
+stage/
+release/
+.pac-session.json
+.tmp-upstream/

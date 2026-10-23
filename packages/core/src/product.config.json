@@ -1,0 +1,11 @@
+{
+  "$comment": "SINGLE source of product identity. ALL VALUES ARE PLACEHOLDERS (plan v2 §9.1, revisable). Change here only; code, scripts, packaging and tests read this file.",
+  "productName": "Portable Agent",
+  "appId": "dev.portable-agent.client",
+  "executableName": "portable-agent",
+  "keychainService": "portable-agent",
+  "protocolScheme": "pac",
+  "cliConfigDir": "portable-agent-cli",
+  "upstream": { "name": "new-api", "author": "QuantumNous", "repo": "https://github.com/QuantumNous/new-api", "license": "AGPL-3.0" },
+  "sourceUrl": null
+}

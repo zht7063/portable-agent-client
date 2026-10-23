@@ -1,0 +1,28 @@
+{
+  "name": "portable-agent-client",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "packageManager": "bun@1.4.2",
+  "workspaces": ["packages/*", "apps/*"],
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "typecheck": "bun run --filter '*' typecheck",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:live": "vitest run -c vitest.live.config.ts",
+    "build": "bun run --filter '*' build",
+    "licenses": "node scripts/check-licenses.mjs",
+    "compat": "node scripts/compat-check.mjs",
+    "check": "bun run typecheck && bun run lint && bun run test && bun run compat"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.14.0",
+    "@types/node": "^22.10.0",
+    "eslint": "^9.14.0",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.14.0",
+    "vitest": "^2.1.5"
+  }
+}
