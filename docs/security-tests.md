@@ -39,8 +39,11 @@ Guarantees:
 3. **SSE** (`text/event-stream`, playground) is sanitised line by line (`sseSanitizer`): each complete line is masked
    and forwarded at once (latency = one line); partial lines are buffered. Lines are **never cut** (a cut inside a
    `data:image` payload would break span recognition and either corrupt the image or let a heuristic decision differ):
-   a line carrying `"b64_json"` or `data:image/` may grow to 32 MiB (= `LIMITS.responseBody`); any other line is
-   limited to 1 MiB. Beyond the limit the line is
+   a line gets the 32 MiB allowance only structurally: it starts `data: {` (or `data:{`), and an image span starts
+   right after `"b64_json":"` or `data:image/<type>;base64,` (the first one within 8 KiB of the line start) whose first
+   24 base64 chars decode to a PNG/JPEG/GIF/WebP (SVG for data:image) header. Text outside verified spans is limited
+   to 1 MiB per line and counted incrementally, so a fake marker is rejected after ~1 MiB, not after buffering 32 MiB.
+   Total bytes per stream are capped at 64 MiB. Beyond any limit the line is
    dropped and the stream ends with `event: error` / `SSE_LINE_TOO_LARGE`. `data:image` spans are found with a linear
    scan (no backtracking regex), so multi-MB images pass byte-identical.
    **`b64_json` exception (Iris decision; no generic base64 exception).** In a JSON body, or the JSON of an SSE
@@ -92,13 +95,20 @@ Read-only displays (passkey public keys, Gemini thought signatures) are not save
   `data:image`; only known values are guaranteed masked there).
 - **A known key inside a data:image / b64_json payload corrupts that image** (accepted): after exact replacement the payload is no longer
   valid base64, so the rest of the span is treated as plain text and over-masked.
+- **Bare-run scanner**: a hand-written linear scan (no regex backtracking); a single run longer than 1 MiB is masked
+  entirely. **Provider ID prefixes** (`chatcmpl-`, `cmpl-`, `resp_`, `msg_`, `call_`, `run_`, `step_`, `asst_`,
+  `thread_`, `file-`, `batch_`, `ftjob-`, `toolu_`, `req_`, `msgbatch_`) followed by exactly 8-64 alphanumerics are not
+  masked by the heuristic (OpenAI/Anthropic object ids are not secrets); known values in them are still exact-replaced.
+  An unknown key placed right after such a prefix is therefore not masked (accepted).
+- **Key formats**: new-api tokens are 48-char base62 (no `-`/`_`), which the run/segment heuristic covers. The
+  remaining gap is third-party keys made of short hyphen/underscore-separated segments (no single segment of >= 32
+  random chars), which are only masked when the whole run is <= 128 chars and looks random, or when known.
 - **Bare runs** have no upper length bound: a run of `[A-Za-z0-9_-]` is masked whole if it is <= 128 chars and
   looks random, otherwise each `-`/`_`-separated segment is checked (so `uuid-K`, `K_<long>`, `req-<digits>-K` are
   masked). Not caught: a key that itself contains `-`/`_` AND is glued into a run > 128 chars with no segment of
   >= 32 random chars (adjacent-segment joins are not tried). UUIDs are exempt only in lowercase hex.
-  ID probes (`glued-keys.test.ts`): `chatcmpl-<29 mixed>` and `run_<32 mixed>` are masked (look exactly like keys;
-  over-mask only); `resp_<48 hex>`, `msg_/call_/file-<24 mixed>`, lowercase UUIDs, request ids, snake/kebab/camel/
-  CONSTANT identifiers and model names are unchanged. The base64 FP bench is unchanged by this round (all 79.69%).
+  ID probes (`glued-keys.test.ts`): allowlisted provider ids are unchanged; `resp_<48 hex>`, `msg_/call_/file-<24 mixed>`, lowercase UUIDs, request ids, snake/kebab/camel/
+  CONSTANT identifiers and model names are unchanged. The base64 FP bench is unchanged by the scanner and prefix changes (all 79.69%).
 - **Unprefixed keys shorter than 32 characters** are not detected (scan-bundle) or masked (sanitize `looksLikeBareKey`):
   below that length the random-vs-identifier heuristic produces too many false positives. `sk-` keys are covered from
   16 characters; values in secret-named fields are masked regardless of shape.
