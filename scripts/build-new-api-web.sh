@@ -37,4 +37,11 @@ cp -R dist/. "$OUT/"
 # Ship upstream license notices next to the bundle.
 cp "$SRC/LICENSE" "$OUT/LICENSE.new-api.txt"
 cp "$SRC/NOTICE.upstream" "$OUT/NOTICE.new-api.txt"
+# Non-allowlisted (OFL-1.1 / Unlicense) bundled packages: ship their license texts with the bundle.
+mkdir -p "$OUT/licenses"
+for pkg in @fontsource-variable/lora @fontsource-variable/public-sans isbot text-encoding; do
+  lic=$(ls "node_modules/$pkg" 2>/dev/null | grep -iE '^(LICEN[CS]E|COPYING)(\.(md|txt))?$' | head -1 || true)
+  [ -n "$lic" ] || { echo "missing license file for $pkg" >&2; exit 1; }
+  cp "node_modules/$pkg/$lic" "$OUT/licenses/$(echo "$pkg" | tr '/@' '__' | sed 's/^_//').LICENSE.txt"
+done
 echo "built new-api web -> $OUT"

@@ -63,7 +63,7 @@ function visit(name, fromDir, optional, web = false) {
   else {
     const lic = typeof pkg.license === 'string' ? pkg.license : pkg.license?.type;
     if (web && WEB_NOT_SHIPPED.some((r) => r.test(name))) { webExcluded.add(pj); warnings.push(`web: ${name}@${pkg.version} (${lic}): installed but not in the browser bundle (Node-only native loader)`); }
-    else if (web && !spdxAllowed(lic) && WEB_FLAGGED.has(lic)) { webFlagged.push(`${name}@${pkg.version} (${lic})`); }
+    else if (web && !spdxAllowed(lic) && WEB_FLAGGED.has(lic)) { webFlagged.push(`${name}@${pkg.version} (${lic})`); webFlaggedDirs.push({ id: `${name}@${pkg.version} (${lic})`, dir: dirname(pj) }); }
     else if (NOT_SHIPPED.some((r) => r.test(name))) warnings.push(`${name}@${pkg.version} (${lic}): installed but excluded from shipping (bundles libdbus AFL-2.1 OR GPL-2.0+)`);
     else if (!spdxAllowed(lic)) problems.push(`${name}@${pkg.version}: license "${lic ?? 'none'}" not allowed`);
   }
@@ -73,6 +73,9 @@ function visit(name, fromDir, optional, web = false) {
 }
 const webExcluded = new Set();
 const webFlagged = [];
+/** Flagged web packages whose license text must ship with the bundle (OFL-1.1 requires it). */
+const webFlaggedDirs = [];
+const licenseFile = (dir) => readdirSync(dir).find((f) => /^(LICEN[CS]E|COPYING)(\.(md|txt))?$/i.test(f));
 const webDir = join(root, '.build', 'new-api-web');
 const licOf = (p) => (typeof p.license === 'string' ? p.license : p.license?.type);
 
@@ -115,6 +118,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       ...(webBuilt ? [] : ['_(not generated: .build/new-api-web missing)_', '']),
       '**Flagged (not on the permissive allowlist, AGPL-compatible, accepted pending owner sign-off):** ' + (webFlagged.length ? webFlagged.join(', ') : 'none') + '.', '',
       '| Package | Version | License |', '|---|---|---|', ...webRows.map((p) => `| ${p.name} | ${p.version} | ${licOf(p)} |`), '',
+      ...(webFlaggedDirs.length ? ['## Full license texts of flagged bundled packages', '',
+        'Shipped verbatim (also copied to `dist/renderer/licenses/` by scripts/build-new-api-web.sh). The SIL Open Font',
+        'License 1.1 requires its text to accompany the bundled font files.', '',
+        ...webFlaggedDirs.flatMap(({ id, dir }) => { const f = licenseFile(dir); return [`### ${id}`, '', '```text', f ? readFileSync(join(dir, f), 'utf8').trimEnd() : '(no license file in package)', '```', '']; })] : []),
     ].join('\n'));
   }
   console.log(`license check ok (${listed.length} production packages; web bundle ${webRows.length}, flagged ${webFlagged.length})`);
