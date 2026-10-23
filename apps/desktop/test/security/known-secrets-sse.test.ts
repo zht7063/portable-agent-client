@@ -327,7 +327,7 @@ describe('3 SSE is sanitised line-wise across chunk boundaries', () => {
   });
   it('budget holds streams weakly: FinalizationRegistry releases a collected stream\'s bytes', async () => {
     const { setFlagsFromString } = await import('node:v8'); const { runInNewContext } = await import('node:vm');
-    setFlagsFromString('--expose-gc'); const gc = runInNewContext('gc') as (() => void) | undefined;
+    setFlagsFromString('--expose-gc'); const gc = runInNewContext('gc') as () => void;
     const budget = new SseBudget(1 << 20);
     // Unit-level: a holder registered, charged, then unreachable.
     (() => { const h = { held: 0, kill() {} }; budget.register(h); expect(budget.reserve(h, 4096)).toBe(true); })();

@@ -450,7 +450,7 @@ export class SseBudget {
     const me = this.byHolder.get(h); if (!me) return false;
     if (me.acct.held + n > this.perStream) return false;
     while (this.held + n > this.limit) {
-      let v = me; let vh = me.acct.held + n;
+      let v: SseEntry = me; let vh = me.acct.held + n;
       for (const e of this.live) if (e !== me && e.acct.held > vh) { v = e; vh = e.acct.held; }
       if (v === me) return false;
       const victim = v.ref.deref();
