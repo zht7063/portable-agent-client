@@ -68,7 +68,7 @@ describe('1a known keys are masked everywhere, including forged data:image paylo
   });
   it('user setting JSON-in-a-string: webhook_secret masked and known everywhere', () => {
     const W = 'whsec-plain-but-secret-value-123';
-    const out = sanitizeJson({ data: { setting: JSON.stringify({ webhook_secret: W }), note: `x ${W} y` } }, new AccessTokenVault()) as any;
+    const out = sanitizeJson({ data: { setting: JSON.stringify({ webhook_secret: W }), note: `x ${W} y` } }, new AccessTokenVault()) as { data: { setting: string } };
     expect(JSON.stringify(out)).not.toContain(W);
     expect(JSON.parse(out.data.setting).webhook_secret).toMatch(/\*{10}/);
   });
@@ -137,6 +137,6 @@ describe('2 masked values from base64-ish secret fields are never submitted upst
     expect(maskString(pub)).not.toBe(pub); // would be broken by heuristic masking
     const body = JSON.stringify({ success: true, data: { kid: 'k1', public_key: pub } });
     const res = await proxyWith(body, 'application/json')('/api/user/login/encryption-key');
-    expect((await res.json()).data.public_key).toBe(pub);
+    expect(((await res.json()) as { data: { public_key: string } }).data.public_key).toBe(pub);
   });
 });
