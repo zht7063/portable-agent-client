@@ -16,8 +16,53 @@ All run in `bun run test` (offline) and in CI.
 
 Changing CSP, the preload surface or the allowlist requires updating the snapshot test and this file in the same commit.
 
+## Threat model (response masking)
+
+- **Trusted upstream** (your own new-api server, honest but leaky: error messages echoing requests, admin pages
+  listing secrets): masking is designed for this. Known secrets are always masked; unknown key-shaped values are masked
+  heuristically.
+- **Untrusted / malicious upstream** (compromised or hostile server): the server already holds every secret it could
+  leak and controls what the UI renders. Masking does **not** stop it from showing an *unknown* value to the user; it
+  only guarantees that values the client knows to be secret are never shown.
+
+Guarantees:
+
+1. **Known secrets are always masked**, in every JSON string, text body and SSE line, including inside header-valid
+   `data:image` payloads and JSON-in-a-string user `setting`. Known = every access token in the vault, the token sent on
+   the request, and every value (>= `MIN_KNOWN` = 12 chars) found under a secret-named field anywhere in the same
+   response (pass 1 of `sanitizeJson`), replaced by exact match in pass 2 before any heuristic.
+2. **Unknown secrets are masked heuristically** (`sk-…`, JWT, `otpauth://`, `Bearer …`, 32–128 char high-entropy runs).
+   Best effort; see limitations below.
+3. **SSE** (`text/event-stream`, playground) is sanitised line by line (`sseSanitizer`): each complete line is masked
+   and forwarded at once (latency = one line); partial lines are buffered; a line > 64 KiB is flushed in pieces cut at
+   a non-key character with a 256-char tail so no key is split. Decision: the earlier pass-through was not
+   intentional-by-design (model output can echo prompts and upstream errors), so it was fixed.
+4. **Masked values are never saved back**: a request body carrying our mask (`**********` / `ab****yz`) or a handle to
+   a secret-round-tripping endpoint is refused with 409 before leaving main (see the field list below).
+
+## UI fields that can display base64 / key material (vendored new-api web, rc.46)
+
+| Page / endpoint | Field(s) | Masked-save guard |
+|---|---|---|
+| Channels `/api/channel` | `key` (incl. Vertex service-account JSON with PEM `private_key`, AWS `AK\|SK\|region`, multi-key lists) | yes (`/api/channel`) |
+| Payment settings `/api/option` | `WaffoPrivateKey`, `WaffoSandboxPrivateKey`, `WaffoPublicCert`, `WaffoSandboxPublicCert`, `StripeApiSecret`, `StripeWebhookSecret`, `CreemWebhookSecret` | yes (`/api/option`) |
+| Waffo Pancake `/api/option/waffo-pancake/{pair,save}` | `private_key` (PEM) | yes (`/api/option`) |
+| Auth settings `/api/option` | `GitHubClientSecret`, `LinuxDOClientSecret`, `TurnstileSecretKey`, SMTP password / certificate options | yes (`/api/option`) |
+| Custom OAuth `/api/custom-oauth-provider` | `client_secret` | yes |
+| Deployments `/api/deployments` | `registry_secret`, `secret_env_variables` | yes |
+| Profile notifications `PUT /api/user/setting` | `webhook_secret` (inside JSON `setting`) | **added in this round** |
+| Profile `PUT /api/user/self` | `password` | yes (password fields only) |
+| Login `GET /api/user/login/encryption-key` | `public_key` (RSA PEM, public) | n/a — passed through intact (only known values masked) because masking breaks password encryption |
+| Any response | `ETag` header | header values are now `maskString`-ed |
+
+Read-only displays (passkey public keys, Gemini thought signatures) are not saved by the client.
+
 ## Known limitations
 
+- **A malicious upstream can deterministically smuggle UNKNOWN keys** inside a header-valid `data:image` payload
+  (bounded by `+`/`/`/`=`), or by encoding/splitting them (base64, short pieces, homoglyphs). Only known secrets are
+  guaranteed masked there. This is by design (see threat model): the client cannot defend secrets it does not know
+  against the server that holds them.
 - **Unprefixed keys shorter than 32 characters** are not detected (scan-bundle) or masked (sanitize `looksLikeBareKey`):
   below that length the random-vs-identifier heuristic produces too many false positives. `sk-` keys are covered from
   16 characters; values in secret-named fields are masked regardless of shape.
