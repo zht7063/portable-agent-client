@@ -11,11 +11,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "smoke": "bun run build && node scripts/smoke.mjs",
     "stage": "node scripts/stage.mjs",
-    "pack:dir": "bun run build:prod && node scripts/stage.mjs && electron-builder --config electron-builder.config.cjs --dir --publish never",
+    "pack:dir": "bun run build:prod && node scripts/stage.mjs && PA_LOCAL_BUILD=1 electron-builder --config electron-builder.config.cjs --dir --publish never",
     "smoke:packaged": "node scripts/smoke-packaged.mjs",
     "build:main:prod": "node scripts/build-main.mjs --prod",
     "build:prod": "bun run build:main:prod && bun run build:renderer",
-    "pack:linux": "bun run build:prod && node scripts/stage.mjs && electron-builder --config electron-builder.config.cjs --linux AppImage deb --publish never"
+    "pack:linux": "bun run build:prod && node scripts/stage.mjs && PA_LOCAL_BUILD=1 electron-builder --config electron-builder.config.cjs --linux AppImage deb --publish never"
   },
   "dependencies": {
     "@pac/core": "workspace:*",

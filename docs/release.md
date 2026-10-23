@@ -60,6 +60,10 @@ packaged JS, all license files present (asar + `resources/licenses/`), no keyrin
   carries a "Modified by portable-agent-client" note.
 - **Source location / offer**: `sourceUrl` and `sourceOffer` in `packages/core/src/product.config.json`
   (placeholder: this repository, which is currently private — see open question below).
+  They stay listed in `"$placeholders"`; `electron-builder.config.cjs` (scripts/check-placeholders.cjs) **refuses to
+  package** while either is unreplaced, unless the explicit local flag `PA_LOCAL_BUILD=1` is set. Only `pack:dir` and
+  `pack:linux` (artifacts named `*-LOCAL`, never distributed) set it. A release build must replace both values, drop
+  them from `"$placeholders"`, and run electron-builder without the flag.
 
 ## Corresponding Source
 

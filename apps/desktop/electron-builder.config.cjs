@@ -1,6 +1,11 @@
 // Local packaging only (no installer distribution). No publish/upload: `publish: null` and every script passes
 // --publish never. Product identity comes from the single product config (placeholders).
 const product = require('../../packages/core/src/product.config.json');
+const { assertNoPlaceholders } = require('./scripts/check-placeholders.cjs');
+
+// Aegis M6 item 6: refuse to package with unreplaced sourceUrl/sourceOffer unless PA_LOCAL_BUILD=1.
+const placeholderWarning = assertNoPlaceholders(product, process.env);
+if (placeholderWarning) console.warn(placeholderWarning);
 
 module.exports = {
   appId: product.appId,

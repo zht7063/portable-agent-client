@@ -12,6 +12,7 @@
     "repo": "https://github.com/QuantumNous/new-api",
     "license": "AGPL-3.0"
   },
+  "$placeholders": ["sourceUrl", "sourceOffer"],
   "sourceUrl": "https://github.com/zht7063/portable-agent-client",
   "sourceOffer": "PLACEHOLDER: the source repository is private while the product is unreleased. Until it is public, recipients of a build may request the Corresponding Source (scripts/source-tarball.sh output for that build commit) from the distributor; no build is distributed yet."
 }

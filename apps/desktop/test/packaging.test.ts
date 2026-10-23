@@ -6,6 +6,8 @@ import { join } from 'node:path';
 
 const app = join(__dirname, '..');
 const built = existsSync(join(app, 'dist', 'main', 'index.cjs')) && existsSync(join(app, 'dist', 'renderer'));
+// Loading the config runs the Aegis M6 item-6 placeholder check; these tests inspect a LOCAL config.
+process.env.PA_LOCAL_BUILD = '1';
 
 describe('local packaging config (H4)', () => {
   it('never publishes, uses the central product config and never ships @napi-rs/keyring-linux-*', () => {
