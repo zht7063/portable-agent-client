@@ -39,17 +39,23 @@ Guarantees:
 3. **SSE** (`text/event-stream`, playground) is sanitised line by line (`sseSanitizer`): each complete line is masked
    and forwarded at once (latency = one line); partial lines are buffered. Lines are **never cut** (a cut inside a
    `data:image` payload would break span recognition and either corrupt the image or let a heuristic decision differ):
-   a line gets the 32 MiB allowance only structurally: it starts `data: {` (or `data:{`), and an image span starts
-   right after `"b64_json":"` or `data:image/<type>;base64,` (the first one within 8 KiB of the line start) whose first
-   24 base64 chars decode to a PNG/JPEG/GIF/WebP (SVG for data:image) header. Text outside verified spans is limited
-   to 1 MiB per line and counted incrementally, so a fake marker is rejected after ~1 MiB, not after buffering 32 MiB.
-   A process-wide budget caps bytes currently buffered (unflushed partial lines) across all concurrent SSE streams at
-   64 MiB (counted in UTF-16 code units, = bytes for ASCII/base64). There is no cumulative per-stream cap, so long
-   sessions are never cut. The stream whose buffering would push the global total over 64 MiB ends with `event: error` /
-   `SSE_BUFFER_LIMIT` and releases its share; other streams continue. Each stream's share is released on line flush,
-   stream end, error frames and consumer cancel/upstream abort (`sseBudget.held` returns to 0). Beyond a per-line limit the line is
-   dropped and the stream ends with `event: error` / `SSE_LINE_TOO_LARGE`. `data:image` spans are found with a linear
-   scan (no backtracking regex), so multi-MB images pass byte-identical.
+   a line may exceed 1 MiB (up to 32 MiB) only if it carries confirmed image payloads. Early, incremental check
+   (`SseLineMeter`, UTF-8 bytes): the line starts `data: {` (or `data:{`) and an image span starts right after
+   `"b64_json":"` or `data:image/<type>;base64,` (the first within 8 KiB) whose first 24 base64 chars decode to an
+   image header; text outside spans is limited to 1 MiB, so a fake marker is rejected after ~1 MiB. Final check, when
+   the line is complete and > 1 MiB: the spans are recomputed with the **same predicates as the buffered-body path**
+   (`isB64JsonImage` on top-level `data[i].b64_json`, as in `sanitizeJson`; `isDataImagePayload` for `data:image`, as in
+   `maskString`; a span containing a known value is not a span) and the bytes outside them must be <= 1 MiB. If
+   that fails the line is dropped with `SSE_LINE_TOO_LARGE` directly; the text masker is never run over a giant line.
+   **Buffer budget** (`SseBudget`, UTF-8 bytes of unflushed partial lines): per stream <= 32 MiB, process-wide across
+   all concurrent SSE streams <= 64 MiB. There is no cumulative per-stream cap, so long sessions are never cut. When a
+   reservation would exceed the global cap, the stream with the **largest** buffered usage (possibly not the
+   requester) is ended with `event: error` / `SSE_BUFFER_LIMIT` and its bytes released, repeatedly, until the request
+   fits; if the requester itself is the largest, it is the one ended. A stream over its own 32 MiB also gets
+   `SSE_BUFFER_LIMIT`. A stream's bytes are released on line flush, stream end, error frames, exceptions thrown while
+   sanitising (try/catch release, then rethrow) and consumer cancel / upstream abort; `sseBudget.held` returns to 0.
+   Over-long lines end the stream with `event: error` / `SSE_LINE_TOO_LARGE`. `data:image` spans are found with a
+   linear scan (no backtracking regex), so multi-MB images pass byte-identical.
    **`b64_json` exception (Iris decision; no generic base64 exception).** In a JSON body, or the JSON of an SSE
    `data:` line, a string under the exact key `b64_json` of an object that is an element of the **top-level** `data`
    array (`data[i].b64_json`, the image-generation response shape) is a confirmed image payload when it is valid
@@ -100,10 +106,27 @@ Read-only displays (passkey public keys, Gemini thought signatures) are not save
 - **A known key inside a data:image / b64_json payload corrupts that image** (accepted): after exact replacement the payload is no longer
   valid base64, so the rest of the span is treated as plain text and over-masked.
 - **Bare-run scanner**: a hand-written linear scan (no regex backtracking); a single run longer than 1 MiB is masked
-  entirely. **Provider ID prefixes** (`chatcmpl-`, `cmpl-`, `resp_`, `msg_`, `call_`, `run_`, `step_`, `asst_`,
-  `thread_`, `file-`, `batch_`, `ftjob-`, `toolu_`, `req_`, `msgbatch_`) followed by exactly 8-64 alphanumerics are not
-  masked by the heuristic (OpenAI/Anthropic object ids are not secrets); known values in them are still exact-replaced.
-  An unknown key placed right after such a prefix is therefore not masked (accepted).
+  entirely. The `sk-`, JWT, `otpauth://` and `Bearer` shapes and the error-text long-run mask are also linear
+  scanners: the previous regexes overflowed the regexp stack on 16 MB runs (RangeError). JSON bodies nested deeper
+  than 256 levels (`MAX_JSON_DEPTH`, also inside `setting`) are refused with 502 `TOO_DEEP` instead of overflowing
+  the recursive walk. Tests: `glued-keys.test.ts` "large / deep inputs".
+- **Provider ID prefixes** are exempt from the heuristic only for these exact shapes (`ID_PREFIX_SHAPES`); a prefix
+  followed by an unknown 48-char key never matches (tests: 15/15 masked per prefix, 200 synthetic real-shape ids per
+  prefix 0 masked). Known values are exact-replaced first regardless.
+
+  | Prefix | Tail shape | Source / example |
+  |---|---|---|
+  | `chatcmpl-` | 29 base62 | OpenAI Chat Completions responses, e.g. `chatcmpl-B9MBs8CjcvOU2jLn4n570S5qMJKcT` |
+  | `resp_` | 48 lowercase hex | OpenAI Responses API, e.g. `resp_67ccd2bed1ec8190b14f964abc0542670bb6a6b452d3795b` |
+  | `msg_` | `01` + 22 base62 (Anthropic) or 24 base62 (OpenAI Assistants) | Anthropic Messages API, e.g. `msg_013Zva2CMHLNnXjNJJKqJ2EF` |
+  | `toolu_` | `01` + 21-24 base62 | Anthropic tool use docs, e.g. `toolu_01A09q90qw90lq917835lq9` |
+  | `call_` | 24 base62 | OpenAI tool_calls ids |
+  | `asst_` | 17-24 base62 | OpenAI Assistants (24); community example `asst_58fDQ7d8AJHDJy8dv` (17) |
+  | `thread_`, `run_`, `step_` | 24 base62 | OpenAI Assistants ids |
+  | `file-` | 22-24 base62 | OpenAI Files, e.g. `file-6F2ksmvXxt4VdoqmHRw6kL` (22), older ids 24 |
+
+  Removed (shape not pinned down from a reliable source): `cmpl-`, `batch_`, `ftjob-`, `req_`, `msgbatch_`. OpenAI
+  documents ids as opaque and liable to change; a provider changing a shape makes those ids get masked (fail closed).
 - **Key formats**: new-api tokens are 48-char base62 (no `-`/`_`), which the run/segment heuristic covers. The
   remaining gap is third-party keys made of short hyphen/underscore-separated segments (no single segment of >= 32
   random chars), which are only masked when the whole run is <= 128 chars and looks random, or when known.
@@ -111,8 +134,8 @@ Read-only displays (passkey public keys, Gemini thought signatures) are not save
   looks random, otherwise each `-`/`_`-separated segment is checked (so `uuid-K`, `K_<long>`, `req-<digits>-K` are
   masked). Not caught: a key that itself contains `-`/`_` AND is glued into a run > 128 chars with no segment of
   >= 32 random chars (adjacent-segment joins are not tried). UUIDs are exempt only in lowercase hex.
-  ID probes (`glued-keys.test.ts`): allowlisted provider ids are unchanged; `resp_<48 hex>`, `msg_/call_/file-<24 mixed>`, lowercase UUIDs, request ids, snake/kebab/camel/
-  CONSTANT identifiers and model names are unchanged. The base64 FP bench is unchanged by the scanner and prefix changes (all 79.69%).
+  ID probes (`glued-keys.test.ts`): provider ids of the exact shapes above are unchanged (`run_<32 mixed>` is now masked); lowercase UUIDs, request ids, snake/kebab/camel/
+  CONSTANT identifiers and model names are unchanged. The base64 FP bench is unchanged by these changes (all 79.69%).
 - **Unprefixed keys shorter than 32 characters** are not detected (scan-bundle) or masked (sanitize `looksLikeBareKey`):
   below that length the random-vs-identifier heuristic produces too many false positives. `sk-` keys are covered from
   16 characters; values in secret-named fields are masked regardless of shape.
