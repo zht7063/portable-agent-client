@@ -26,8 +26,15 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
   echo "license: AGPL-3.0-only (see LICENSE, NOTICE)"
   echo "build: see docs/release.md (bun install --frozen-lockfile; cd apps/desktop; bun run pack:dir | pack:linux)"
 } > "$TMP/SOURCE-INFO.txt"
-git archive --format=tar --prefix="$NAME/" "$COMMIT" > "$TMP/src.tar"
-tar -rf "$TMP/src.tar" --transform "s,^,$NAME/," -C "$TMP" SOURCE-INFO.txt
-gzip -n -9 < "$TMP/src.tar" > "$OUT/$NAME.tar.gz"
+# Reproducible (Aegis M6 item 4): same commit -> byte-identical tarball. Fixed mtime (commit time),
+# numeric owner/group 0, sorted entries, no gzip name/timestamp, fixed umask-independent modes.
+EPOCH="$(git show -s --format=%ct "$COMMIT")"
+mkdir -p "$TMP/stage"
+git archive --format=tar --prefix="$NAME/" "$COMMIT" | tar -xf - -C "$TMP/stage"
+cp "$TMP/SOURCE-INFO.txt" "$TMP/stage/$NAME/SOURCE-INFO.txt"
+chmod -R u+rwX,go+rX,go-w "$TMP/stage"
+LC_ALL=C tar --sort=name --mtime="@$EPOCH" --owner=0 --group=0 --numeric-owner \
+  --pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime \
+  --format=posix -C "$TMP/stage" -cf - "$NAME" | gzip -n -9 > "$OUT/$NAME.tar.gz"
 sha256sum "$OUT/$NAME.tar.gz" | sed "s,$OUT/,," > "$OUT/$NAME.tar.gz.sha256"
 echo "wrote $OUT/$NAME.tar.gz"
