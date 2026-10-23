@@ -278,24 +278,31 @@ function sseLine(t: string, known: readonly string[]): string {
   return out + plain(t.slice(last));
 }
 
-export const SSE_MAX_LINE = 32 << 20;
+export const SSE_MAX_LINE = 32 << 20;       // lines carrying an image (b64_json / data:image)
+export const SSE_MAX_TEXT_LINE = 1 << 20;   // any other line
+const SSE_IMAGE_MARK = /"b64_json"|data:image\//i;
 export const SSE_TOO_LARGE_FRAME = '\n\nevent: error\ndata: {"success":false,"code":"SSE_LINE_TOO_LARGE"}\n\n';
-export function sseSanitizer(known: readonly string[], maxLine = SSE_MAX_LINE): TransformStream<Uint8Array, Uint8Array> {
+export function sseSanitizer(known: readonly string[], maxLine = SSE_MAX_LINE, maxText = SSE_MAX_TEXT_LINE): TransformStream<Uint8Array, Uint8Array> {
   const dec = new TextDecoder(); const enc = new TextEncoder();
   const clean = (t: string) => sseLine(t, known);
-  const parts: string[] = []; let pending = 0; // partial line, kept as pieces (no O(n^2) concatenation)
+  const limit = (l: string) => (SSE_IMAGE_MARK.test(l) ? maxLine : maxText);
+  const parts: string[] = []; let pending = 0; let image = false; // partial line, kept as pieces
+  const tooLarge = (ctl: TransformStreamDefaultController<Uint8Array>) => {
+    parts.length = 0; pending = 0; ctl.enqueue(enc.encode(SSE_TOO_LARGE_FRAME)); ctl.terminate();
+  };
   return new TransformStream({
     transform(chunk, ctl) {
       const t = dec.decode(chunk, { stream: true });
       const nl = t.lastIndexOf('\n');
       if (nl < 0) {
         parts.push(t); pending += t.length;
-        if (pending > maxLine) { parts.length = 0; pending = 0; ctl.enqueue(enc.encode(SSE_TOO_LARGE_FRAME)); ctl.terminate(); }
+        if (!image && pending > maxText) { const j = parts.join(''); parts.length = 0; parts.push(j); image = SSE_IMAGE_MARK.test(j); }
+        if (pending > (image ? maxLine : maxText)) tooLarge(ctl);
         return;
       }
       const lines = (parts.join('') + t.slice(0, nl)).split('\n');
-      parts.length = 0; pending = 0;
-      if (lines.some((l) => l.length > maxLine)) { ctl.enqueue(enc.encode(SSE_TOO_LARGE_FRAME)); ctl.terminate(); return; }
+      parts.length = 0; pending = 0; image = false;
+      if (lines.some((l) => l.length > limit(l))) { tooLarge(ctl); return; }
       ctl.enqueue(enc.encode(lines.map(clean).join('\n') + '\n'));
       const rest = t.slice(nl + 1); if (rest) { parts.push(rest); pending = rest.length; }
     },
