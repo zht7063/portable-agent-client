@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MemoryKeyVault, MemoryTokenStore, createCore, findCredentialLeaks } from '@pac/core';
 import { MemoryKeyring, NoKeyring, type Keyring } from '@pac/keychain';
-import { KeyService } from '../src/main/key-service';
+import { KeyService, buildCurl } from '../src/main/key-service';
 import { createHandlers, dispatch } from '../src/main/ipc/handlers';
 import { ServerProxy, MASKED_SAVE_MESSAGE, containsMaskedValue } from '../src/main/proxy/api-proxy';
 import { ServerSession } from '../src/main/proxy/server-session';
@@ -45,7 +45,7 @@ function setup(keyring: Keyring = new MemoryKeyring()) {
   const clip = { text: '', writeText: vi.fn((t: string) => { clip.text = t; }), readText: vi.fn(() => clip.text), clear: vi.fn(() => { clip.text = ''; }) };
   let s!: ServerSession;
   const ready = session(srv.fetch).then((x) => { s = x; s.vault.issue('real-access-token'); });
-  const keys = new KeyService({ keyring, api: (m, p) => s.mainApi(m, p), clipboard: clip, metaFile: join(dir, 'keychain-entries.json'), now: () => new Date('2026-10-24T00:00:00Z') });
+  const keys = new KeyService({ keyring, api: (m, p) => s.mainApi(m, p), clipboard: clip, metaFile: join(dir, 'keychain-entries.json'), serverOrigin: () => ORIGIN, now: () => new Date('2026-10-24T00:00:00Z') });
   return { dir, srv, clip, keys, keyring, ready, get s() { return s; } };
 }
 
@@ -109,28 +109,38 @@ describe('M4 token -> keychain (main only)', () => {
     expect(t.clip.text).toBe(FULL);
     expect(r).toEqual({ copied: true, tokenId: 7, maskedKey: maskSecret(FULL) });
   });
-  it('copy with curl: main builds the curl with the real key; renderer gets masked info; auto-clear covers it', async () => {
+  it('copy with curl: main builds the curl against the configured origin with the real key, all single-quoted', async () => {
     const t = setup(); await t.ready;
-    const r = await t.keys.copy(7, { endpoint: 'https://api.example.com/v1/chat/completions', model: 'gpt-4.1-mini' });
-    expect(t.clip.text).toContain(`Authorization: Bearer ${FULL}`);
-    expect(t.clip.text.startsWith("curl 'https://api.example.com/v1/chat/completions' \\")).toBe(true);
-    expect(t.clip.text).toContain('"model":"gpt-4.1-mini"');
+    const r = await t.keys.copy(7, { path: '/v1/chat/completions', model: 'gpt-4.1-mini' });
+    expect(t.clip.text.split('\n')).toEqual([
+      `curl '${ORIGIN}/v1/chat/completions' \\`,
+      "  -H 'Content-Type: application/json' \\",
+      `  -H 'Authorization: Bearer ${FULL}' \\`,
+      `  -d '{"model":"gpt-4.1-mini","messages":[{"role":"user","content":"Say hello in one sentence."}]}'`,
+    ]);
     expect(r).toEqual({ copied: true, tokenId: 7, maskedKey: maskSecret(FULL) });
     expect(JSON.stringify(r)).not.toContain(RAW);
     expect(t.keys.clearClipboardIfOurs()).toBe(true);
   });
-  it('copy with curl rejects shell-breaking endpoint/model before fetching the key', async () => {
+  it('Aegis MUST 1: the renderer cannot choose the host (full URLs, //host, traversal, odd chars refused before fetching the key)', async () => {
     const t = setup(); await t.ready;
     const bad = [
-      { endpoint: "https://x.example/'; rm -rf ~; '", model: 'm' },
-      { endpoint: 'https://x.example/$(id)', model: 'm' },
-      { endpoint: 'file:///etc/passwd', model: 'm' },
-      { endpoint: 'https://u:p@x.example/', model: 'm' },
-      { endpoint: 'https://x.example/v1', model: 'm"; id; "' },
-      { endpoint: 'https://x.example/v1', model: '' },
+      { path: 'https://evil.example/v1/chat/completions', model: 'm' }, { path: '//evil.example/v1', model: 'm' },
+      { path: '/v1/../../x', model: 'm' }, { path: "/v1/'; rm -rf ~; '", model: 'm' }, { path: '/v1/$(id)', model: 'm' },
+      { path: '/v1?x=1', model: 'm' }, { path: '/v1#f', model: 'm' }, { path: '/v1\\x', model: 'm' }, { path: '', model: 'm' },
+      { path: '/v1', model: 'm"; id; "' }, { path: '/v1', model: '' }, { endpoint: 'https://x.example/v1', model: 'm' },
     ];
-    for (const c of bad) await expect(t.keys.copy(7, c)).rejects.toMatchObject({ error: { code: 'VALIDATION' } });
+    for (const c of bad) await expect(t.keys.copy(7, c as never)).rejects.toMatchObject({ error: { code: 'VALIDATION' } });
     expect(t.clip.writeText).not.toHaveBeenCalled();
+    expect(t.srv.calls.some((c) => c.url.endsWith('/key'))).toBe(false);
+  });
+  it('buildCurl: origin comes only from main; no server configured -> refused', () => {
+    expect(buildCurl('https://na.example.test/base', '/v1/chat/completions', 'm', FULL)).toContain("curl 'https://na.example.test/v1/chat/completions'");
+    expect(() => buildCurl(null, '/v1/chat/completions', 'm', FULL)).toThrow(/No server/);
+  });
+  it('Aegis MUST 2: keys outside sk-[A-Za-z0-9_-] are refused, never interpolated', () => {
+    for (const k of ["sk-abc'def" + 'x'.repeat(20), 'sk-' + 'a'.repeat(20) + '$(id)', 'sk-' + 'a'.repeat(20) + ' b', 'nosk' + 'a'.repeat(30), 'sk-short', 'sk-' + 'a'.repeat(20) + '\n'])
+      expect(() => buildCurl(ORIGIN, '/v1/chat/completions', 'm', k)).toThrow(/unexpected characters/);
   });
   it('harness apply (command mode) provisions the keychain via the main session (ensure), once per token', async () => {
     const t = setup(); await t.ready;

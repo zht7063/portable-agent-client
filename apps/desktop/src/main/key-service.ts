@@ -25,6 +25,8 @@ export interface KeyServiceOptions {
   /** Non-secret metadata file (token id / name / masked key per keychain entry). */
   metaFile: string;
   now?: () => Date;
+  /** Origin of the configured server (curl copies are always built against it). */
+  serverOrigin?: () => string | null;
 }
 
 type Meta = Record<string, Omit<StoredKeyInfo, 'present'>>; // account -> info
@@ -33,24 +35,30 @@ const toSk = (raw: string) => (raw.startsWith('sk-') ? raw : `sk-${raw}`);
 const validId = (id: unknown): id is number => typeof id === 'number' && Number.isSafeInteger(id) && id > 0;
 
 /**
- * Builds the dashboard's "Copy curl" text (same shape as upstream's buildCurlCommand) in main. Inputs come from the
- * renderer and end up in a shell, so they are validated strictly: endpoint must be a plain http(s) URL without
- * credentials or shell-significant characters; model a conservative charset.
+ * Builds the dashboard's "Copy curl" text (same shape as upstream's buildCurlCommand) in main. The text ends up in a
+ * shell, so (Aegis M5 MUST 1/2):
+ *  - the renderer supplies only a path; main joins it to the configured server origin (it cannot pick the host);
+ *  - path and model use conservative charsets; every interpolated value is single-quoted;
+ *  - the key must match sk-[A-Za-z0-9_-]+ (refused otherwise) and is single-quoted too.
  */
-export function buildCurl(endpoint: unknown, model: unknown, key: string): string {
+export const CURL_PATH = /^\/[A-Za-z0-9._~/-]{1,255}$/;
+export const CURL_KEY = /^sk-[A-Za-z0-9_-]{16,128}$/;
+export function buildCurl(origin: string | null, path: unknown, model: unknown, key: string): string {
   const bad = () => new PaException({ code: 'VALIDATION', message: 'Invalid curl endpoint/model' });
-  if (typeof endpoint !== 'string' || typeof model !== 'string' || endpoint.length > 2048) throw bad();
-  let u: URL;
-  try { u = new URL(endpoint); } catch { throw bad(); }
-  if ((u.protocol !== 'https:' && u.protocol !== 'http:') || u.username || u.password) throw bad();
-  const href = u.href;
-  // Single-quoted in the output, so only a quote could break out; allow RFC 3986 characters minus ' (and no $ or `).
-  if (!/^[A-Za-z0-9\-._~:/?#[\]@!&()*+,;=%]+$/.test(href)) throw bad();
+  if (typeof path !== 'string' || typeof model !== 'string') throw bad();
+  if (!CURL_PATH.test(path) || path.includes('//') || path.split('/').some((x) => x === '..' || x === '.')) throw bad();
   if (!/^[A-Za-z0-9._:/@+-]{1,128}$/.test(model)) throw bad();
+  if (!origin) throw new PaException({ code: 'VALIDATION', message: 'No server configured' });
+  let o: URL;
+  try { o = new URL(origin); } catch { throw bad(); }
+  if ((o.protocol !== 'https:' && o.protocol !== 'http:') || o.username || o.password) throw bad();
+  const href = new URL(path, o.origin).href;
+  if (new URL(href).origin !== o.origin || !/^[A-Za-z0-9\-._~:/[\]%]+$/.test(href)) throw bad();
+  if (!CURL_KEY.test(key)) throw new PaException({ code: 'VALIDATION', message: 'Key has unexpected characters; not copied as curl' });
   return [
     `curl '${href}' \\`,
-    '  -H "Content-Type: application/json" \\',
-    `  -H "Authorization: Bearer ${key}" \\`,
+    "  -H 'Content-Type: application/json' \\",
+    `  -H 'Authorization: Bearer ${key}' \\`,
     `  -d '{"model":"${model}","messages":[{"role":"user","content":"Say hello in one sentence."}]}'`,
   ].join('\n');
 }
@@ -128,11 +136,12 @@ export class KeyService {
    * Full key goes main -> clipboard only. Aegis N1 (plan §2): auto-clear after `clipboardClearSeconds` (default 30)
    * and on quit, but only if the clipboard still holds that key (compared by hash in main; never logged).
    */
-  async copy(tokenId: number, curl?: { endpoint: string; model: string }): Promise<KeysCopyRes> {
+  async copy(tokenId: number, curl?: { path: string; model: string }): Promise<KeysCopyRes> {
     if (curl !== undefined && (curl === null || typeof curl !== 'object')) throw new PaException({ code: 'VALIDATION', message: 'Invalid curl endpoint/model' });
-    if (curl) buildCurl(curl.endpoint, curl.model, 'sk-x'); // validate before fetching the key
+    const origin = this.o.serverOrigin?.() ?? null;
+    if (curl) buildCurl(origin, curl.path, curl.model, 'sk-' + 'x'.repeat(48)); // validate before fetching the key
     const key = await this.fetchKey(tokenId);
-    const text = curl ? buildCurl(curl.endpoint, curl.model, key) : key;
+    const text = curl ? buildCurl(origin, curl.path, curl.model, key) : key;
     this.o.clipboard.writeText(text);
     this.clipHash = digest(text);
     if (this.clipTimer) clearTimeout(this.clipTimer);

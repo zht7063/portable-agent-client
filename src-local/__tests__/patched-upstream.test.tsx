@@ -41,7 +41,7 @@ describe('patch 0005: dashboard copy curl', () => {
   it('goes to main with token id + endpoint/model; never touches the renderer clipboard', async () => {
     const fake = installFakePa()
     expect(await paCopyCurl(7, 'https://api.example.com/v1/chat/completions', 'gpt-4.1-mini', (s, o) => s.replace('{{n}}', String(o?.n)))).toBe(true)
-    expect(fake.keys.copy).toHaveBeenCalledWith({ tokenId: 7, curl: { endpoint: 'https://api.example.com/v1/chat/completions', model: 'gpt-4.1-mini' } })
+    expect(fake.keys.copy).toHaveBeenCalledWith({ tokenId: 7, curl: { path: '/v1/chat/completions', model: 'gpt-4.1-mini' } })
     expect(toast.success).toHaveBeenCalledWith('Copied. The clipboard is cleared in 30s.')
     expect(clip).not.toHaveBeenCalled()
   })
