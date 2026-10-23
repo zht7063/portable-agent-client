@@ -7,7 +7,7 @@ function setup() {
   const vault = new MemoryKeyVault();
   void vault.set(2, 'sk-' + 'A'.repeat(48));
   const core = createCore({ serverUrl: 'http://new-api.test:3000', store: new MemoryTokenStore(), vault, fetch: async () => { throw new Error('no network in tests'); } });
-  let cfg: ClientConfig = { serverUrl: 'http://new-api.test:3000', insecureTransport: true };
+  let cfg: ClientConfig = { serverUrl: 'http://new-api.test:3000', insecureTransport: true, clipboardClearSeconds: 30 };
   const handlers = createHandlers({ getCore: () => core, getConfig: () => cfg, setConfig: async (p) => (cfg = { ...cfg, ...p }), harness: tmpHarnessHost().host.harness });
   return { core, handlers };
 }
@@ -20,7 +20,7 @@ describe('desktop IPC handlers', () => {
   });
   it('config:get returns Result ok without credentials', async () => {
     const { handlers } = setup();
-    expect(await dispatch(handlers, 'config:get', {})).toEqual({ ok: true, data: { serverUrl: 'http://new-api.test:3000', insecureTransport: true } });
+    expect(await dispatch(handlers, 'config:get', {})).toEqual({ ok: true, data: { serverUrl: 'http://new-api.test:3000', insecureTransport: true, clipboardClearSeconds: 30 } });
   });
   it('module errors map to Result errors', async () => {
     const { handlers } = setup();

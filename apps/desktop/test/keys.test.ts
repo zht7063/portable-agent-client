@@ -42,7 +42,7 @@ async function session(fetch: any) {
 function setup(keyring: Keyring = new MemoryKeyring()) {
   const dir = mkdtempSync(join(tmpdir(), 'pa-keys-'));
   const srv = fakeServer();
-  const clip = { text: '', writeText: vi.fn((t: string) => { clip.text = t; }) };
+  const clip = { text: '', writeText: vi.fn((t: string) => { clip.text = t; }), readText: vi.fn(() => clip.text), clear: vi.fn(() => { clip.text = ''; }) };
   let s!: ServerSession;
   const ready = session(srv.fetch).then((x) => { s = x; s.vault.issue('real-access-token'); });
   const keys = new KeyService({ keyring, api: (m, p) => s.mainApi(m, p), clipboard: clip, metaFile: join(dir, 'keychain-entries.json'), now: () => new Date('2026-10-24T00:00:00Z') });
@@ -79,7 +79,7 @@ describe('M4 token -> keychain (main only)', () => {
   it('IPC keys:* return only masked values/metadata; dispatch leak guard passes', async () => {
     const t = setup(); await t.ready;
     const { host } = tmpHarnessHost(t.keyring);
-    const cfg = { serverUrl: ORIGIN, insecureTransport: true };
+    const cfg = { serverUrl: ORIGIN, insecureTransport: true, clipboardClearSeconds: 30 };
     const core = createCore({ serverUrl: ORIGIN, store: new MemoryTokenStore(), vault: new MemoryKeyVault(), fetch: async () => { throw new Error('no network'); } });
     const h = createHandlers({ getCore: () => core, getConfig: () => cfg, setConfig: async () => cfg, harness: host.harness, keys: t.keys });
     const results = [
@@ -98,7 +98,7 @@ describe('M4 token -> keychain (main only)', () => {
     const t = setup(); await t.ready;
     const leaky = { ...t.keys, list: t.keys.list.bind(t.keys), store: t.keys.store.bind(t.keys), remove: t.keys.remove.bind(t.keys), fetchKey: t.keys.fetchKey.bind(t.keys), copy: async () => ({ copied: true as const, tokenId: 7, maskedKey: FULL }) };
     const { host } = tmpHarnessHost(t.keyring);
-    const cfg = { serverUrl: ORIGIN, insecureTransport: true };
+    const cfg = { serverUrl: ORIGIN, insecureTransport: true, clipboardClearSeconds: 30 };
     const h = createHandlers({ getCore: () => { throw new Error('x'); }, getConfig: () => cfg, setConfig: async () => cfg, harness: host.harness, keys: leaky });
     expect(await dispatch(h, 'keys:copy', { tokenId: 7 })).toMatchObject({ ok: false, error: { code: 'SERVER' } });
   });
@@ -165,5 +165,65 @@ describe('M4 masked admin form save is blocked in the proxy', () => {
     expect(containsMaskedValue(new TextEncoder().encode('{"a":["x","pac-h.abc"]}').buffer as ArrayBuffer)).toBe(true);
     expect(containsMaskedValue(new TextEncoder().encode('{"a":"plain"}').buffer as ArrayBuffer)).toBe(false);
     expect(containsMaskedValue(new TextEncoder().encode('k=abcd**********wxyz').buffer as ArrayBuffer)).toBe(true);
+  });
+});
+
+describe('Aegis N1: clipboard auto-clear after keys:copy', () => {
+  function withClear(secs: number) {
+    const dir = mkdtempSync(join(tmpdir(), 'pa-clip-'));
+    const clip = { text: '', writeText: vi.fn((t: string) => { clip.text = t; }), readText: vi.fn(() => clip.text), clear: vi.fn(() => { clip.text = ''; }) };
+    const keys = new KeyService({ keyring: new MemoryKeyring(), api: async () => ({ key: RAW }) as any, clipboard: clip, clipboardClearSeconds: () => secs, metaFile: join(dir, 'm.json') });
+    return { clip, keys };
+  }
+  it('clears after the configured delay when the clipboard still holds the key', async () => {
+    vi.useFakeTimers();
+    try {
+      const { clip, keys } = withClear(30);
+      await keys.copy(7);
+      expect(clip.text).toBe(FULL);
+      vi.advanceTimersByTime(29_000); expect(clip.clear).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1_000); expect(clip.clear).toHaveBeenCalledTimes(1); expect(clip.text).toBe('');
+    } finally { vi.useRealTimers(); }
+  });
+  it('does not clear when the user copied something else meanwhile', async () => {
+    vi.useFakeTimers();
+    try {
+      const { clip, keys } = withClear(30);
+      await keys.copy(7);
+      clip.text = 'user text';
+      vi.advanceTimersByTime(30_000);
+      expect(clip.clear).not.toHaveBeenCalled(); expect(clip.text).toBe('user text');
+    } finally { vi.useRealTimers(); }
+  });
+  it('0 disables the timer; quit still clears if ours', async () => {
+    vi.useFakeTimers();
+    try {
+      const { clip, keys } = withClear(0);
+      await keys.copy(7);
+      vi.advanceTimersByTime(3_600_000); expect(clip.clear).not.toHaveBeenCalled();
+      expect(keys.clearClipboardIfOurs()).toBe(true); expect(clip.text).toBe('');
+      expect(keys.clearClipboardIfOurs()).toBe(false); // nothing pending any more
+    } finally { vi.useRealTimers(); }
+  });
+  it('a second copy restarts the timer', async () => {
+    vi.useFakeTimers();
+    try {
+      const { clip, keys } = withClear(30);
+      await keys.copy(7); vi.advanceTimersByTime(20_000);
+      await keys.copy(7); vi.advanceTimersByTime(20_000);
+      expect(clip.clear).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(10_000); expect(clip.clear).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+  it('config bounds: integer 0..600, default 30', async () => {
+    const { ConfigStore, toClientConfig } = await import('../src/main/config-store');
+    const cs = new ConfigStore(join(mkdtempSync(join(tmpdir(), 'pa-cfg-')), 'config.json'));
+    const base = cs.defaults();
+    expect(toClientConfig(base).clipboardClearSeconds).toBe(30);
+    expect(toClientConfig(cs.apply(base, { clipboardClearSeconds: 0 })).clipboardClearSeconds).toBe(0);
+    expect(toClientConfig(cs.apply(base, { clipboardClearSeconds: 600 })).clipboardClearSeconds).toBe(600);
+    for (const bad of [-1, 601, 1.5, '30' as any, NaN]) expect(() => cs.apply(base, { clipboardClearSeconds: bad })).toThrow(/0\.\.600/);
+    await cs.save(cs.apply(base, { clipboardClearSeconds: 45 }));
+    expect(toClientConfig(await cs.load()).clipboardClearSeconds).toBe(45);
   });
 });

@@ -173,9 +173,13 @@ app.whenReady().then(async () => {
   const keyring = createKeyring();
   // M4: token -> keychain/clipboard through the main-only server session; the renderer only sends token ids.
   const keys = new KeyService({
-    keyring, api: (m, p) => srv.mainApi(m, p), clipboard: { writeText: (t) => clipboard.writeText(t) },
+    keyring, api: (m, p) => srv.mainApi(m, p), clipboard: { writeText: (t) => clipboard.writeText(t), readText: () => clipboard.readText(), clear: () => clipboard.clear() },
+    clipboardClearSeconds: () => host.config().clipboardClearSeconds,
     metaFile: join(userData, 'keychain-entries.json'),
   });
+  // Aegis N1: on quit, clear the clipboard if it still holds a key we copied.
+  app.on('before-quit', () => { keys.clearClipboardIfOurs(); });
+  app.on('will-quit', () => { keys.clearClipboardIfOurs(); });
   const harnessHost = new HarnessHost({
     home: homedir(), dataDir: userData, env: process.env, platform: process.platform, keyring, helperPath, getCore: () => host.core,
     ensureKey: (profileId, h, tokenId) => keys.ensure(profileId, h, tokenId),

@@ -47,9 +47,9 @@ describe('ConfigStore (no built-in server)', () => {
     const s = new ConfigStore('/nonexistent');
     const d = s.defaults();
     expect(() => s.apply(d, { serverUrl: 'nope' })).toThrowError(/Invalid server URL/);
-    expect(toClientConfig(s.apply(d, { serverUrl: 'http://10.0.0.2:3000' }))).toEqual({ serverUrl: 'http://10.0.0.2:3000', insecureTransport: true });
-    expect(toClientConfig(s.apply(d, { serverUrl: 'https://a.example' }))).toEqual({ serverUrl: 'https://a.example', insecureTransport: false });
-    expect(toClientConfig(d)).toEqual({ serverUrl: null, insecureTransport: false });
+    expect(toClientConfig(s.apply(d, { serverUrl: 'http://10.0.0.2:3000' }))).toEqual({ serverUrl: 'http://10.0.0.2:3000', insecureTransport: true, clipboardClearSeconds: 30 });
+    expect(toClientConfig(s.apply(d, { serverUrl: 'https://a.example' }))).toEqual({ serverUrl: 'https://a.example', insecureTransport: false, clipboardClearSeconds: 30 });
+    expect(toClientConfig(d)).toEqual({ serverUrl: null, insecureTransport: false, clipboardClearSeconds: 30 });
   });
 });
 
@@ -70,7 +70,7 @@ describe('CoreHost', () => {
     const p = await tmp();
     await writeFile(p, JSON.stringify({ version: 2, serverUrl: 'https://saved.example' }));
     const { h, created } = await host(p);
-    expect(h.config()).toEqual({ serverUrl: 'https://saved.example', insecureTransport: false });
+    expect(h.config()).toEqual({ serverUrl: 'https://saved.example', insecureTransport: false, clipboardClearSeconds: 30 });
     expect(created).toEqual(['https://saved.example']);
     expect(h.core.http.baseUrl).toBe('https://saved.example');
   });
@@ -93,7 +93,7 @@ describe('CoreHost', () => {
     await h.core.session.establish({ accessToken: 'jwt', accessExpiresAt: 9e9, stored: { serverUrl: DEF, refreshCookie: 'c', userId: 1, username: 'u' } });
     const old = h.core;
     const cfg = await h.set({ serverUrl: 'https://new.example/' });
-    expect(cfg).toEqual({ serverUrl: 'https://new.example', insecureTransport: false });
+    expect(cfg).toEqual({ serverUrl: 'https://new.example', insecureTransport: false, clipboardClearSeconds: 30 });
     expect(h.core).not.toBe(old);
     expect(created).toEqual([DEF, 'https://new.example']);
     expect(await tokenStore.load()).toBeNull();
@@ -126,7 +126,7 @@ describe('CoreHost', () => {
     expect(h.config().serverUrl).toBe(DEF);
     await expect(readFile(p, 'utf8')).rejects.toThrow();
     await dispatch(handlers, 'config:set', { serverUrl: 'https://b.example' });
-    expect(await dispatch(handlers, 'config:get', {})).toEqual({ ok: true, data: { serverUrl: 'https://b.example', insecureTransport: false } });
+    expect(await dispatch(handlers, 'config:get', {})).toEqual({ ok: true, data: { serverUrl: 'https://b.example', insecureTransport: false, clipboardClearSeconds: 30 } });
   });
 
   it('Aegis #1: renderer server change needs native confirmation (absent or Cancel = refused, nothing saved)', async () => {

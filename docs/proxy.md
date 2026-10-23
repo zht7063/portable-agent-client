@@ -96,7 +96,8 @@ Code: `apps/desktop/src/main/key-service.ts`, `ServerSession.mainApi`, IPC `keys
   `<userData>/keychain-entries.json` records token id, name, masked key and time per entry.
 - `keys:list` → `{available, backend, fallback?, entries:[{profileId, harness, tokenId, tokenName, maskedKey, storedAt, present}]}`.
 - `keys:copy {tokenId}` → main writes the full key to the system clipboard; the response carries the masked key only.
-  No auto-clear and no one-time reveal (open decisions).
+  Aegis N1: main clears the clipboard after `clipboardClearSeconds` (config, integer 0..600, default 30, 0 = off) and on
+  quit (`before-quit`/`will-quit`), only if it still holds that key (compared by SHA-256 in main; never logged).
 - `keys:delete {harness}` removes the keychain entry + metadata.
 - Harness apply in `command` key mode provisions the entry via the same path (`KeyService.ensure`: refetches only if
   the entry is missing or bound to another token); `pa-key default <harness>` then reads it (unchanged).

@@ -11,8 +11,16 @@ import type { HarnessId, KeyringBackend, ApplyResult, HarnessApplyReq, HarnessCh
 export interface ModelInfo { id: string }
 
 /** serverUrl is null until the user configures a (standard new-api) server; there is no built-in default. */
-export interface ClientConfig { serverUrl: string | null; /** Non-HTTPS server: allowed, UI warns. */ insecureTransport: boolean }
-export interface ConfigSetReq { serverUrl?: string }
+export interface ClientConfig {
+  serverUrl: string | null;
+  /** Non-HTTPS server: allowed, UI warns. */ insecureTransport: boolean;
+  /** Aegis N1: seconds after keys:copy before main clears the clipboard (if it still holds that key). 0 = off. */
+  clipboardClearSeconds: number;
+}
+/** Bounds for clipboardClearSeconds (0 disables auto-clear). */
+export const CLIPBOARD_CLEAR_DEFAULT = 30;
+export const CLIPBOARD_CLEAR_MAX = 600;
+export interface ConfigSetReq { serverUrl?: string; clipboardClearSeconds?: number }
 
 export type Empty = Record<string, never>;
 

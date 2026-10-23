@@ -49,7 +49,7 @@ describe('IPC contract: no credential fields reach the renderer', () => {
 describe('runtime guard findCredentialLeaks', () => {
   it('passes sample UI payloads', () => {
     const view: SessionView = { status: 'authenticated', userId: 3, username: 'u', accessExpiresAt: 1, storage: 'memory', serverUrl: 'http://x' };
-    const cfg: IpcInvokeMap['config:get']['res'] = { serverUrl: 'http://x', insecureTransport: true };
+    const cfg: IpcInvokeMap['config:get']['res'] = { serverUrl: 'http://x', insecureTransport: true, clipboardClearSeconds: 30 };
     expect(findCredentialLeaks({ view, cfg })).toEqual([]);
   });
   it('flags forbidden field names and secret-looking values', () => {

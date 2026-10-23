@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { HARNESS_IDS, PaException, isHarnessId, type HarnessId, type KeysCopyRes, type KeysListRes, type StoredKeyInfo } from '@pac/core';
@@ -18,7 +19,9 @@ export interface KeyServiceOptions {
   keyring: Keyring;
   /** Main-only authenticated standard-API call (ServerSession.mainApi). */
   api<T>(method: 'GET' | 'POST', path: string): Promise<T>;
-  clipboard: { writeText(text: string): void };
+  clipboard: { writeText(text: string): void; readText(): string; clear(): void };
+  /** Aegis N1: seconds until the copied key is cleared from the clipboard (0 = off). Read at copy time. */
+  clipboardClearSeconds?: () => number;
   /** Non-secret metadata file (token id / name / masked key per keychain entry). */
   metaFile: string;
   now?: () => Date;
@@ -29,7 +32,12 @@ type Meta = Record<string, Omit<StoredKeyInfo, 'present'>>; // account -> info
 const toSk = (raw: string) => (raw.startsWith('sk-') ? raw : `sk-${raw}`);
 const validId = (id: unknown): id is number => typeof id === 'number' && Number.isSafeInteger(id) && id > 0;
 
+const digest = (s: string) => createHash('sha256').update(s).digest('hex');
+
 export class KeyService {
+  /** Hash of the key last written to the clipboard (the key itself is not retained). */
+  private clipHash: string | null = null;
+  private clipTimer: ReturnType<typeof setTimeout> | null = null;
   constructor(private readonly o: KeyServiceOptions) {}
 
   /** Main-only. Never return this value over IPC. */
@@ -93,11 +101,35 @@ export class KeyService {
     return { available: true, backend: this.o.keyring.backend, entries };
   }
 
-  /** Full key goes main -> clipboard only. (Auto-clear is deferred, plan open decision.) */
+  /**
+   * Full key goes main -> clipboard only. Aegis N1 (plan §2): auto-clear after `clipboardClearSeconds` (default 30)
+   * and on quit, but only if the clipboard still holds that key (compared by hash in main; never logged).
+   */
   async copy(tokenId: number): Promise<KeysCopyRes> {
     const key = await this.fetchKey(tokenId);
     this.o.clipboard.writeText(key);
+    this.clipHash = digest(key);
+    if (this.clipTimer) clearTimeout(this.clipTimer);
+    this.clipTimer = null;
+    const secs = this.o.clipboardClearSeconds?.() ?? 30;
+    if (secs > 0) {
+      this.clipTimer = setTimeout(() => { this.clipTimer = null; this.clearClipboardIfOurs(); }, secs * 1000);
+      (this.clipTimer as { unref?: () => void }).unref?.();
+    }
     return { copied: true, tokenId, maskedKey: maskSecret(key) };
+  }
+
+  /** Clears the clipboard iff it still contains the key we copied. Returns true if cleared. Also used on quit. */
+  clearClipboardIfOurs(): boolean {
+    const h = this.clipHash;
+    if (this.clipTimer) { clearTimeout(this.clipTimer); this.clipTimer = null; }
+    if (!h) return false;
+    this.clipHash = null;
+    let cur = '';
+    try { cur = this.o.clipboard.readText(); } catch { return false; }
+    if (digest(cur) !== h) return false;
+    this.o.clipboard.clear();
+    return true;
   }
 
   async remove(harness: HarnessId, profileId = DEFAULT_PROFILE): Promise<{ removed: boolean }> {

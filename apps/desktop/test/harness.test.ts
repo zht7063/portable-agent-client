@@ -12,7 +12,7 @@ function setup(keyring: Keyring = new MemoryKeyring()) {
   void vault.set(7, SECRET);
   const core = createCore({ serverUrl: 'http://127.0.0.1:9', store: new MemoryTokenStore(), vault, fetch: async () => { throw new Error('no network in tests'); } });
   const t = tmpHarnessHost(keyring);
-  const cfg = { serverUrl: 'http://127.0.0.1:9', insecureTransport: true };
+  const cfg = { serverUrl: 'http://127.0.0.1:9', insecureTransport: true, clipboardClearSeconds: 30 };
   const handlers = createHandlers({ getCore: () => core, getConfig: () => cfg, setConfig: async () => cfg, harness: t.host.harness });
   return { core, handlers, ...t };
 }
@@ -71,7 +71,7 @@ describe('Pi via IPC (H1)', () => {
     void vault.set(7, SECRET);
     const core = createCore({ serverUrl: 'http://127.0.0.1:9', store: new MemoryTokenStore(), vault, fetch: async () => { throw new Error('no network in tests'); } });
     const t = tmpHarnessHost(keyring, () => core);
-    const cfg = { serverUrl: 'http://127.0.0.1:9', insecureTransport: true };
+    const cfg = { serverUrl: 'http://127.0.0.1:9', insecureTransport: true, clipboardClearSeconds: 30 };
     const handlers = createHandlers({ getCore: () => core, getConfig: () => cfg, setConfig: async () => cfg, harness: t.host.harness });
     return { handlers, ...t };
   }
@@ -148,7 +148,7 @@ describe('Pi via IPC (H1)', () => {
     }) as typeof fetch;
     const core = createCore({ store: new MemoryTokenStore(), vault, fetch: fetchFn, serverUrl: 'http://127.0.0.1:9' });
     const t = tmpHarnessHost(kr, () => core);
-    const cfg = { serverUrl: 'http://127.0.0.1:9', insecureTransport: true };
+    const cfg = { serverUrl: 'http://127.0.0.1:9', insecureTransport: true, clipboardClearSeconds: 30 };
     const handlers = createHandlers({ getCore: () => core, getConfig: () => cfg, setConfig: async () => cfg, harness: t.host.harness });
     expect(await dispatch(handlers, 'harness:channel:probe', { profileId: 'default' })).toMatchObject({ ok: true, data: { state: 'no-profile' } });
     await dispatch(handlers, 'harness:profile:upsert', { ...prof, models: { main: 'deepseek-v4-pro' } });
@@ -180,7 +180,7 @@ describe('harness:profile:upsert server origin (Aegis #3)', () => {
   const mk = (answer: boolean | undefined) => {
     const core = createCore({ serverUrl: 'http://127.0.0.1:9', store: new MemoryTokenStore(), vault: new MemoryKeyVault(), fetch: async () => { throw new Error('no network in tests'); } });
     const t = tmpHarnessHost(new MemoryKeyring(), () => core);
-    const cfg = { serverUrl: 'http://127.0.0.1:9/', insecureTransport: true };
+    const cfg = { serverUrl: 'http://127.0.0.1:9/', insecureTransport: true, clipboardClearSeconds: 30 };
     const asked: [string, string][] = [];
     const handlers = createHandlers({ getCore: () => core, getConfig: () => cfg, setConfig: async () => cfg, harness: t.host.harness,
       ...(answer === undefined ? {} : { confirmForeignServer: async (a: string, b: string) => { asked.push([a, b]); return answer; } }) });
@@ -213,7 +213,7 @@ describe('harness:apply server origin at apply time (Aegis re-review)', () => {
     const vault = new MemoryKeyVault(); void vault.set(7, SECRET);
     const core = createCore({ serverUrl: 'http://127.0.0.1:9', store: new MemoryTokenStore(), vault, fetch: async () => { throw new Error('no network in tests'); } });
     const t = tmpHarnessHost(new MemoryKeyring(), () => core);
-    const cfg = { serverUrl: 'http://127.0.0.1:9', insecureTransport: true };
+    const cfg = { serverUrl: 'http://127.0.0.1:9', insecureTransport: true, clipboardClearSeconds: 30 };
     const asked: [string, string][] = [];
     const handlers = createHandlers({ getCore: () => core, getConfig: () => cfg, setConfig: async () => cfg, harness: t.host.harness,
       ...(answer === undefined ? {} : { confirmForeignServer: async (a: string, b: string) => { asked.push([a, b]); return answer; } }) });
