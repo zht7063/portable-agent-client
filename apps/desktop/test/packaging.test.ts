@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const app = join(__dirname, '..');
@@ -36,4 +37,18 @@ describe('local packaging config (H4)', () => {
     expect(sp.main).toBe('dist/main/index.cjs');
     run('linux');
   });
+
+  it('production main bundle has no smoke code; the dev bundle keeps it', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'pa-build-'));
+    try {
+      const b = (prod: boolean, d: string) => spawnSync(process.execPath, ['scripts/build-main.mjs', ...(prod ? ['--prod'] : [])], { cwd: app, env: { ...process.env, PA_OUT_DIR: join(tmp, d) }, encoding: 'utf8' });
+      expect(b(true, 'prod').status).toBe(0);
+      expect(b(false, 'dev').status).toBe(0);
+      const prod = readFileSync(join(tmp, 'prod', 'main', 'index.cjs'), 'utf8');
+      const dev = readFileSync(join(tmp, 'dev', 'main', 'index.cjs'), 'utf8');
+      for (const m of ['PA_SMOKE', 'runLoginSmoke', 'runUiSmokeStep', 'runKeysSmokeStep', 'PA_USER_DATA']) expect(prod).not.toContain(m);
+      expect(prod).toContain('[pac] renderer loaded');
+      for (const m of ['PA_SMOKE', 'runLoginSmoke', 'runUiSmokeStep', 'runKeysSmokeStep']) expect(dev).toContain(m);
+    } finally { rmSync(tmp, { recursive: true, force: true }); }
+  }, 60000);
 });

@@ -26,6 +26,11 @@ import { serverChangeDialog } from './dialogs';
  * (M2), IPC (config/harness) + keychain/pa-key wiring (M1), and (M3) the main-process server proxy: /api/* from the
  * renderer is forwarded by main to the configured server with a main-only session (see proxy/).
  */
+/**
+ * Build-time flag (esbuild --define, see scripts/build-main.mjs): true in dev/test builds, false in production
+ * builds, where every smoke branch below folds to dead code and the smoke modules are tree-shaken out entirely.
+ */
+declare const __PA_SMOKE__: boolean;
 let win: BrowserWindow | null = null;
 let serverSession: ServerSession | null = null;
 let smokeExtra: SmokeExtra | undefined;
@@ -79,20 +84,22 @@ function createWindow(): BrowserWindow {
     const d = navigationDecision(url, SCHEME, 'navigate');
     if (d.action === 'allow') return;
     e.preventDefault();
-    if (d.action === 'external' && process.env.PA_SMOKE !== '1') void openExternalConfirmed(d.url);
+    if (d.action === 'external' && !(__PA_SMOKE__ && process.env.PA_SMOKE === '1')) void openExternalConfirmed(d.url);
   };
   w.webContents.on('will-navigate', onNav);
   w.webContents.on('will-redirect', onNav);
   w.webContents.on('will-attach-webview', (e) => e.preventDefault());
   w.webContents.setWindowOpenHandler(({ url }) => {
     const d = navigationDecision(url, SCHEME, 'open');
-    if (d.action === 'external' && process.env.PA_SMOKE !== '1') void openExternalConfirmed(d.url);
+    if (d.action === 'external' && !(__PA_SMOKE__ && process.env.PA_SMOKE === '1')) void openExternalConfirmed(d.url);
     return { action: 'deny' };
   });
-  if (process.env.PA_SMOKE === '1') {
+  if ((__PA_SMOKE__ && process.env.PA_SMOKE === '1')) {
     if (process.env.PA_SMOKE_LOGIN === '1' && serverSession) runLoginSmoke(w, serverSession, (r, code) => { console.log('PA_SMOKE ' + JSON.stringify(r)); app.exit(code); }, smokeExtra);
     else runSmoke(w);
   }
+  // Non-secret startup marker (also used by the packaged smoke, which cannot use PA_SMOKE in production builds).
+  w.webContents.once('did-finish-load', () => console.log('[pac] renderer loaded'));
   void w.loadURL(APP_URL);
   return w;
 }
@@ -134,7 +141,7 @@ function runSmoke(w: BrowserWindow) {
   });
 }
 
-if (process.env.PA_SMOKE === '1' && process.env.PA_USER_DATA) app.setPath('userData', process.env.PA_USER_DATA);
+if ((__PA_SMOKE__ && process.env.PA_SMOKE === '1') && process.env.PA_USER_DATA) app.setPath('userData', process.env.PA_USER_DATA);
 
 app.whenReady().then(async () => {
   // Deny all permission requests/checks; cancel downloads; no webviews.
@@ -188,7 +195,7 @@ app.whenReady().then(async () => {
     home: homedir(), dataDir: userData, env: process.env, platform: process.platform, keyring, helperPath, getCore: () => host.core,
     ensureKey: (profileId, h, tokenId) => keys.ensure(profileId, h, tokenId),
   });
-  if (process.env.PA_SMOKE === '1' && process.env.PA_SMOKE_UI === '1') {
+  if ((__PA_SMOKE__ && process.env.PA_SMOKE === '1') && process.env.PA_SMOKE_UI === '1') {
     smokeExtra = (js, secret) => runUiSmokeStep(js, secret, {
       tokenId: Number(process.env.PA_SMOKE_TOKEN_ID), keyring, helperPath, home: homedir(), shotDir: process.env.PA_SMOKE_SHOT_DIR,
       readClipboard: () => clipboard.readText(), clearClipboard: () => clipboard.clear(), revealShown: () => smokeRevealShown,
@@ -201,7 +208,7 @@ app.whenReady().then(async () => {
       type: (text) => { win?.webContents.insertText(text); },
       shot: async () => (win ? (await win.webContents.capturePage()).toPNG() : Buffer.alloc(0)),
     });
-  } else if (process.env.PA_SMOKE === '1' && process.env.PA_SMOKE_KEYS === '1') {
+  } else if ((__PA_SMOKE__ && process.env.PA_SMOKE === '1') && process.env.PA_SMOKE_KEYS === '1') {
     smokeExtra = (js, secret) => runKeysSmokeStep(js, secret, {
       tokenId: Number(process.env.PA_SMOKE_TOKEN_ID), serverUrl: host.config().serverUrl ?? '', keyring, helperPath, home: homedir(),
       readClipboard: () => clipboard.readText(), clearClipboard: () => clipboard.clear(),
@@ -220,7 +227,7 @@ app.whenReady().then(async () => {
     },
     // M5 "Show key": confirm natively (Cancel default), then show the key in a native box; never in the renderer.
     confirmRevealKey: async (tokenId) => {
-      if (process.env.PA_SMOKE === '1' && process.env.PA_SMOKE_UI === '1') return true; // dev UI smoke only (no user present)
+      if ((__PA_SMOKE__ && process.env.PA_SMOKE === '1') && process.env.PA_SMOKE_UI === '1') return true; // dev UI smoke only (no user present)
       const opts = {
         type: 'warning' as const, buttons: ['取消', '显示 key'], defaultId: 0, cancelId: 0, noLink: true,
         title: PRODUCT.productName, message: `显示令牌 #${tokenId} 的完整 API key？`,
@@ -231,7 +238,7 @@ app.whenReady().then(async () => {
     },
     showKey: async (fullKey, tokenId) => {
       const opts = { type: 'info' as const, buttons: ['关闭'], defaultId: 0, cancelId: 0, noLink: true, title: PRODUCT.productName, message: `令牌 #${tokenId} 的 API key`, detail: fullKey };
-      if (process.env.PA_SMOKE === '1') { smokeRevealShown = true; return; } // smoke: never render/print the key
+      if ((__PA_SMOKE__ && process.env.PA_SMOKE === '1')) { smokeRevealShown = true; return; } // smoke: never render/print the key
       await (win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts));
     },
     serverStatus: async (recheck) => {
@@ -277,7 +284,7 @@ function reportServerCheck(c: ServerCheck | null) {
   lastReported = k;
   if (!c || !c.messages.length) return;
   console.log(`[pac] server check: ${c.verdict} version=${c.serverVersion ?? '-'} allowLogin=${c.allowLogin}`);
-  if (process.env.PA_SMOKE === '1') return;
+  if ((__PA_SMOKE__ && process.env.PA_SMOKE === '1')) return;
   const opts = {
     type: (c.allowLogin ? 'warning' : 'error') as 'warning' | 'error', buttons: ['确定'], noLink: true, title: PRODUCT.productName,
     message: c.allowLogin ? '服务器连接提示' : '无法在客户端内登录该服务器', detail: c.messages.join('\n\n'),

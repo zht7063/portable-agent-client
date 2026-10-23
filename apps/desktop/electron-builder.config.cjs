@@ -27,5 +27,6 @@ module.exports = {
   mac: { target: 'dir', identity: null },
   win: { target: 'dir' },
   // Use the locally installed Electron; no download.
-  electronDist: '../../node_modules/electron/dist',
+  // Resolved through this package's node_modules (bun's isolated linker does not hoist electron to the repo root).
+  electronDist: require('node:path').join(require('node:path').dirname(require.resolve('electron/package.json', { paths: [__dirname] })), 'dist'),
 };
