@@ -20,7 +20,8 @@ export function createBridge(ipc: IpcRendererLike): PaBridge {
       history: call('harness:history'), rollbackPreview: call('harness:rollback:preview'), keyringStatus: call('harness:keyring:status'),
       listProfiles: call('harness:profile:list'), upsertProfile: call('harness:profile:upsert'), probeChannel: call('harness:channel:probe'),
     },
-    keys: { list: call('keys:list'), store: call('keys:store'), copy: call('keys:copy'), remove: call('keys:delete') },
+    keys: { list: call('keys:list'), store: call('keys:store'), copy: call('keys:copy'), remove: call('keys:delete'), reveal: call('keys:reveal') },
+    server: { status: call('server:status') },
     onSessionChanged: (listener) => {
       const wrapped = (_e: unknown, payload: unknown) => listener(payload as IpcEventMap['session:changed']);
       ipc.on('session:changed', wrapped);

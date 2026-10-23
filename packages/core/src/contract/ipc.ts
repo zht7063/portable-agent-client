@@ -48,6 +48,32 @@ export interface KeysStoreReq { tokenId: number; harness: HarnessId; /** Only 'd
 export interface KeysCopyReq { tokenId: number }
 export interface KeysCopyRes { copied: true; tokenId: number; maskedKey: string }
 export interface KeysDeleteReq { harness: HarnessId; profileId?: string }
+/** M5: "Show key". Main asks for confirmation in a native dialog (Cancel default) and then shows the full key in a
+ *  native message box. The renderer only learns whether it was shown, plus the masked key. */
+export interface KeysRevealReq { tokenId: number }
+export interface KeysRevealRes { shown: boolean; tokenId: number; maskedKey?: string }
+
+/** M5: server settings page. Public /api/status check result as cached in main (no credentials). */
+export type ServerVerdict = 'ok' | 'untested' | 'too-old' | 'incompatible' | 'not-new-api' | 'unreachable';
+export interface ServerCheckView {
+  verdict: ServerVerdict;
+  allowLogin: boolean;
+  serverVersion: string | null;
+  systemName: string | null;
+  insecureTransport: boolean;
+  unsupported: string[];
+  turnstile: boolean;
+  messages: string[];
+  checkedAt: number;
+}
+export interface ServerStatusReq { /** Re-run the public /api/status check first. */ recheck?: boolean }
+export interface ServerStatusRes {
+  serverUrl: string | null;
+  insecureTransport: boolean;
+  compat: { tag: string; minServer: string; maxServerTested: string | null; policy: string };
+  clientVersion: string;
+  check: ServerCheckView | null;
+}
 
 // ---------- Invoke channels (renderer -> main, request/response) ----------
 export interface IpcInvokeMap {
@@ -78,6 +104,10 @@ export interface IpcInvokeMap {
   /** M4: main writes the full key to the system clipboard; the renderer only gets the masked key. */
   'keys:copy': { req: KeysCopyReq; res: KeysCopyRes };
   'keys:delete': { req: KeysDeleteReq; res: { removed: boolean } };
+  /** M5: native confirm + native message box in main; never returns the key. */
+  'keys:reveal': { req: KeysRevealReq; res: KeysRevealRes };
+  /** M5: server URL / version / compat status for the server settings page. */
+  'server:status': { req: ServerStatusReq; res: ServerStatusRes };
 }
 export type InvokeChannel = keyof IpcInvokeMap;
 export type InvokeReq<C extends InvokeChannel> = IpcInvokeMap[C]['req'];
@@ -92,7 +122,7 @@ export const CREDENTIAL_EXCEPTION_CHANNELS = [] as const satisfies readonly Invo
 export const INVOKE_CHANNELS = [
   'config:get', 'config:set',
   'harness:detect', 'harness:plan', 'harness:apply', 'harness:rollback', 'harness:history', 'harness:rollback:preview', 'harness:keyring:status', 'harness:profile:list', 'harness:profile:upsert', 'harness:channel:probe',
-  'keys:list', 'keys:store', 'keys:copy', 'keys:delete',
+  'keys:list', 'keys:store', 'keys:copy', 'keys:delete', 'keys:reveal', 'server:status',
 ] as const satisfies readonly InvokeChannel[];
 
 // ---------- Events (main -> renderer) ----------
@@ -124,7 +154,9 @@ export interface PaBridge {
     probeChannel: Call<'harness:channel:probe'>;
   };
   /** M4: token -> keychain / clipboard. Only token ids go in; masked metadata comes out. */
-  keys: { list: Call0<'keys:list'>; store: Call<'keys:store'>; copy: Call<'keys:copy'>; remove: Call<'keys:delete'> };
+  keys: { list: Call0<'keys:list'>; store: Call<'keys:store'>; copy: Call<'keys:copy'>; remove: Call<'keys:delete'>; reveal: Call<'keys:reveal'> };
+  /** M5: server settings page (status only; URL changes go through config.set + native confirmation). */
+  server: { status: Call<'server:status'> };
   onSessionChanged(listener: (payload: IpcEventMap['session:changed']) => void): () => void;
 }
 
@@ -135,5 +167,6 @@ export const BRIDGE_CHANNELS = {
   'harness.rollback': 'harness:rollback', 'harness.history': 'harness:history', 'harness.rollbackPreview': 'harness:rollback:preview',
   'harness.keyringStatus': 'harness:keyring:status', 'harness.listProfiles': 'harness:profile:list',
   'harness.upsertProfile': 'harness:profile:upsert', 'harness.probeChannel': 'harness:channel:probe',
-  'keys.list': 'keys:list', 'keys.store': 'keys:store', 'keys.copy': 'keys:copy', 'keys.remove': 'keys:delete',
+  'keys.list': 'keys:list', 'keys.store': 'keys:store', 'keys.copy': 'keys:copy', 'keys.remove': 'keys:delete', 'keys.reveal': 'keys:reveal',
+  'server.status': 'server:status',
 } as const satisfies Record<string, InvokeChannel>;

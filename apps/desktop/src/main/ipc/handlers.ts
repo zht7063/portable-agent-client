@@ -18,9 +18,12 @@ import {
   type HarnessId,
   type KeysCopyRes,
   type KeysListRes,
+  type KeysRevealRes,
+  type ServerStatusRes,
   type StoredKeyInfo,
 } from '@pac/core';
 import { createModels, type Harness } from '@pac/harness';
+import { maskSecret } from '../proxy/sanitize';
 
 type Handler<C extends InvokeChannel> = (req: InvokeReq<C>) => Promise<IpcInvokeMap[C]['res']>;
 export type HandlerMap = { [C in InvokeChannel]: Handler<C> };
@@ -43,6 +46,14 @@ export interface HandlerDeps {
   confirmServerChange?(nextUrl: string, currentUrl: string | null): Promise<boolean>;
   /** M4: token -> keychain / clipboard (KeyService). Absent = keys:* unavailable. */
   keys?: KeyServiceLike;
+  /**
+   * M5 "Show key": native main-process confirmation (Cancel default), then a native message box showing the key.
+   * Both absent = refused. The key is passed main -> native dialog only; it is never returned over IPC.
+   */
+  confirmRevealKey?(tokenId: number): Promise<boolean>;
+  showKey?(fullKey: string, tokenId: number): Promise<void>;
+  /** M5: server settings page status (public /api/status check cached in main). */
+  serverStatus?(recheck: boolean): Promise<ServerStatusRes>;
 }
 
 /** Structural view of KeyService (main-only; full keys never leave it except to keychain/clipboard/probe). */
@@ -55,7 +66,7 @@ export interface KeyServiceLike {
 }
 
 /** Pure (no electron import) so it is unit-testable. */
-export function createHandlers({ getCore, getConfig, setConfig, harness, confirmForeignServer, confirmServerChange, keys }: HandlerDeps): HandlerMap {
+export function createHandlers({ getCore, getConfig, setConfig, harness, confirmForeignServer, confirmServerChange, keys, confirmRevealKey, showKey, serverStatus }: HandlerDeps): HandlerMap {
   const k = () => { if (!keys) throw new PaException({ code: 'VALIDATION', message: 'Key storage is not available' }); return keys; };
   return {
     'config:get': async () => getConfig(),
@@ -128,6 +139,20 @@ export function createHandlers({ getCore, getConfig, setConfig, harness, confirm
     'keys:store': async (r) => k().store(r?.tokenId, r?.harness, r?.profileId),
     'keys:copy': async (r) => k().copy(r?.tokenId),
     'keys:delete': async (r) => k().remove(r?.harness, r?.profileId),
+    'keys:reveal': async (r): Promise<KeysRevealRes> => {
+      const tokenId = r?.tokenId;
+      if (typeof tokenId !== 'number' || !Number.isSafeInteger(tokenId) || tokenId <= 0) throw new PaException({ code: 'VALIDATION', message: 'Invalid token id' });
+      const svc = k();
+      if (!confirmRevealKey || !showKey) throw new PaException({ code: 'VALIDATION', message: 'Showing keys is not available' });
+      if (!(await confirmRevealKey(tokenId))) return { shown: false, tokenId };
+      const key = await svc.fetchKey(tokenId);
+      await showKey(key, tokenId);
+      return { shown: true, tokenId, maskedKey: maskSecret(key) };
+    },
+    'server:status': async (r) => {
+      if (!serverStatus) throw new PaException({ code: 'VALIDATION', message: 'Server status is not available' });
+      return serverStatus(r?.recheck === true);
+    },
   };
 }
 

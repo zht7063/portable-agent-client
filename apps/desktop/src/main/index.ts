@@ -202,6 +202,29 @@ app.whenReady().then(async () => {
       void srv.runCheck();
       return c;
     },
+    // M5 "Show key": confirm natively (Cancel default), then show the key in a native box; never in the renderer.
+    confirmRevealKey: async (tokenId) => {
+      const opts = {
+        type: 'warning' as const, buttons: ['取消', '显示 key'], defaultId: 0, cancelId: 0, noLink: true,
+        title: PRODUCT.productName, message: `显示令牌 #${tokenId} 的完整 API key？`,
+        detail: '完整 key 将显示在系统对话框中（不会进入页面）。请确认周围无人旁观、未在录屏或共享屏幕。',
+      };
+      const r = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
+      return r.response === 1;
+    },
+    showKey: async (fullKey, tokenId) => {
+      const opts = { type: 'info' as const, buttons: ['关闭'], defaultId: 0, cancelId: 0, noLink: true, title: PRODUCT.productName, message: `令牌 #${tokenId} 的 API key`, detail: fullKey };
+      if (process.env.PA_SMOKE === '1') { smokeRevealShown = true; return; } // smoke: never render/print the key
+      await (win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts));
+    },
+    serverStatus: async (recheck) => {
+      if (recheck) await srv.runCheck();
+      const c = host.config();
+      return {
+        serverUrl: c.serverUrl, insecureTransport: c.insecureTransport, compat: compat as CompatRange,
+        clientVersion: app.getVersion(), check: srv.serverCheck,
+      };
+    },
     confirmServerChange: async (nextUrl, currentUrl) => {
       const opts = { ...serverChangeDialog(nextUrl, currentUrl), title: PRODUCT.productName };
       const r = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
