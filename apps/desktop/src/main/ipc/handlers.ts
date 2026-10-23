@@ -18,7 +18,7 @@ import {
   type HarnessId,
   type KeysCopyRes,
   type KeysListRes,
-  type KeysRevealRes,
+  type KeysShowRes,
   type ServerStatusRes,
   type StoredKeyInfo,
 } from '@pac/core';
@@ -139,7 +139,7 @@ export function createHandlers({ getCore, getConfig, setConfig, harness, confirm
     'keys:store': async (r) => k().store(r?.tokenId, r?.harness, r?.profileId),
     'keys:copy': async (r) => k().copy(r?.tokenId),
     'keys:delete': async (r) => k().remove(r?.harness, r?.profileId),
-    'keys:reveal': async (r): Promise<KeysRevealRes> => {
+    'keys:show': async (r): Promise<KeysShowRes> => {
       const tokenId = r?.tokenId;
       if (typeof tokenId !== 'number' || !Number.isSafeInteger(tokenId) || tokenId <= 0) throw new PaException({ code: 'VALIDATION', message: 'Invalid token id' });
       const svc = k();

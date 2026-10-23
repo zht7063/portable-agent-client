@@ -28,6 +28,8 @@ import { serverChangeDialog } from './dialogs';
 let win: BrowserWindow | null = null;
 let serverSession: ServerSession | null = null;
 let smokeExtra: SmokeExtra | undefined;
+/** Smoke only: set when the native "Show key" box would have been shown (the key is never printed). */
+let smokeRevealShown = false;
 
 const SCHEME = PRODUCT.protocolScheme;
 const RENDERER_ROOT = join(__dirname, '../renderer');
