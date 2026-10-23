@@ -40,8 +40,10 @@ app.setName(PRODUCT.productName);
 
 async function openExternalConfirmed(url: string) {
   const opts = {
-    type: 'question' as const, buttons: ['取消', '在浏览器中打开'], defaultId: 0, cancelId: 0, noLink: true,
-    title: PRODUCT.productName, message: '在系统浏览器中打开外部链接？', detail: url,
+    // Aegis #6: full URL (punycode host) shown, Cancel is default and the Escape action.
+    type: 'warning' as const, buttons: ['取消', '在浏览器中打开'], defaultId: 0, cancelId: 0, noLink: true,
+    title: PRODUCT.productName, message: `在系统浏览器中打开外部站点 ${new URL(url).host}？`,
+    detail: `完整地址：\n${url}\n\n该链接来自页面内容，请确认地址可信后再打开。`,
   };
   const r = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
   if (r.response === 1) await shell.openExternal(url);

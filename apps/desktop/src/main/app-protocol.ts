@@ -14,16 +14,20 @@ export const APP_HOST = 'app';
 
 export function appOrigin(scheme: string): string { return `${scheme}://${APP_HOST}`; }
 
+/**
+ * Plan v2 §2 CSP verbatim, plus `frame-ancestors 'none'` (kept: only restricts who may embed us, cannot widen
+ * anything; defence in depth against framing). Removed after Aegis review #6: `font-src data:` (only KaTeX_Size3's
+ * inline woff used it; falls back to the bundled KaTeX fonts / system font), `media-src blob:`, `worker-src blob:`
+ * (no Worker in the bundle; media previews fall under default-src).
+ */
 export function buildCsp(scheme: string): string {
   return [
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
-    "font-src 'self' data:",
+    "font-src 'self'",
     `connect-src 'self' ${scheme}:`,
-    "media-src 'self' blob:",
-    "worker-src 'self' blob:",
     "frame-src 'none'",
     "object-src 'none'",
     "base-uri 'none'",
@@ -132,14 +136,15 @@ export function isAppUrl(url: string, scheme: string): boolean {
 export function externalUrl(url: string): string | null {
   try {
     const u = new URL(url);
-    if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
+    // Aegis #6: https only (plain http links are refused, not opened).
+    if (u.protocol !== 'https:') return null;
     if (u.username || u.password) return null;
     return u.href;
   } catch { return null; }
 }
 
 export type NavDecision = { action: 'allow' } | { action: 'deny' } | { action: 'external'; url: string };
-/** will-navigate / window.open policy: in-app navigation allowed, http(s) → OS browser, everything else denied. */
+/** will-navigate / window.open policy: in-app navigation allowed, https → OS browser after confirmation, everything else denied. */
 export function navigationDecision(url: string, scheme: string, kind: 'navigate' | 'open'): NavDecision {
   if (isAppUrl(url, scheme)) return kind === 'navigate' ? { action: 'allow' } : { action: 'deny' };
   const ext = externalUrl(url);

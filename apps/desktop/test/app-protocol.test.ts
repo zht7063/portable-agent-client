@@ -111,9 +111,13 @@ describe('navigation guards', () => {
     expect(navigationDecision(`${O}/console`, S, 'navigate')).toEqual({ action: 'allow' });
     expect(navigationDecision(`${O}/console`, S, 'open')).toEqual({ action: 'deny' });
   });
-  it('http(s) links go to the OS browser', () => {
+  it('https links go to the OS browser (after confirmation); plain http is denied', () => {
     expect(navigationDecision('https://github.com/QuantumNous/new-api', S, 'open')).toEqual({ action: 'external', url: 'https://github.com/QuantumNous/new-api' });
-    expect(navigationDecision('http://example.com/', S, 'navigate')).toEqual({ action: 'external', url: 'http://example.com/' });
+    expect(navigationDecision('http://example.com/', S, 'navigate')).toEqual({ action: 'deny' });
+    expect(navigationDecision('http://example.com/', S, 'open')).toEqual({ action: 'deny' });
+  });
+  it('CSP is exactly the plan v2 §2 policy plus frame-ancestors', () => {
+    expect(buildCsp(S)).toBe(`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ${S}:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`);
   });
   it.each(['file:///etc/passwd', 'javascript:alert(1)', 'data:text/html,x', `${S}://evil/`, 'devtools://devtools', 'about:blank', 'smb://host/share', 'https://u:p@example.com/', 'nope'])(
     'denies %s', (url) => {
