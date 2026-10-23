@@ -84,7 +84,9 @@ function maskShapes(s: string): string {
  * Shapes (see docs/security-tests.md "ID prefix table" for sources); prefixes without a pinned shape were removed.
  */
 export const ID_PREFIX_SHAPES: readonly { prefix: string; re: RegExp; example: string }[] = [
-  { prefix: 'chatcmpl-', re: /^chatcmpl-[A-Za-z0-9]{29}$/, example: 'chatcmpl-B9MBs8CjcvOU2jLn4n570S5qMJKcT' },
+  { prefix: 'chatcmpl-', re: /^chatcmpl-[A-Za-z0-9]{29,31}$/, example: 'chatcmpl-B9MBs8CjcvOU2jLn4n570S5qMJKcT' },
+  { prefix: 'cmpl-', re: /^cmpl-[A-Za-z0-9]{29}$/, example: 'cmpl-7QmVI15qgYVllxK0FtxVGG6ywfzaq' },
+  { prefix: 'msgbatch_', re: /^msgbatch_01[A-Za-z0-9]{22}$/, example: 'msgbatch_013Zva2CMHLNnXjNJJKqJ2EF' },
   { prefix: 'resp_', re: /^resp_[0-9a-f]{48}$/, example: 'resp_67ccd2bed1ec8190b14f964abc0542670bb6a6b452d3795b' },
   { prefix: 'msg_', re: /^msg_(?:01[A-Za-z0-9]{22}|[A-Za-z0-9]{24})$/, example: 'msg_013Zva2CMHLNnXjNJJKqJ2EF' },
   { prefix: 'toolu_', re: /^toolu_01[A-Za-z0-9]{21,24}$/, example: 'toolu_01A09q90qw90lq917835lq9' },
@@ -411,34 +413,56 @@ export const SSE_IMAGE_WINDOW = 8 << 10;     // the first image span must start 
 export const SSE_MAX_BUFFERED = 64 << 20;    // global: buffered (unflushed) bytes across ALL live SSE streams
 export const SSE_MAX_STREAM_BUFFERED = 32 << 20; // per stream: buffered (unflushed) bytes
 export const SSE_TOO_LARGE_FRAME = '\n\nevent: error\ndata: {"success":false,"code":"SSE_LINE_TOO_LARGE"}\n\n';
+export const SSE_IDLE_TIMEOUT_FRAME = '\n\nevent: error\ndata: {"success":false,"code":"SSE_IDLE_TIMEOUT"}\n\n';
+/** A stream holding a partial line with no new data for this long is ended and its buffered bytes released. */
+export const SSE_IDLE_MS = 120_000;
 export const SSE_BUFFER_LIMIT_FRAME = '\n\nevent: error\ndata: {"success":false,"code":"SSE_BUFFER_LIMIT"}\n\n';
-export interface SseLimits { maxLine: number; maxText: number; window: number }
+export interface SseLimits { maxLine: number; maxText: number; window: number; idleMs: number }
 /** One live stream's share of the budget. */
 export interface SseHolder { held: number; kill(): void }
+interface SseEntry { acct: { held: number }; ref: WeakRef<SseHolder> }
 /**
  * Process-wide accounting of UTF-8 bytes held in SSE partial-line buffers. Per stream <= perStream; when the global
  * total would exceed `limit`, the stream with the LARGEST buffered usage is killed (error frame, bytes released) --
  * possibly not the one that asked -- until the request fits or the requester itself is the largest (then it fails).
+ * Streams are held only through WeakRefs; a stream garbage-collected without end/cancel has its bytes released by a
+ * FinalizationRegistry (fallback; the per-stream idle timeout normally releases them first).
  */
 export class SseBudget {
   held = 0;
-  private readonly live = new Set<SseHolder>();
+  private readonly live = new Set<SseEntry>();
+  private readonly byHolder = new WeakMap<SseHolder, SseEntry>();
+  private readonly fin = new FinalizationRegistry<SseEntry>((e) => this.drop(e));
   constructor(readonly limit: number = SSE_MAX_BUFFERED, readonly perStream: number = SSE_MAX_STREAM_BUFFERED) {}
   get streams(): number { return this.live.size; }
-  register(h: SseHolder): void { this.live.add(h); }
-  /** Releases everything h holds and forgets it. Idempotent. */
-  unregister(h: SseHolder): void { this.release(h, h.held); this.live.delete(h); }
-  reserve(h: SseHolder, n: number): boolean {
-    if (h.held + n > this.perStream) return false;
-    while (this.held + n > this.limit) {
-      let v = h; let vh = h.held + n;
-      for (const s of this.live) if (s !== h && s.held > vh) { v = s; vh = s.held; }
-      if (v === h) return false;
-      v.kill(); this.unregister(v); // kill() normally unregisters itself; this guarantees progress
-    }
-    h.held += n; this.held += n; return true;
+  register(h: SseHolder): void {
+    const e: SseEntry = { acct: { held: h.held }, ref: new WeakRef(h) };
+    this.live.add(e); this.byHolder.set(h, e); this.fin.register(h, e, e);
   }
-  release(h: SseHolder, n: number): void { const x = Math.min(n, h.held); h.held -= x; this.held -= x; if (this.held < 0) this.held = 0; }
+  private drop(e: SseEntry): void {
+    if (!this.live.delete(e)) return;
+    this.held -= e.acct.held; if (this.held < 0) this.held = 0; e.acct.held = 0;
+    const h = e.ref.deref(); if (h) h.held = 0;
+  }
+  /** Releases everything h holds and forgets it. Idempotent. */
+  unregister(h: SseHolder): void { const e = this.byHolder.get(h); if (e) { this.fin.unregister(e); this.drop(e); this.byHolder.delete(h); } h.held = 0; }
+  reserve(h: SseHolder, n: number): boolean {
+    const me = this.byHolder.get(h); if (!me) return false;
+    if (me.acct.held + n > this.perStream) return false;
+    while (this.held + n > this.limit) {
+      let v = me; let vh = me.acct.held + n;
+      for (const e of this.live) if (e !== me && e.acct.held > vh) { v = e; vh = e.acct.held; }
+      if (v === me) return false;
+      const victim = v.ref.deref();
+      victim?.kill();
+      if (victim) this.unregister(victim); else this.drop(v); // guarantees progress
+    }
+    me.acct.held += n; h.held = me.acct.held; this.held += n; return true;
+  }
+  release(h: SseHolder, n: number): void {
+    const e = this.byHolder.get(h); if (!e) { h.held = 0; return; }
+    const x = Math.min(n, e.acct.held); e.acct.held -= x; h.held = e.acct.held; this.held -= x; if (this.held < 0) this.held = 0;
+  }
 }
 export const sseBudget = new SseBudget();
 const B64C = (c: number) => (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 43 || c === 47 || c === 61;
@@ -496,14 +520,23 @@ class SseLineMeter {
  * process-wide SseBudget and released on line flush, stream end, error frames, exceptions and cancel/abort.
  */
 export function sseSanitizer(known: readonly string[], limits: Partial<SseLimits> = {}, budget: SseBudget = sseBudget): TransformStream<Uint8Array, Uint8Array> {
-  const l: SseLimits = { maxLine: SSE_MAX_LINE, maxText: SSE_MAX_TEXT_LINE, window: SSE_IMAGE_WINDOW, ...limits };
+  const l: SseLimits = { maxLine: SSE_MAX_LINE, maxText: SSE_MAX_TEXT_LINE, window: SSE_IMAGE_WINDOW, idleMs: SSE_IDLE_MS, ...limits };
   const dec = new TextDecoder(); const enc = new TextEncoder();
   type Ctl = TransformStreamDefaultController<Uint8Array>;
   let ctlRef: Ctl | null = null;
   let parts: string[] = []; let meter = new SseLineMeter(l); let dead = false;
   const me: SseHolder = { held: 0, kill: () => { if (!dead && ctlRef) fail(ctlRef, SSE_BUFFER_LIMIT_FRAME); } };
+  let idle: ReturnType<typeof setTimeout> | null = null;
+  const stopIdle = () => { if (idle) { clearTimeout(idle); idle = null; } };
+  /** Armed only while a partial line is buffered: a stream dropped without cancel cannot pin its bytes forever. */
+  const armIdle = () => {
+    stopIdle();
+    if (me.held <= 0) return;
+    idle = setTimeout(() => { idle = null; if (!dead && ctlRef) fail(ctlRef, SSE_IDLE_TIMEOUT_FRAME); else finish(); }, l.idleMs);
+    (idle as { unref?: () => void }).unref?.();
+  };
   const clearLine = () => { budget.release(me, me.held); parts = []; };
-  const finish = () => { dead = true; parts = []; budget.unregister(me); };
+  const finish = () => { dead = true; parts = []; stopIdle(); budget.unregister(me); };
   function fail(ctl: Ctl, frame: string) {
     finish();
     try { ctl.enqueue(enc.encode(frame)); ctl.terminate(); } catch { /* stream already closed/errored */ }
@@ -535,6 +568,7 @@ export function sseSanitizer(known: readonly string[], limits: Partial<SseLimits
           from = nl + 1;
         }
         if (out) ctl.enqueue(enc.encode(out));
+        armIdle();
       });
     },
     flush(ctl: Ctl) {

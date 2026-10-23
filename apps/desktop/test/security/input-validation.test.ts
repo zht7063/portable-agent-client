@@ -9,7 +9,7 @@ import { normalisePath } from '../../src/main/proxy/allowlist';
 import { resolveRequest } from '../../src/main/app-protocol';
 import { ServerProxy, MASKED_SAVE_MESSAGE, containsMaskedValue, containsMaskedPassword } from '../../src/main/proxy/api-proxy';
 import { CookieJar } from '../../src/main/proxy/cookie-jar';
-import { AccessTokenVault, maskSecret } from '../../src/main/proxy/sanitize';
+import { AccessTokenVault, JsonTooDeepError, MAX_JSON_DEPTH, maskSecret } from '../../src/main/proxy/sanitize';
 import { evaluateStatus, type CompatRange } from '../../src/main/proxy/server-status';
 
 /** Small deterministic PRNG (mulberry32) so failures are reproducible. */
@@ -91,6 +91,18 @@ describe('masked admin saves', () => {
     expect((await req('PUT', '/api/channel', JSON.stringify({ key: masks[2] }))).status).toBe(409);
     expect((await req('DELETE', '/api/channel/1', '')).status).toBe(200);
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it('request JSON deeper than MAX_JSON_DEPTH -> 400 TOO_DEEP (no stack overflow), not forwarded; 200 levels fine', async () => {
+    const { fetch, req } = proxy();
+    for (const body of ['['.repeat(100_000) + ']'.repeat(100_000), JSON.stringify({ key: 'X', value: '{"a":'.repeat(100_000) + '1' + '}'.repeat(100_000) })]) {
+      const r = await req('PUT', '/api/option/', body);
+      expect(r.status).toBe(400);
+      expect(((await r.json()) as { code: string }).code).toBe('TOO_DEEP');
+    }
+    expect(() => containsMaskedValue(enc('['.repeat(MAX_JSON_DEPTH + 2) + ']'.repeat(MAX_JSON_DEPTH + 2)))).toThrow(JsonTooDeepError);
+    expect(containsMaskedValue(enc('['.repeat(200) + '"x"' + ']'.repeat(200)))).toBe(false);
+    expect(fetch).not.toHaveBeenCalled();
+    expect((await req('PUT', '/api/option/', '['.repeat(200) + '"x"' + ']'.repeat(200))).status).toBe(200);
   });
   it('detectors: masked values vs. legitimate stars', () => {
     for (const v of masks) expect(containsMaskedValue(enc(JSON.stringify({ a: v }))), v).toBe(true);

@@ -3,7 +3,7 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { CookieJar } from '../../src/main/proxy/cookie-jar';
-import { AccessTokenVault, HANDLE_PREFIX, MIN_KNOWN, knownSet, maskString, replaceKnown, sanitizeJson, sseSanitizer, SSE_TOO_LARGE_FRAME, SSE_BUFFER_LIMIT_FRAME, SSE_MAX_BUFFERED, SSE_MAX_STREAM_BUFFERED, SseBudget, sseBudget, isPemPublicKey } from '../../src/main/proxy/sanitize';
+import { AccessTokenVault, HANDLE_PREFIX, MIN_KNOWN, knownSet, maskString, replaceKnown, sanitizeJson, sseSanitizer, SSE_TOO_LARGE_FRAME, SSE_BUFFER_LIMIT_FRAME, SSE_MAX_BUFFERED, SSE_MAX_STREAM_BUFFERED, SSE_IDLE_MS, SSE_IDLE_TIMEOUT_FRAME, SseBudget, sseBudget, isPemPublicKey } from '../../src/main/proxy/sanitize';
 import { ServerProxy } from '../../src/main/proxy/api-proxy';
 import { evaluateStatus } from '../../src/main/proxy/server-status';
 
@@ -289,6 +289,52 @@ describe('3 SSE is sanitised line-wise across chunk boundaries', () => {
     // text limit counts bytes too: 400k x 3-byte chars (1.2 MB) > 1 MiB
     expect(await run([`data: ${'€'.repeat(400_000)}\n`])).toBe(SSE_TOO_LARGE_FRAME);
     expect(await run([`data: ${'€'.repeat(300_000)}\n`])).toBe(`data: ${'€'.repeat(300_000)}\n`);
+  });
+  // --- Aegis re-review of 53453ca ---
+  it('idle timeout: a dropped stream (never cancelled) holding a half line releases its bytes and ends', async () => {
+    vi.useFakeTimers();
+    try {
+      expect(SSE_IDLE_MS).toBe(120_000);
+      const enc = new TextEncoder(); const budget = new SseBudget(1 << 20);
+      let c!: ReadableStreamDefaultController<Uint8Array>;
+      const r = new ReadableStream<Uint8Array>({ start(x) { c = x; } }).pipeThrough(sseSanitizer([], { idleMs: 5000 }, budget)).getReader();
+      const first = r.read();
+      c.enqueue(enc.encode('data: {"x":"' + 'h'.repeat(3000)));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(budget.held).toBeGreaterThan(3000); expect(budget.streams).toBe(1);
+      await vi.advanceTimersByTimeAsync(4000);
+      c.enqueue(enc.encode('h'.repeat(10)));                     // activity resets the timer
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(budget.held).toBeGreaterThan(3000);
+      await vi.advanceTimersByTimeAsync(1500);                   // 5 s idle -> ended, released
+      expect(budget.held).toBe(0); expect(budget.streams).toBe(0);
+      expect(new TextDecoder().decode((await first).value)).toBe(SSE_IDLE_TIMEOUT_FRAME);
+      expect((await r.read()).done).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+  it('idle timer is not armed between complete lines (long quiet sessions are not cut)', async () => {
+    vi.useFakeTimers();
+    try {
+      const enc = new TextEncoder(); const budget = new SseBudget(1 << 20);
+      let c!: ReadableStreamDefaultController<Uint8Array>;
+      const out = new Response(new ReadableStream<Uint8Array>({ start(x) { c = x; } }).pipeThrough(sseSanitizer([], { idleMs: 5000 }, budget))).text();
+      c.enqueue(enc.encode('data: {"a":1}\n\n'));
+      await vi.advanceTimersByTimeAsync(60_000);
+      c.enqueue(enc.encode('data: {"b":2}\n\n')); c.close();
+      expect(await out).toBe('data: {"a":1}\n\ndata: {"b":2}\n\n');
+      expect(budget.held).toBe(0); expect(budget.streams).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+  it('budget holds streams weakly: FinalizationRegistry releases a collected stream\'s bytes', async () => {
+    const { setFlagsFromString } = await import('node:v8'); const { runInNewContext } = await import('node:vm');
+    setFlagsFromString('--expose-gc'); const gc = runInNewContext('gc') as (() => void) | undefined;
+    const budget = new SseBudget(1 << 20);
+    // Unit-level: a holder registered, charged, then unreachable.
+    (() => { const h = { held: 0, kill() {} }; budget.register(h); expect(budget.reserve(h, 4096)).toBe(true); })();
+    expect(budget.held).toBe(4096);
+    expect(typeof gc).toBe('function');
+    for (let i = 0; i < 20 && budget.held > 0; i++) { gc(); await new Promise((r) => setTimeout(r, 10)); }
+    expect(budget.held).toBe(0); expect(budget.streams).toBe(0);
   });
   it('known value (not key-shaped) masked in SSE', async () => {
     expect(await run(['data: tok=lowercase-known-', 'secret-value\n'], ['lowercase-known-secret-value'])).not.toContain('lowercase-known-secret-value');

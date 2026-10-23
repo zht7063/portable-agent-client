@@ -60,7 +60,9 @@ const key48 = (r: () => number) => { for (;;) { const k = pick(r, A62, 48); if (
 
 describe('ID prefix allowlist: exact per-prefix shapes', () => {
   const synth: Record<string, (r: () => number) => string> = {
-    'chatcmpl-': (r) => 'chatcmpl-' + pick(r, A62, 29),
+    'chatcmpl-': (r) => 'chatcmpl-' + pick(r, A62, 29 + Math.floor(r() * 3)),
+    'cmpl-': (r) => 'cmpl-' + pick(r, A62, 29),
+    'msgbatch_': (r) => 'msgbatch_01' + pick(r, A62, 22),
     'resp_': (r) => 'resp_' + pick(r, HEX, 48),
     'msg_': (r) => (r() < 0.5 ? 'msg_01' + pick(r, A62, 22) : 'msg_' + pick(r, A62, 24)),
     'toolu_': (r) => 'toolu_01' + pick(r, A62, 21 + Math.floor(r() * 4)),
@@ -103,8 +105,13 @@ describe('ID prefix allowlist: exact per-prefix shapes', () => {
   it.each(ID_PREFIX_SHAPES.map((x) => x.prefix))('%s<id>-<K> / %s<K>_x / double K are not exempt', (p) => {
     for (const s of [`${p}abc12345-${K}`, `${p}${K}_${K}`, `${p}${K}${K}`]) expect(maskString(s)).not.toContain(K);
   });
+  it('wrong-length tails of the restored prefixes are not exempt', () => {
+    const r = rng(42);
+    for (const id of ['chatcmpl-' + pick(r, A62, 28), 'chatcmpl-' + pick(r, A62, 32), 'cmpl-' + pick(r, A62, 30), 'msgbatch_01' + pick(r, A62, 23), 'msgbatch_' + pick(r, A62, 24)])
+      expect(ID_PREFIX_SHAPES.some((x) => x.re.test(id)), id).toBe(false);
+  });
   it('removed / unknown prefixes get the normal checks', () => {
-    for (const p of ['cmpl-', 'batch_', 'ftjob-', 'req_', 'msgbatch_', 'key_', 'chatcmpl']) expect(maskString(`${p}${K}`)).not.toContain(K);
+    for (const p of ['batch_', 'ftjob-', 'req_', 'key_', 'chatcmpl']) expect(maskString(`${p}${K}`)).not.toContain(K);
   });
 });
 

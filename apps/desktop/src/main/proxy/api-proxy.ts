@@ -1,6 +1,6 @@
 import { canonicalisePath, decide } from './allowlist';
 import type { CookieJar } from './cookie-jar';
-import { AccessTokenVault, HANDLE_PREFIX, filterRequestHeaders, filterResponseHeaders, sanitizeJson, maskString, knownSet, replaceKnown, sseSanitizer, isPemPublicKey, JsonTooDeepError } from './sanitize';
+import { AccessTokenVault, HANDLE_PREFIX, filterRequestHeaders, filterResponseHeaders, sanitizeJson, maskString, knownSet, replaceKnown, sseSanitizer, isPemPublicKey, JsonTooDeepError, MAX_JSON_DEPTH } from './sanitize';
 import type { FetchLike, ServerCheck } from './server-status';
 
 /*
@@ -60,18 +60,24 @@ export function containsMaskedValue(body: ArrayBuffer): boolean {
     const dec = (t: string) => { try { return decodeURIComponent(t.replace(/\+/g, ' ')); } catch { return t; } };
     return MASK_LONG.test(text) || text.split(/[&=\s;,]+/).some((t) => MASK_SHORT.test(dec(t)));
   }
-  const walk = (x: unknown): boolean => {
+  // Same depth limit as the response side (sanitizeJson); deeper bodies throw JsonTooDeepError (caller -> 400).
+  const walk = (x: unknown, d: number): boolean => {
+    if (d > MAX_JSON_DEPTH) throw new JsonTooDeepError();
     if (typeof x === 'string') {
       if (MASK_LONG.test(x) || MASK_SHORT.test(x)) return true;
       // Option values are often JSON-in-a-string (e.g. OAuth provider settings).
-      if (x.length > 1 && (x[0] === '{' || x[0] === '[')) { try { return walk(JSON.parse(x)); } catch { return false; } }
+      if (x.length > 1 && (x[0] === '{' || x[0] === '[')) {
+        let inner: unknown;
+        try { inner = JSON.parse(x); } catch { return false; }
+        return walk(inner, d + 1);
+      }
       return false;
     }
-    if (Array.isArray(x)) return x.some(walk);
-    if (x && typeof x === 'object') return Object.values(x).some(walk);
+    if (Array.isArray(x)) return x.some((e) => walk(e, d + 1));
+    if (x && typeof x === 'object') return Object.values(x).some((e) => walk(e, d + 1));
     return false;
   };
-  return walk(v);
+  return walk(v, 0);
 }
 
 export interface ProxyRequest { method: string; url: string; headers: Headers; body: ArrayBuffer | null }
@@ -122,8 +128,13 @@ export class ServerProxy {
     }
 
     if (req.body && req.body.byteLength > LIMITS.requestBody) return fail(413, 'TOO_LARGE', 'request body too large');
-    if (req.body && method !== 'GET' && method !== 'HEAD' && ADMIN_SECRET_PATHS.test(path) && containsMaskedValue(req.body)) {
-      return fail(409, 'MASKED_SECRET_SAVE_BLOCKED', MASKED_SAVE_MESSAGE);
+    if (req.body && method !== 'GET' && method !== 'HEAD' && ADMIN_SECRET_PATHS.test(path)) {
+      let masked: boolean;
+      try { masked = containsMaskedValue(req.body); } catch (e) {
+        if (e instanceof JsonTooDeepError) return fail(400, 'TOO_DEEP', 'request JSON nested too deeply');
+        throw e;
+      }
+      if (masked) return fail(409, 'MASKED_SECRET_SAVE_BLOCKED', MASKED_SAVE_MESSAGE);
     }
     if (req.body && method === 'PUT' && USER_SAVE_PATHS.test(path) && containsMaskedPassword(req.body)) {
       return fail(409, 'MASKED_SECRET_SAVE_BLOCKED', MASKED_SAVE_MESSAGE);
