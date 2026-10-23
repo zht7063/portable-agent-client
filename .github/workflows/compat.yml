@@ -1,5 +1,6 @@
 # M7 compat matrix: manual-only. Runs the client's credential-free /api/status compatibility check against each
-# official new-api Docker image version listed in compat.json (compatMatrix.versions), as a service container.
+# official new-api Docker image listed in compat.json (compatMatrix.versions: tag + verified @sha256 digest), as a
+# digest-pinned service container.
 # Read-only token, SHA-pinned actions, no secrets, nothing is published or uploaded. See docs/ci.md.
 name: compat
 on:
@@ -29,16 +30,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ${{ fromJSON(needs.matrix.outputs.versions) }}
+        entry: ${{ fromJSON(needs.matrix.outputs.versions) }}
     services:
       newapi:
-        image: ${{ needs.matrix.outputs.image }}:${{ matrix.version }}
+        image: ${{ needs.matrix.outputs.image }}@${{ matrix.entry.digest }}
         ports:
           - 3000:3000
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
       PAC_COMPAT_SERVER: http://127.0.0.1:3000
-      PAC_COMPAT_EXPECT: ${{ matrix.version }}
+      PAC_COMPAT_EXPECT: ${{ matrix.entry.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

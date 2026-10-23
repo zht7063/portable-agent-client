@@ -9,11 +9,11 @@ import { checkServer, classify, type CompatRange } from '../../apps/desktop/src/
 
 const server = process.env.PAC_COMPAT_SERVER;
 const expected = process.env.PAC_COMPAT_EXPECT;
-const compat = JSON.parse(readFileSync(new URL('../../compat.json', import.meta.url), 'utf8')) as CompatRange & { compatMatrix: { versions: string[] } };
+const compat = JSON.parse(readFileSync(new URL('../../compat.json', import.meta.url), 'utf8')) as CompatRange & { compatMatrix: { versions: { tag: string; digest: string }[] } };
 
 describe.skipIf(!server)('compat: /api/status against an official new-api image', () => {
   it('the image version is listed in compat.json', () => {
-    expect(compat.compatMatrix.versions).toContain(expected);
+    expect(compat.compatMatrix.versions.map((v) => v.tag)).toContain(expected);
   });
   it('the client accepts the server (verdict, version, login allowed)', async () => {
     const origin = new URL(server!).origin;

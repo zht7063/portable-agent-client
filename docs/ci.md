@@ -23,7 +23,9 @@ Not in CI (deliberate): packaged Electron smoke (needs the Electron binary + xvf
 `.github/workflows/compat.yml` runs **only on manual dispatch** (`workflow_dispatch`; never on push/PR/schedule). Same
 rules as above: `contents: read`, SHA-pinned actions, `persist-credentials: false`, no secrets, nothing published or
 uploaded. For each tag in `compat.json` → `compatMatrix.versions` it starts the official image
-(`compatMatrix.image` = `calciumion/new-api`) as a service container, runs `bun run compat -- --server <tag>` and
+(`compatMatrix.image` = `calciumion/new-api`) as a digest-pinned service container, runs `bun run compat -- --server <tag>` and
 `bun run test:compat` (`test/compat/status.compat.test.ts`: the client's credential-free `/api/status` check via
-`checkServer`; skipped unless `PAC_COMPAT_SERVER` is set). It has not been triggered yet. Image tags are not
-digest-pinned. The policy test above also covers this workflow (manual-only trigger, image from compat.json).
+`checkServer`; skipped unless `PAC_COMPAT_SERVER` is set). It has not been triggered yet. Each image is pinned as
+`calciumion/new-api@sha256:<digest>` (`compatMatrix.versions[].digest`, multi-arch index digest); the image name is the
+one in upstream's `docker-compose.yml` and v1.0.0-rc.46's digest was verified on 2026-10-24 against the Docker Hub tags
+API and the registry manifest. An entry without a verified digest must carry a `todo: "TODO ..."` (policy-tested). The policy test above also covers this workflow (manual-only trigger, image from compat.json).

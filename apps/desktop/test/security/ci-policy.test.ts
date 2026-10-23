@@ -43,12 +43,17 @@ describe('CI workflow policy', () => {
     });
     it('uses the official new-api image versions from compat.json as a service and runs the /api/status check', () => {
       expect(code).toContain("jq -c '.compatMatrix.versions' compat.json");
-      expect(code).toMatch(/services:\n\s+newapi:\n\s+image: \$\{\{ needs\.matrix\.outputs\.image \}\}:\$\{\{ matrix\.version \}\}/);
+      expect(code).toMatch(/services:\n\s+newapi:\n\s+image: \$\{\{ needs\.matrix\.outputs\.image \}\}@\$\{\{ matrix\.entry\.digest \}\}/);
       expect(code).toContain('bun run test:compat');
       expect(code).not.toContain('test:live');
       const c = JSON.parse(readFileSync(resolve(WF, '../../compat.json'), 'utf8'));
       expect(c.compatMatrix.image).toBe('calciumion/new-api');
       expect(c.compatMatrix.versions.length).toBeGreaterThan(0);
+      // every image is pinned by digest (or carries an explicit TODO explaining why it is not verified yet)
+      for (const v of c.compatMatrix.versions) {
+        expect(v.tag).toMatch(/^v\d+\.\d+\.\d+/);
+        if (!/^sha256:[0-9a-f]{64}$/.test(v.digest ?? '')) expect(String(v.todo ?? '')).toMatch(/^TODO/);
+      }
     });
   });
 });

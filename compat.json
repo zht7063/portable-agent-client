@@ -9,6 +9,8 @@
   "compatMatrix": {
     "$comment": "Official new-api Docker image tags checked by the manual-only .github/workflows/compat.yml (docs/ci.md).",
     "image": "calciumion/new-api",
-    "versions": ["v1.0.0-rc.46"]
+    "versions": [
+      { "tag": "v1.0.0-rc.46", "digest": "sha256:abf1f675efa1847b90c049c03766e2daaf62a78998aae3625cf34b6a045b1b97", "$verified": "2026-10-24 via Docker Hub tags API and registry-1.docker.io manifest HEAD (multi-arch index, amd64+arm64); image name from upstream docker-compose.yml" }
+    ]
   }
 }
