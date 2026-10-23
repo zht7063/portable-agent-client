@@ -42,10 +42,10 @@ export function ServerSettingsCard({ onChanged }: { onChanged?: () => void }) {
     const [s, c] = await Promise.all([unwrap(pa().server.status({ recheck })), unwrap(pa().config.get())])
     setSt(s); setCfg(c); setUrl(c.serverUrl ?? ''); setClear(String(c.clipboardClearSeconds))
   }, [])
-  const run = async (fn: () => Promise<void>) => {
+  const run = async (fn: () => Promise<void>, cancelled = t('Server change cancelled; nothing saved.')) => {
     setBusy(true); setErr(null); setNote(null)
     try { await fn() } catch (e) {
-      if (e instanceof PaCallError && e.code === 'CANCELLED') setNote(t('Server change cancelled; nothing saved.'))
+      if (e instanceof PaCallError && e.code === 'CANCELLED') setNote(cancelled)
       else setErr(errText(e))
     } finally { setBusy(false) }
   }
@@ -62,7 +62,7 @@ export function ServerSettingsCard({ onChanged }: { onChanged?: () => void }) {
     await unwrap(pa().config.set({ clipboardClearSeconds: n }))
     await load()
     setNote(n === 0 ? t('Clipboard auto-clear disabled.') : t('Copied keys are cleared from the clipboard after {{n}}s.', { n }))
-  })
+  }, t('Clipboard auto-clear unchanged (not confirmed).'))
 
   const check = st?.check ?? null
   const v = check ? VERDICT[check.verdict] : null

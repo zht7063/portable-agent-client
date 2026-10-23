@@ -55,6 +55,11 @@ export interface HandlerDeps {
   showKey?(fullKey: string, tokenId: number): Promise<void>;
   /** M5: server settings page status (public /api/status check cached in main). */
   serverStatus?(recheck: boolean): Promise<ServerStatusRes>;
+  /**
+   * Aegis M5: turning clipboard auto-clear off (clipboardClearSeconds = 0) needs a native main-process confirmation
+   * (Cancel default). Absent = refused.
+   */
+  confirmDisableClipboardClear?(): Promise<boolean>;
   /** M6: About & licenses data (static, non-secret). */
   about?(): AppAboutRes;
 }
@@ -69,7 +74,7 @@ export interface KeyServiceLike {
 }
 
 /** Pure (no electron import) so it is unit-testable. */
-export function createHandlers({ getCore, getConfig, setConfig, harness, confirmForeignServer, confirmServerChange, keys, confirmRevealKey, showKey, serverStatus, about }: HandlerDeps): HandlerMap {
+export function createHandlers({ getCore, getConfig, setConfig, harness, confirmForeignServer, confirmServerChange, keys, confirmRevealKey, showKey, serverStatus, about, confirmDisableClipboardClear }: HandlerDeps): HandlerMap {
   const k = () => { if (!keys) throw new PaException({ code: 'VALIDATION', message: 'Key storage is not available' }); return keys; };
   return {
     'config:get': async () => getConfig(),
@@ -85,6 +90,11 @@ export function createHandlers({ getCore, getConfig, setConfig, harness, confirm
         const same = (() => { try { return !!cur && new URL(cur).href === nextUrl; } catch { return false; } })();
         if (!same && !(await confirmServerChange?.(nextUrl, cur))) {
           throw new PaException({ code: 'CANCELLED', message: 'Server change not confirmed; not saved' });
+        }
+      }
+      if (r && typeof r === 'object' && 'clipboardClearSeconds' in r && r.clipboardClearSeconds === 0 && getConfig().clipboardClearSeconds !== 0) {
+        if (!(await confirmDisableClipboardClear?.())) {
+          throw new PaException({ code: 'CANCELLED', message: 'Disabling clipboard auto-clear not confirmed; not saved' });
         }
       }
       return setConfig(r);

@@ -102,6 +102,18 @@ describe('server settings', () => {
   })
 })
 
+describe('clipboard auto-clear off (Aegis M5)', () => {
+  it('a declined native confirmation shows a note and keeps the setting', async () => {
+    fake.config.set.mockImplementationOnce(() => fail('CANCELLED', 'not confirmed') as never)
+    render(<ServerSettingsCard />)
+    const input = await screen.findByLabelText(/Clear copied keys/)
+    fireEvent.change(input, { target: { value: '0' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(await screen.findByText('Clipboard auto-clear unchanged (not confirmed).')).toBeInTheDocument()
+    expect(toast.error).not.toHaveBeenCalled()
+  })
+})
+
 describe('keychain section', () => {
   it('lists masked entries and removes one', async () => {
     render(<KeychainSection />)

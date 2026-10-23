@@ -253,6 +253,14 @@ app.whenReady().then(async () => {
         clientVersion: app.getVersion(), check: srv.serverCheck,
       };
     },
+    confirmDisableClipboardClear: async () => {
+      const opts = {
+        type: 'warning' as const, buttons: ['取消', '关闭自动清除'], defaultId: 0, cancelId: 0, noLink: true, title: PRODUCT.productName,
+        message: '关闭剪贴板自动清除？', detail: '复制的完整 API key 将一直留在系统剪贴板中，直到被覆盖（退出时仍会清除）。其他程序可能读取剪贴板。',
+      };
+      const r = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
+      return r.response === 1;
+    },
     confirmServerChange: async (nextUrl, currentUrl) => {
       const opts = { ...serverChangeDialog(nextUrl, currentUrl), title: PRODUCT.productName };
       const r = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
