@@ -23,7 +23,10 @@ Changing CSP, the preload surface or the allowlist requires updating the snapsho
   heuristically.
 - **Untrusted / malicious upstream** (compromised or hostile server): the server already holds every secret it could
   leak and controls what the UI renders. Masking does **not** stop it from showing an *unknown* value to the user; it
-  only guarantees that values the client knows to be secret are never shown.
+  only guarantees that values the client knows to be secret are never shown. In particular, a forged
+  `data:image/...;base64,` payload or a forged `data[i].b64_json` with a valid PNG/JPEG/GIF/WebP(/SVG for data:image)
+  header **deterministically** carries any unknown key (placed between `+`/`/`/`=`) past the heuristics: those
+  payloads are exempt by design so real images are not corrupted.
 
 Guarantees:
 
@@ -36,7 +39,8 @@ Guarantees:
 3. **SSE** (`text/event-stream`, playground) is sanitised line by line (`sseSanitizer`): each complete line is masked
    and forwarded at once (latency = one line); partial lines are buffered. Lines are **never cut** (a cut inside a
    `data:image` payload would break span recognition and either corrupt the image or let a heuristic decision differ):
-   a single line may grow to 32 MiB (= `LIMITS.responseBody`, the cap for buffered bodies); beyond that the line is
+   a line carrying `"b64_json"` or `data:image/` may grow to 32 MiB (= `LIMITS.responseBody`); any other line is
+   limited to 1 MiB. Beyond the limit the line is
    dropped and the stream ends with `event: error` / `SSE_LINE_TOO_LARGE`. `data:image` spans are found with a linear
    scan (no backtracking regex), so multi-MB images pass byte-identical.
    **`b64_json` exception (Iris decision; no generic base64 exception).** In a JSON body, or the JSON of an SSE
@@ -70,7 +74,7 @@ Guarantees:
 | Deployments `/api/deployments` | `registry_secret`, `secret_env_variables` | yes |
 | Profile notifications `PUT /api/user/setting` | `webhook_secret` (inside JSON `setting`) | **added in this round** |
 | Profile `PUT /api/user/self` | `password` | yes (password fields only) |
-| Login `GET /api/user/login/encryption-key` | `public_key` (RSA PEM, public) | n/a — only the top-level `data.public_key` on that path, only if it has a PUBLIC KEY PEM header and `crypto.createPublicKey` parses it; passed through intact (known values still masked) because masking breaks password encryption |
+| Login `GET /api/user/login/encryption-key` | `public_key` (RSA PEM, public) | n/a — only the top-level `data.public_key` on that path, only if it has a PUBLIC KEY PEM header, `crypto.createPublicKey` parses it, and its DER re-export (`spki`, or `pkcs1` for RSA PUBLIC KEY) equals the PEM body byte for byte (no extra bytes); passed through intact (known values still masked) because masking breaks password encryption |
 | Any response | `ETag` header | header values are now `maskString`-ed |
 
 Read-only displays (passkey public keys, Gemini thought signatures) are not saved by the client.
@@ -88,6 +92,13 @@ Read-only displays (passkey public keys, Gemini thought signatures) are not save
   `data:image`; only known values are guaranteed masked there).
 - **A known key inside a data:image / b64_json payload corrupts that image** (accepted): after exact replacement the payload is no longer
   valid base64, so the rest of the span is treated as plain text and over-masked.
+- **Bare runs** have no upper length bound: a run of `[A-Za-z0-9_-]` is masked whole if it is <= 128 chars and
+  looks random, otherwise each `-`/`_`-separated segment is checked (so `uuid-K`, `K_<long>`, `req-<digits>-K` are
+  masked). Not caught: a key that itself contains `-`/`_` AND is glued into a run > 128 chars with no segment of
+  >= 32 random chars (adjacent-segment joins are not tried). UUIDs are exempt only in lowercase hex.
+  ID probes (`glued-keys.test.ts`): `chatcmpl-<29 mixed>` and `run_<32 mixed>` are masked (look exactly like keys;
+  over-mask only); `resp_<48 hex>`, `msg_/call_/file-<24 mixed>`, lowercase UUIDs, request ids, snake/kebab/camel/
+  CONSTANT identifiers and model names are unchanged. The base64 FP bench is unchanged by this round (all 79.69%).
 - **Unprefixed keys shorter than 32 characters** are not detected (scan-bundle) or masked (sanitize `looksLikeBareKey`):
   below that length the random-vs-identifier heuristic produces too many false positives. `sk-` keys are covered from
   16 characters; values in secret-named fields are masked regardless of shape.
