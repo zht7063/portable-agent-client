@@ -1,0 +1,24 @@
+{
+  "name": "@pac/cli",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "description": "Dev/test-only CLI (harness commands, file stores). Not packaged into the desktop client.",
+  "type": "module",
+  "bin": {
+    "pac": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "dev": "tsx --conditions=source src/index.ts"
+  },
+  "dependencies": {
+    "@pac/core": "workspace:*",
+    "@pac/harness": "workspace:*",
+    "@pac/keychain": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2"
+  }
+}

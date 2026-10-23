@@ -1,0 +1,29 @@
+{
+  "name": "@pac/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "main": "dist/main/index.cjs",
+  "scripts": {
+    "build:main": "esbuild src/main/index.ts --bundle --platform=node --format=cjs --external:electron --conditions=source --main-fields=module,main --outfile=dist/main/index.cjs && esbuild src/preload/index.ts --bundle --platform=node --format=cjs --external:electron --conditions=source --main-fields=module,main --outfile=dist/preload/index.cjs && esbuild ../../packages/pa-key/src/main.ts --bundle --platform=node --format=cjs --external:@napi-rs/keyring --conditions=source --main-fields=module,main --outfile=dist/key-helper/pa-key.cjs",
+    "build:renderer": "node scripts/build-placeholder.mjs",
+    "build": "bun run build:main && bun run build:renderer",
+    "start": "bun run build && electron .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "smoke": "bun run build && node scripts/smoke.mjs",
+    "stage": "node scripts/stage.mjs",
+    "pack:dir": "bun run build && node scripts/stage.mjs && electron-builder --config electron-builder.config.cjs --dir --publish never",
+    "smoke:packaged": "node scripts/smoke-packaged.mjs"
+  },
+  "dependencies": {
+    "@pac/core": "workspace:*",
+    "@pac/harness": "workspace:*",
+    "@pac/keychain": "workspace:*",
+    "@pac/pa-key": "workspace:*"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.24.0"
+  },
+  "license": "AGPL-3.0-only"
+}
