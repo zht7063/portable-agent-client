@@ -56,20 +56,49 @@ describe('bare key masking: ordinary IDs are not masked', () => {
 
 describe('base64 and data: URIs are not corrupted', () => {
   const b64 = (n: number) => Buffer.from(Array.from({ length: n }, (_, i) => (i * 37 + 11) & 255)).toString('base64');
-  it('data:image/png;base64,... is unchanged (also with an embedded high-entropy run and inside JSON)', () => {
-    const uri = `data:image/png;base64,${b64(60)}+${KEY48}/${b64(30)}`;
+  const pad4 = (x: string) => x + 'A'.repeat((4 - (x.length % 4)) % 4);
+  const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]).toString('base64'); // 16 chars
+  it('data:image/png;base64,... is unchanged (also with an embedded high-entropy run bounded by + / and inside JSON)', () => {
+    const uri = `data:image/png;base64,${pad4(`${PNG}${b64(30)}+${KEY48}/${b64(30)}`)}`;
+    expect((uri.length - 'data:image/png;base64,'.length) % 4).toBe(0);
     expect(maskString(uri)).toBe(uri);
     expect(maskString(`<img src="${uri}">`)).toBe(`<img src="${uri}">`);
-    expect(sanitizeJson({ avatar: uri, logo: `data:image/svg+xml;base64,${b64(90)}` }, new AccessTokenVault())).toEqual({ avatar: uri, logo: `data:image/svg+xml;base64,${b64(90)}` });
+    const svg = `data:image/svg+xml;base64,${Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg">${'<path d="M0 0"/>'.repeat(5)}</svg>`).toString('base64')}`;
+    expect(sanitizeJson({ avatar: uri, logo: svg }, new AccessTokenVault())).toEqual({ avatar: uri, logo: svg });
   });
-  it('a plain base64 blob with an embedded high-entropy 48-run is unchanged', () => {
-    for (const blob of [`${b64(30)}/${KEY48}+${b64(30)}`, `${b64(24)}+${KEY48}==`]) expect(maskString(blob)).toBe(blob);
+  it('a plain (unprefixed) base64 block with an embedded high-entropy 48-run bounded by + / = is unchanged', () => {
+    for (const blob of [pad4(`${b64(30)}/${KEY48}+${b64(30)}`), `${pad4(`${b64(24)}+${KEY48}+${b64(24)}`)}`, `x: ${pad4(`${b64(30)}+${KEY48}/${b64(30)}`)} end`]) {
+      expect(blob.replace(/^x: | end$/g, '').length % 4).toBe(0);
+      expect(maskString(blob)).toBe(blob);
+    }
   });
   it('a normal bare key next to a data: URI is still masked', () => {
     const out = maskString(`img data:image/png;base64,${b64(30)} key ${KEY48} end`);
     expect(out).not.toContain(KEY48);
     expect(out).toContain(`data:image/png;base64,${b64(30)}`);
     expect(maskString(`error: raw=${KEY48}`)).not.toContain(KEY48);
+  });
+  it('data:image payload without an image header is not an image span (K bounded by + / is masked)', () => {
+    const uri = `data:image/png;base64,/${KEY48}+${'A'.repeat(14)}`; // valid length, no image magic, starts with '/' (not a block)
+    expect(maskString(`${uri}`)).not.toContain(KEY48);
+  });
+});
+
+describe('URL / path echoes (Aegis): K is masked next to / + =', () => {
+  it.each([
+    ['https://h/K', `https://h/${KEY48}`],
+    ['https://h/v1/K/x', `https://h/v1/${KEY48}/x`],
+    ['path/K', `path/${KEY48}`],
+    ['/K end', `/${KEY48} end`],
+    ['K/x', `${KEY48}/x`],
+    ['K+', `${KEY48}+`],
+    ['K=', `${KEY48}=`],
+    ['x+K', `x+${KEY48}`],
+    ['long API path', `GET https://api.example.com/api/v1/tokens/${KEY48}/details?x=1 failed`],
+    ['relative long path', `v1/tokens/${KEY48}/details/usage/summary/by/day/2026`],
+  ])('%s', (_n, text) => {
+    expect(maskString(text)).not.toContain(KEY48);
+    expect(JSON.stringify(sanitizeJson({ message: text, nested: [{ url: text }] }, new AccessTokenVault()))).not.toContain(KEY48);
   });
 });
 
@@ -103,5 +132,19 @@ describe('data: bypass regressions (Aegis): K is masked in every non-image / inv
     const inner = `data:image/png;base64,${b64(30)}+${KEY48}/${b64(30)}AA`;
     expect(inner.split(',')[1]!.length % 4).toBe(0);
     expect(maskString(inner)).toBe(inner);
+  });
+});
+
+describe('data:image magic header check', () => {
+  const body = Buffer.from(Array.from({ length: 120 }, (_, i) => (i * 53 + 7) & 255));
+  const uri = (head: number[] | string, t = 'png') => `data:image/${t};base64,${Buffer.concat([Buffer.from(head as never), body]).toString('base64')}`;
+  it.each([
+    ['png', uri([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
+    ['jpeg (/9j/)', uri([0xff, 0xd8, 0xff, 0xe0], 'jpeg')],
+    ['gif', uri('GIF89a', 'gif')],
+    ['webp', uri('RIFF\u0000\u0000\u0000\u0000WEBP', 'webp')],
+    ['svg', uri('<svg xmlns="http://www.w3.org/2000/svg">', 'svg+xml')],
+  ])('%s payload with a valid header is left intact', (_n, u) => {
+    expect(maskString(`<img src="${u}">`)).toBe(`<img src="${u}">`);
   });
 });
