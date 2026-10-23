@@ -14,7 +14,7 @@ export type Decision =
   | { allow: false; status: 403 | 405; code: string; message: string };
 
 /** Explicitly refused paths (checked first) with a user-facing reason. */
-const DENY: { re: RegExp; code: string; message: string }[] = [
+export const DENY: { re: RegExp; code: string; message: string }[] = [
   // OAuth / third-party login redirects bounce through the system browser and back to the *server's* web UI,
   // which cannot hand a session to this client. Unsupported in M3 (plan §2, §9.3).
   { re: /^\/api\/oauth\/(?!email\/)/, code: 'OAUTH_UNSUPPORTED', message: '桌面客户端暂不支持第三方（OAuth）登录/绑定，请使用用户名密码登录，或在浏览器中访问服务器网页完成该操作。' },

@@ -4,19 +4,12 @@
  *  - unpackaged (dev): standard View menu and DevTools stay available.
  */
 import type { MenuItemConstructorOptions, WebPreferences } from 'electron';
+import { SECURE_WEB_PREFERENCES } from './security-policy';
 
 export function windowWebPreferences(o: { preload: string; isPackaged: boolean }): WebPreferences {
   return {
     preload: o.preload,
-    contextIsolation: true,
-    sandbox: true,
-    nodeIntegration: false,
-    nodeIntegrationInSubFrames: false,
-    webSecurity: true,
-    allowRunningInsecureContent: false,
-    webviewTag: false,
-    spellcheck: false,
-    navigateOnDragDrop: false,
+    ...SECURE_WEB_PREFERENCES,
     devTools: !o.isPackaged,
   };
 }

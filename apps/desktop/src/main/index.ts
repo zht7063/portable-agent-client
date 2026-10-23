@@ -23,6 +23,7 @@ import { KeyService } from './key-service';
 import { serverChangeDialog } from './dialogs';
 import { buildAbout } from './about';
 import { smokeAutoConfirmReveal } from './smoke-gate';
+import { applySessionPolicy, hardenWebContents, type SessionLike, type WebContentsLike } from './security-policy';
 
 /*
  * Main process: isolated window showing the patched upstream new-api web build on the privileged app protocol
@@ -82,11 +83,9 @@ function createWindow(): BrowserWindow {
   };
   w.webContents.on('will-navigate', onNav);
   w.webContents.on('will-redirect', onNav);
-  w.webContents.on('will-attach-webview', (e) => e.preventDefault());
-  w.webContents.setWindowOpenHandler(({ url }) => {
+  hardenWebContents(w.webContents as unknown as WebContentsLike, (url) => {
     const d = navigationDecision(url, SCHEME, 'open');
     if (d.action === 'external' && !(__PA_SMOKE__ && process.env.PA_SMOKE === '1')) void openExternalConfirmed(d.url);
-    return { action: 'deny' };
   });
   if ((__PA_SMOKE__ && process.env.PA_SMOKE === '1')) {
     if (process.env.PA_SMOKE_LOGIN === '1' && serverSession) runLoginSmoke(w, serverSession, (r, code) => { console.log('PA_SMOKE ' + JSON.stringify(r)); app.exit(code); }, smokeExtra);
@@ -140,10 +139,7 @@ if ((__PA_SMOKE__ && process.env.PA_SMOKE === '1') && process.env.PA_USER_DATA) 
 app.whenReady().then(async () => {
   // Deny all permission requests/checks; cancel downloads; no webviews.
   const ses = electronSession.defaultSession;
-  ses.setPermissionRequestHandler((_wc, _p, cb) => cb(false));
-  ses.setPermissionCheckHandler(() => false);
-  ses.setDevicePermissionHandler(() => false);
-  ses.on('will-download', (e) => e.preventDefault());
+  applySessionPolicy(ses as unknown as SessionLike);
   const cipher = safeStorage.isEncryptionAvailable()
     ? { encrypt: (x: string) => safeStorage.encryptString(x), decrypt: (b: Buffer) => safeStorage.decryptString(b) } : null;
   const srv = new ServerSession({
@@ -157,10 +153,7 @@ app.whenReady().then(async () => {
   serverSession = srv;
   ses.protocol.handle(SCHEME, (req) => handleAppRequest({ url: req.url, method: req.method }, RENDERER_ROOT, SCHEME, undefined,
     async () => srv.handle({ method: req.method, url: req.url, headers: req.headers, body: req.method === 'GET' || req.method === 'HEAD' ? null : await req.arrayBuffer() })));
-  app.on('web-contents-created', (_e, wc) => {
-    wc.on('will-attach-webview', (ev) => ev.preventDefault());
-    wc.setWindowOpenHandler(() => ({ action: 'deny' }));
-  });
+  app.on('web-contents-created', (_e, wc) => { hardenWebContents(wc as unknown as WebContentsLike); });
 
   const userData = app.getPath('userData');
   const host = await CoreHost.start({
