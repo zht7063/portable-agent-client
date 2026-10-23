@@ -11,7 +11,7 @@
 //   - main/preload only: weakened webPreferences, openDevTools, remote module, generic ipcRenderer exposure
 // Upstream renderer code legitimately contains words like "token"; only concrete secret shapes are flagged.
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 
 const ROOT = resolve(import.meta.dirname, '..');
@@ -41,12 +41,36 @@ export function highEntropy(s) {
 }
 const sha = (s) => createHash('sha256').update(s).digest('hex');
 const ALLOW_FILE = join(ROOT, 'scripts/scan-bundle-allowlist.json');
-export function loadAllowlist(file = process.env.PA_SCAN_ALLOWLIST || ALLOW_FILE) {
-  if (!existsSync(file)) return new Set();
-  const list = JSON.parse(readFileSync(file, 'utf8')).entries ?? [];
-  for (const e of list) if (!/^[0-9a-f]{64}$/.test(e.sha256) || !e.reason) throw new Error(`allowlist entry needs sha256 + reason: ${JSON.stringify(e)}`);
-  return new Set(list.map((e) => e.sha256));
+/**
+ * Allowlist entries: { sha256, paths: [glob...], reason }. A hit is suppressed only if BOTH the sha256 matches AND its
+ * path matches one of the globs. Paths are relative to the scanned directory; files inside an archive use
+ * `<path-to.asar>:<path-inside-asar>`. Glob: `**` followed by a slash = any directories, `*` = any chars except / and :.
+ * PA_SCAN_ALLOWLIST (alternate file) is for local testing only and is refused in CI (CI / GITHUB_ACTIONS = true).
+ */
+export function globToRegExp(g) {
+  let re = '';
+  for (let i = 0; i < g.length; i++) {
+    if (g.startsWith('**/', i)) { re += '(?:.*/)?'; i += 2; } else if (g[i] === '*') re += '[^/:]*';
+    else re += g[i].replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+  }
+  return new RegExp(`^${re}$`);
 }
+export function loadAllowlist(env = process.env) {
+  let file = ALLOW_FILE;
+  if (env.PA_SCAN_ALLOWLIST) {
+    if (env.CI === 'true' || env.GITHUB_ACTIONS === 'true') throw new Error('PA_SCAN_ALLOWLIST override is refused in CI');
+    file = env.PA_SCAN_ALLOWLIST;
+  }
+  if (!existsSync(file)) return [];
+  const list = JSON.parse(readFileSync(file, 'utf8')).entries ?? [];
+  for (const e of list) {
+    if (!/^[0-9a-f]{64}$/.test(e.sha256) || !e.reason || !Array.isArray(e.paths) || !e.paths.length) {
+      throw new Error(`allowlist entry needs sha256 + paths + reason: ${JSON.stringify(e)}`);
+    }
+  }
+  return list.map((e) => ({ sha256: e.sha256, paths: e.paths.map(globToRegExp) }));
+}
+const allowed = (allow, h, path) => allow.some((e) => e.sha256 === h && e.paths.some((re) => re.test(path)));
 const MAIN_ONLY = [
   ['nodeIntegration: true', /nodeIntegration\s*:\s*(?:true|!0)/],
   ['contextIsolation: false', /contextIsolation\s*:\s*(?:false|!1)/],
@@ -90,7 +114,7 @@ function check(findings, label, rel, text, allow) {
   for (const m of text.matchAll(BARE48)) {
     if (!highEntropy(m[0])) continue;
     const h = sha(m[0]);
-    if (!allow.has(h)) findings.push({ file: label, rule: 'bare 48-char high-entropy string', at: m.index, sha256: h });
+    if (!allowed(allow, h, rel.split(sep).join('/'))) findings.push({ file: label, rule: 'bare 48-char high-entropy string', at: m.index, sha256: h });
   }
   const parts = rel.split(/[/\\]/);
   // main/preload rules apply to our own code only (not the renderer, not third-party node_modules).
@@ -109,7 +133,7 @@ export function scan(dirs, allow = loadAllowlist()) {
       if (f.endsWith('.asar')) {
         let entries;
         try { entries = [...asarEntries(f)]; } catch { findings.push({ file: relative(ROOT, f), rule: 'unreadable asar', at: 0 }); continue; }
-        for (const [p, data] of entries) if (EXT.test(p)) check(findings, `${relative(ROOT, f)}:${p}`, `${rel}/${p}`, data.toString('utf8'), allow);
+        for (const [p, data] of entries) if (EXT.test(p)) check(findings, `${relative(ROOT, f)}:${p}`, `${rel}:${p}`, data.toString('utf8'), allow);
         continue;
       }
       check(findings, relative(ROOT, f), rel, readFileSync(f, 'utf8'), allow);
@@ -123,7 +147,9 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename
   const dirs = process.argv.slice(2).length ? process.argv.slice(2).map((d) => resolve(d))
     : [join(ROOT, 'apps/desktop/dist'), ...(existsSync(rel) ? [rel] : [])];
   for (const d of dirs) { try { statSync(d); } catch { console.error(`scan-bundle: ${d} does not exist (build first)`); process.exit(2); } }
-  const found = scan(dirs);
+  let allow;
+  try { allow = loadAllowlist(); } catch (e) { console.error(`scan-bundle: ${e.message}`); process.exit(2); }
+  const found = scan(dirs, allow);
   // Never print the match itself (it may be a secret): file, rule, offset (and sha256 for allowlisting) only.
   for (const x of found) console.error(`scan-bundle: ${x.rule} in ${x.file} @${x.at}${x.sha256 ? ` sha256=${x.sha256}` : ''}`);
   if (found.length) process.exit(1);

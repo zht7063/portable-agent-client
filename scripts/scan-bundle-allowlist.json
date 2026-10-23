@@ -1,9 +1,13 @@
 {
-  "$comment": "Known non-secret strings matched by scan-bundle's bare 48-char high-entropy rule. sha256 of the matched string + justification (string never stored). Inspected by hand before adding.",
+  "$comment": "Known non-secret strings matched by scan-bundle's bare 48-char high-entropy rule. A hit is suppressed only if sha256 AND path match. Paths are relative to the scanned dir (apps/desktop/dist or apps/desktop/release); inside archives '<asar path>:<inner path>'. Globs: '**/' any dirs, '*' no / or :. Inspected by hand before adding.",
   "entries": [
     {
       "sha256": "a5979044b51b95dbe9c35b2f3fb0701ba9deb44b64e8fdb754635582dc255349",
-      "where": "dist/renderer/static/js/async/24151.*.js (also inside release app.asar)",
+      "paths": [
+        "renderer/static/js/async/24151.*.js",
+        "**/resources/app.asar:dist/renderer/static/js/async/24151.*.js"
+      ],
+      "pathsNote": "rsbuild chunk 24151 with a content-hash suffix ('*' only covers the hash, which changes on any rebuild of that chunk); the asar form is the same file inside the packaged app (linux-unpacked today, any platform's resources/ dir).",
       "reason": "SVG path data (attr d of a 512x512 react-icons icon: run of absolute H/V/z commands like 'H128V512H0V352...'), not a secret"
     }
   ]
