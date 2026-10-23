@@ -20,7 +20,8 @@ Authorization, redirects not followed, 10 s timeout — and caches the result in
 | `/api/status` result | Verdict | Effect |
 |---|---|---|
 | `minServer` ≤ version ≤ `maxServerTested` | `ok` | proceed |
-| version newer than `maxServerTested` (any newer line) | `untested` | warning dialog, login allowed (plan §4) |
+| same major.minor line as the pin, newer than `maxServerTested` | `untested` | warning dialog, login allowed (plan §4) |
+| other major.minor line (`same-minor-line`), or ≠ pin (`exact`) | `incompatible` | error dialog; login blocked (needs a client with a new pin) |
 | version older than `minServer` | `too-old` | error dialog; proxy refuses `/api/user/login`, `/login/2fa`, `/login/verify`, `/register`, `/auth/refresh` (403 `LOGIN_BLOCKED` with the reason, shown by the upstream UI as a toast) |
 | not JSON / no `success` / unparseable `data.version` / non-200 | `not-new-api` | same as `too-old` |
 | network error | `unreachable` | same (re-checked on server change / restart) |
@@ -28,5 +29,5 @@ Authorization, redirects not followed, 10 s timeout — and caches the result in
 | OAuth / OIDC / WeChat / Telegram / passkey enabled | — | message; flags are rewritten to `false` in the `/api/status` the renderer sees so upstream hides those buttons |
 | `http://` server | — | warning only (plan §9.6 undecided; default = warn) |
 
-Note: the runtime check treats *any* newer version as "untested, allowed" (plan §4 wording), whereas
-`scripts/compat-check.mjs` (`policy: same-minor-line`) reports a different minor line as `incompatible` for CI purposes.
+The runtime check and `scripts/compat-check.mjs` use the same policy semantics (`classify` == `serverCompat`;
+`apps/desktop/test/proxy.test.ts` checks a version table for both policies; `not-new-api` corresponds to `incompatible`).

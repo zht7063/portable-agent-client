@@ -219,7 +219,14 @@ describe('server version check', () => {
     expect(classify(COMPAT, 'v1.0.0-rc.46')).toBe('ok');
     expect(classify(COMPAT, 'v1.0.0-rc.47')).toBe('untested');
     expect(classify(COMPAT, 'v1.0.0')).toBe('untested');
-    expect(classify(COMPAT, 'v1.1.0')).toBe('untested');
+    expect(classify(COMPAT, 'v1.0.7')).toBe('untested');
+    expect(classify(COMPAT, 'v1.1.0')).toBe('incompatible');
+    expect(classify(COMPAT, 'v2.0.0')).toBe('incompatible');
+    expect(classify({ ...COMPAT, policy: 'exact' }, 'v1.0.0-rc.47')).toBe('incompatible');
+    expect(classify({ ...COMPAT, policy: 'exact' }, 'v1.0.0-rc.46')).toBe('ok');
+    const blocked = evaluateStatus(COMPAT, 'https://x.test', { success: true, data: { version: 'v1.1.0' } });
+    expect(blocked).toMatchObject({ verdict: 'incompatible', allowLogin: false });
+    expect(blocked.messages[0]).toContain('v1.0.x');
     expect(classify(COMPAT, 'v1.0.0-rc.45')).toBe('too-old');
     expect(classify(COMPAT, 'v0.9.9')).toBe('too-old');
     expect(classify(COMPAT, 'one-api v0.6')).toBe('not-new-api');
@@ -259,5 +266,20 @@ describe('app protocol + proxy', () => {
       async () => new Response('{}', { headers: { 'set-cookie': 'a=b', 'content-type': 'application/json' } }));
     expect(r.headers.get('set-cookie')).toBeNull();
     expect(r.headers.get('content-security-policy')).toContain("default-src 'self'");
+  });
+});
+
+describe('Aegis #2: runtime classify == scripts/compat-check.mjs serverCompat', () => {
+  it('agrees on a version table for both policies', async () => {
+    // @ts-expect-error untyped .mjs
+    const { serverCompat } = await import('../../../scripts/compat-check.mjs');
+    const versions = ['v1.0.0-rc.40', 'v1.0.0-rc.46', 'v1.0.0-rc.47', 'v1.0.0', 'v1.0.9', 'v1.1.0', 'v2.0.0', 'v0.9.0', 'garbage'];
+    for (const policy of ['same-minor-line', 'exact'] as const) for (const maxServerTested of [null, 'v1.0.0-rc.46', 'v1.0.0']) {
+      const c: CompatRange = { tag: 'v1.0.0-rc.46', minServer: 'v1.0.0-rc.46', maxServerTested, policy };
+      for (const v of versions) {
+        const rt = classify(c, v);
+        expect(rt === 'not-new-api' ? 'incompatible' : rt, `${policy} ${maxServerTested} ${v}`).toBe(serverCompat(c, v));
+      }
+    }
   });
 });

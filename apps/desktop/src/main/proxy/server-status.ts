@@ -8,6 +8,7 @@ export type Verdict =
   | 'ok'            // in range
   | 'untested'      // newer than tested: warn, allow
   | 'too-old'       // block login
+  | 'incompatible'  // other major.minor line (same-minor-line) / not the pin (exact): block login, needs a new pin
   | 'not-new-api'   // unparseable / not a new-api /api/status: block login
   | 'unreachable';  // network error: block login until a retry succeeds
 
@@ -38,11 +39,20 @@ export function compareVersions(a: string, b: string): number {
   return x.pre[0] !== y.pre[0] ? (x.pre[0] < y.pre[0] ? -1 : 1) : x.pre[1] - y.pre[1];
 }
 
-/** Plan §4: in range → ok; newer than maxServerTested (or pin) → untested (warn+allow); older/unparseable → block. */
+/**
+ * Plan §4 + compat.json policy (same semantics as scripts/compat-check.mjs serverCompat; a test keeps them in sync):
+ *  older than minServer → too-old; `exact`: anything but the pin → incompatible;
+ *  `same-minor-line`: other major.minor than the pin → incompatible (needs a new pin);
+ *  same line ≤ maxServerTested (or pin) → ok; newer on the same line → untested (warn + allow).
+ */
 export function classify(c: CompatRange, version: unknown): Verdict {
-  if (!parseVersion(version)) return 'not-new-api';
+  const s = parseVersion(version);
+  if (!s) return 'not-new-api';
   const v = String(version);
   if (compareVersions(v, c.minServer) < 0) return 'too-old';
+  if (c.policy === 'exact') return compareVersions(v, c.tag) === 0 ? 'ok' : 'incompatible';
+  const t = parseVersion(c.tag);
+  if (!t || s.major !== t.major || s.minor !== t.minor) return 'incompatible';
   return compareVersions(v, c.maxServerTested ?? c.tag) <= 0 ? 'ok' : 'untested';
 }
 
@@ -64,6 +74,7 @@ export function evaluateStatus(c: CompatRange, origin: string, body: unknown, no
   const messages: string[] = [];
   if (verdict === 'too-old') messages.push(`服务器版本 ${String(version)} 低于客户端支持的最低版本 ${c.minServer}，已阻止登录。请升级服务器或使用匹配的客户端版本。`);
   if (verdict === 'not-new-api') messages.push('该地址未返回 new-api 的 /api/status（或版本号无法解析），已阻止登录。请检查服务器地址。');
+  if (verdict === 'incompatible') messages.push(`服务器版本 ${String(version)} 不在客户端支持的版本线内（${c.policy === 'exact' ? `仅支持 ${c.tag}` : `${c.tag.replace(/^(v\d+\.\d+)\..*$/, '$1')}.x，≥ ${c.minServer}`}），已阻止登录。请使用与服务器匹配的客户端版本。`);
   if (verdict === 'untested') messages.push(`服务器版本 ${String(version)} 高于客户端已测试的版本 ${c.maxServerTested ?? c.tag}，部分功能可能异常。`);
   if (turnstile) messages.push('服务器启用了 Turnstile 人机验证，桌面客户端暂不支持，无法在客户端内登录。');
   if (unsupported.length) messages.push(`服务器启用的 ${unsupported.join('、')} 登录方式在客户端内不可用，请使用用户名密码登录。`);
