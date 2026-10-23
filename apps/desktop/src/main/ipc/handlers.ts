@@ -6,6 +6,7 @@ import {
   findCredentialLeaks,
   ok,
   PaException,
+  normalizeServerUrl,
   toPaError,
   type ClientConfig,
   type ConfigSetReq,
@@ -62,8 +63,10 @@ export function createHandlers({ getCore, getConfig, setConfig, harness, confirm
       if (r && typeof r === 'object' && 'serverUrl' in r) {
         const next = r.serverUrl;
         let nextUrl: string;
-        try { const u = new URL(String(next)); if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new Error('scheme'); nextUrl = u.href; }
-        catch { throw new PaException({ code: 'VALIDATION', message: 'Invalid server URL' }); }
+        // Aegis N3: full validation (http/https only, no userinfo `user:pass@`, no query/fragment) BEFORE any dialog,
+        // so a credential-bearing or deceptive URL is never even offered for confirmation.
+        try { nextUrl = new URL(normalizeServerUrl(String(next))).href; }
+        catch (e) { throw e instanceof PaException ? e : new PaException({ code: 'VALIDATION', message: 'Invalid server URL' }); }
         const cur = getConfig().serverUrl;
         const same = (() => { try { return !!cur && new URL(cur).href === nextUrl; } catch { return false; } })();
         if (!same && !(await confirmServerChange?.(nextUrl, cur))) {

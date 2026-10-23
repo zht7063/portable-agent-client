@@ -148,4 +148,21 @@ describe('CoreHost', () => {
     answer = true;
     expect(await dispatch(withDialog, 'config:set', { serverUrl: 'https://ok.example' })).toMatchObject({ ok: true, data: { serverUrl: 'https://ok.example' } });
   });
+  it.each(['https://user:pass@evil.example', 'https://user@evil.example', 'https://:pw@evil.example', 'http://a%40b:c@x.example/'])('Aegis N3: userinfo URL %s is refused before any dialog', async (u) => {
+    const p = await tmp();
+    const { h } = await host(p);
+    const asked: string[] = [];
+    const hs = createHandlers({ getCore: () => h.core, getConfig: () => h.config(), setConfig: (x) => h.set(x), harness: tmpHarnessHost().host.harness, confirmServerChange: async (n) => { asked.push(n); return true; } });
+    expect(await dispatch(hs, 'config:set', { serverUrl: u })).toMatchObject({ ok: false, error: { code: 'VALIDATION' } });
+    expect(asked).toEqual([]);
+    expect(h.config().serverUrl).toBe(DEF);
+  });
+  it('Aegis N3: server change dialog shows the host on its own line plus the full URL; Cancel default', async () => {
+    const { serverChangeDialog } = await import('../src/main/dialogs');
+    const d = serverChangeDialog('https://xn--80ak6aa92e.com:8443/api-base', 'https://a.example');
+    expect(d.message.split('\n').at(-1)).toBe('xn--80ak6aa92e.com:8443');
+    expect(d.detail).toContain('主机：xn--80ak6aa92e.com:8443\n');
+    expect(d.detail).toContain('完整地址：https://xn--80ak6aa92e.com:8443/api-base');
+    expect([d.defaultId, d.cancelId, d.buttons[0]]).toEqual([0, 0, '取消']);
+  });
 });

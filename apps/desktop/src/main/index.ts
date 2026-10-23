@@ -18,6 +18,7 @@ import compat from '../../../../compat.json';
 import { runLoginSmoke, type SmokeExtra } from './smoke-login';
 import { runKeysSmokeStep } from './smoke-keys';
 import { KeyService } from './key-service';
+import { serverChangeDialog } from './dialogs';
 
 /*
  * Main process: isolated window showing the patched upstream new-api web build on the privileged app protocol
@@ -202,11 +203,7 @@ app.whenReady().then(async () => {
       return c;
     },
     confirmServerChange: async (nextUrl, currentUrl) => {
-      const opts = {
-        type: 'warning' as const, buttons: ['取消', '切换到该服务器'], defaultId: 0, cancelId: 0, noLink: true,
-        title: PRODUCT.productName, message: '切换客户端连接的服务器？',
-        detail: `新服务器：${nextUrl}\n当前服务器：${currentUrl ?? '(未配置)'}\n\n登录密码、会话与 API key 将发送到新服务器。只有你信任该地址时才继续。当前会话会被清除。`,
-      };
+      const opts = { ...serverChangeDialog(nextUrl, currentUrl), title: PRODUCT.productName };
       const r = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
       return r.response === 1;
     },
