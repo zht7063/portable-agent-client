@@ -189,6 +189,12 @@ describe('3 login PEM exemption: parsed public key, top-level data.public_key on
     expect(isPemPublicKey(priv.replace(/PRIVATE KEY/g, 'PUBLIC KEY'))).toBe(false);
     expect((await get({ success: true, data: { public_key: priv } })).data.public_key).not.toBe(priv);
   });
+  it('a PEM with extra bytes after the key (re-export mismatch) is not exempt', () => {
+    const der = kp.publicKey.export({ type: 'spki', format: 'der' });
+    const pem = (b: Buffer) => `-----BEGIN PUBLIC KEY-----\n${b.toString('base64').replace(/.{64}/g, '$&\n')}\n-----END PUBLIC KEY-----\n`;
+    expect(isPemPublicKey(pem(der))).toBe(true);
+    for (const extra of [Buffer.from(K), Buffer.from([0]), Buffer.alloc(36, 0x41)]) expect(isPemPublicKey(pem(Buffer.concat([der, extra])))).toBe(false);
+  });
   it('nested or top-level-outside-data public_key is not exempt', async () => {
     const r = await get({ success: true, public_key: pub, data: { inner: { public_key: pub }, list: [{ public_key: pub }] } });
     expect(JSON.stringify(r)).not.toContain(pub.split('\n')[1]);

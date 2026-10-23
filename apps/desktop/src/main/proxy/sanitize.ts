@@ -244,7 +244,14 @@ export function isPemPublicKey(s: unknown): s is string {
   if (typeof s !== 'string' || s.length >= 8192) return false;
   // Header check first: createPublicKey() would also accept a PRIVATE key (deriving its public half).
   if (!/^-----BEGIN (?:RSA )?PUBLIC KEY-----\r?\n[A-Za-z0-9+/=\r\n]+-----END (?:RSA )?PUBLIC KEY-----\s*$/.test(s)) return false;
-  try { return createPublicKey(s).type === 'public'; } catch { return false; }
+  try {
+    const k = createPublicKey(s);
+    if (k.type !== 'public') return false;
+    // Byte-exact: the re-exported key must equal the PEM body (no trailing / extra bytes smuggled after the key).
+    const body = Buffer.from(s.replace(/-----(?:BEGIN|END) [A-Z ]+-----/g, '').replace(/\s+/g, ''), 'base64');
+    const der = /BEGIN RSA PUBLIC KEY/.test(s) ? k.export({ type: 'pkcs1', format: 'der' }) : k.export({ type: 'spki', format: 'der' });
+    return Buffer.compare(der, body) === 0;
+  } catch { return false; }
 }
 
 /**
