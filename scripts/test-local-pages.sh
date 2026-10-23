@@ -3,7 +3,8 @@
 # Any failure is real (no blanket swallowing): typecheck covers the whole tree and only tolerates pre-existing upstream
 # errors in files listed in scripts/local-pages-tsc-baseline.txt; oxlint runs on our pages + patched files only
 # (upstream has pre-existing lint findings elsewhere, e.g. inline type imports in keys/data-table-bulk-actions.tsx,
-# which patch 0003 touches but which are not linted here); vitest runs our tests.
+# which patch 0003 touches, and a sandbox-less iframe in routes/_authenticated/chat/$chatId.tsx, which patch 0006
+# touches; those two files are not linted here); vitest runs our tests.
 # Offline: run with --no-install after `bun run install:web` (the only step that needs network; see docs/release.md).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -36,5 +37,7 @@ else
 fi
 bunx oxlint -c .oxlintrc.json src/pa-local src/routes/_authenticated/pa "src/routes/(auth)/pa-server.tsx" "src/routes/(auth)/pa-about.tsx" src/hooks/use-sidebar-data.ts \
   src/features/keys/components/api-keys-cells.tsx src/features/keys/components/data-table-row-actions.tsx \
+  src/components/layout/components/nav-group.tsx src/features/chat/lib/chat-links.ts src/features/chat/hooks/use-active-chat-key.ts \
+  src/routes/_authenticated/chat2link.tsx \
   src/features/auth/sign-in/index.tsx src/features/dashboard/components/overview/overview-dashboard.tsx
 bunx vitest run src/pa-local src/hooks/__tests__/sidebar-config.test.tsx
