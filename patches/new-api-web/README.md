@@ -20,6 +20,7 @@ preserved (upstream UI footer/about untouched; also in our NOTICE).
 | `0001-csp-move-inline-theme-script.patch` | `index.html`, new `public/theme-init.js` | The desktop renderer runs under a strict CSP (`script-src 'self'`, no inline scripts). Upstream's pre-paint theme script was inline in `index.html`; it is moved verbatim into a same-origin file. No behaviour change. | 2026-10-24 (M2) |
 | `0002-new-api-web-desktop-nav-group-for-local-pages.patch` | `src/hooks/use-sidebar-data.ts` | Adds a "Desktop" sidebar group (Harness / Keychain / Server settings) linking to our local pages, only when the desktop preload bridge is present (`isPaDesktop()`); the plain web build is unchanged. | 2026-10-24 (M5) |
 | `0003-new-api-web-route-API-key-copy-show-store-through-th.patch` | `src/features/keys/components/{api-keys-cells,data-table-row-actions,data-table-bulk-actions}.tsx` | In the desktop client the proxy masks every key the renderer sees, so upstream's copy icon / Copy Key / Copy Connection Info / CC Switch / chat presets / batch copy would silently use a masked value. In the desktop they are replaced by `pa-local` actions (Copy key and Show key run in main; Store to keychain), and batch copy is hidden. The web build is unchanged. | 2026-10-24 (M5) |
+| `0004-new-api-web-desktop-only-server-settings-link-on-sig.patch` | `src/features/auth/sign-in/index.tsx` | Adds a "Server settings" link under the sign-in form pointing to our public `/pa-server` page, so a user can change/check the server before signing in. Desktop only (`isPaDesktop()`); web build unchanged. | 2026-10-24 (M5) |
 
 M3 (main-process `/api` proxy, login option A) needed **no frontend patch**: upstream keeps the access token in an
 in-memory store only and nothing credential-bearing in localStorage; the proxy hands the renderer an opaque handle and
@@ -33,7 +34,7 @@ origin (`<scheme>://app/`), so upstream's absolute `/static/...` asset URLs and 
 
 Our own pages (harness config, keychain, server settings, desktop key actions) are original AGPL-3.0 code in
 `src-local/`. The build copies them to `src/pa-local/`, and copies `src-local/routes/` into `src/routes/` (TanStack
-file routes: `/pa/harness`, `/pa/keychain`, `/pa/server`, and the public `/pa-server`) **before** the patch queue runs. Patches 0002/0003 are
+file routes: `/pa/harness`, `/pa/keychain`, `/pa/server`, and the public `/pa-server`) **before** the patch queue runs. Patches 0002–0005 are
 the only upstream files that import them.
 
 ## Adding / updating a patch
