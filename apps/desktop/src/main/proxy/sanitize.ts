@@ -20,6 +20,8 @@ export class AccessTokenVault {
     return h;
   }
   resolve(handle: string): string | null { return this.map.get(handle) ?? null; }
+  /** Most recently issued real token (main-only API calls, M4). */
+  latest(): string | null { let v: string | null = null; for (const t of this.map.values()) v = t; return v; }
   clear(): void { this.map.clear(); }
   get size(): number { return this.map.size; }
 }

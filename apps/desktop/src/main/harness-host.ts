@@ -15,6 +15,8 @@ export interface HarnessHostOptions {
   exec?: typeof nodeExec;
   /** Needed to provision keychain entries (command key mode) before a write. */
   getCore?: () => Core;
+  /** M4: provision via the main-only server session (KeyService.ensure). Preferred over getCore when set. */
+  ensureKey?: (profileId: string, harness: HarnessId, tokenId: number) => Promise<void>;
   cwd?: string;
 }
 
@@ -39,6 +41,7 @@ export class HarnessHost {
       fs, state: this.state, env, exec, helperPath: o.helperPath, ...(o.cwd ? { cwd: o.cwd } : {}),
       beforeWrite: async (p: HarnessProfile) => {
         if (p.keyMode !== 'command') return;
+        if (o.ensureKey) return o.ensureKey(p.id, h, p.keyId);
         if (!o.getCore) throw new PaException({ code: 'VALIDATION', message: 'Cannot provision the key here' });
         await this.provisionKey(o.getCore(), p.id, h, p.keyId);
       },

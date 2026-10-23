@@ -36,7 +36,7 @@ describe('IPC contract: no credential fields reach the renderer', () => {
   });
   it('no channel is exempt from the credential guard (keys:reveal was dropped)', () => {
     expect([...CREDENTIAL_EXCEPTION_CHANNELS]).toEqual([]);
-    expect(INVOKE_CHANNELS.some((c) => /^(auth|billing|chat|keys|models):/.test(c))).toBe(false);
+    expect(INVOKE_CHANNELS.some((c) => /^(auth|billing|chat|models):/.test(c) || (c as string) === 'keys:reveal')).toBe(false);
   });
   it('channel lists are unique and complete', () => {
     expect(new Set(INVOKE_CHANNELS).size).toBe(INVOKE_CHANNELS.length);

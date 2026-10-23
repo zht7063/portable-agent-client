@@ -1,3 +1,4 @@
+import { PaException } from '@pac/core';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { CookieJar, type StoredCookie } from './cookie-jar';
@@ -88,6 +89,36 @@ export class ServerSession {
   get nextRetryMs(): number | null { return this.retryTimer ? this.retryDelay : null; }
 
   handle(req: ProxyRequest): Promise<Response> { return this.proxy.handle(req); }
+
+  /**
+   * M4: main-only standard-API call with the main-held session (jar cookie + latest access token). The response is
+   * NOT sanitised and must never be forwarded to the renderer. Returns `data` of `{success, data, message}`.
+   */
+  async mainApi<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+    const origin = this.origin;
+    if (!origin) throw new PaException({ code: 'VALIDATION', message: 'No server configured' });
+    if (!/^\/api\/[A-Za-z0-9_/-]+$/.test(path)) throw new PaException({ code: 'VALIDATION', message: 'bad path' });
+    const target = new URL(path, origin);
+    const headers: Record<string, string> = { accept: 'application/json' };
+    const cookie = this.jar.header(path, origin.startsWith('https://'));
+    if (cookie) headers.cookie = cookie;
+    const tok = this.vault.latest();
+    if (!tok) throw new PaException({ code: 'UNAUTHORIZED', message: '请先登录服务器（未找到会话）。' });
+    headers.authorization = `Bearer ${tok}`;
+    if (body !== undefined) headers['content-type'] = 'application/json';
+    let res: Response;
+    try {
+      res = await this.o.fetch(target.href, { method, headers, redirect: 'manual', credentials: 'omit', body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(30000) });
+    } catch { throw new PaException({ code: 'NETWORK', message: '无法连接服务器' }); }
+    const sc = typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : [];
+    if (sc.length) this.jar.store(sc, path);
+    if (res.status === 401) throw new PaException({ code: 'UNAUTHORIZED', message: '会话已失效，请重新登录。' });
+    let j: { success?: boolean; data?: T; message?: string };
+    try { j = (await res.json()) as typeof j; } catch { throw new PaException({ code: 'SERVER', message: `服务器返回异常（HTTP ${res.status}）` }); }
+    // Upstream messages are user-facing text; never include response data in errors.
+    if (!res.ok || j.success === false) throw new PaException({ code: 'SERVER', message: (typeof j.message === 'string' && j.message.slice(0, 200)) || `HTTP ${res.status}` });
+    return j.data as T;
+  }
 
   private async load(origin: string): Promise<StoredCookie[]> {
     if (!this.o.file || !this.o.cipher) return [];

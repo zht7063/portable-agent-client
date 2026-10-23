@@ -50,10 +50,9 @@ client_secret, password, totp_secret, backup_codes, qr_code_data, private_key, s
 authorization, cookie, webhook_secret, session_secret`; secret-shaped strings anywhere (`sk-…`, JWT-like,
 `otpauth://`). Non-JSON text bodies get the `sk-`/JWT pass.
 
-Consequences (deliberate, M3): full keys are never visible in the client UI (the "copy key" flow is M4: main
-fetches the key and writes keychain/clipboard). Admin pages that *display* secrets (channel keys, OAuth client
-secrets, SMTP password) show masked values; editing a field and saving would send the masked value back — admins
-should do secret edits in the server's web UI. 2FA **enrolment** (secret / QR / backup codes) is masked and therefore
+Consequences (deliberate): full keys are never visible in the client UI (see "Token → keychain (M4)"). Admin pages
+that *display* secrets (channel keys, OAuth client secrets, SMTP password) show masked values; saving such a form is
+refused by the proxy (below) — admins do secret edits in the server's web UI. 2FA **enrolment** (secret / QR / backup codes) is masked and therefore
 must be done in the server's web UI; 2FA **login** works through the proxy.
 
 ## Login (plan option A)
@@ -84,3 +83,37 @@ The configured origin decides where passwords, the session and API keys go. `con
 renderer therefore requires a native main-process dialog (`confirmServerChange`: full new + current URL shown, Cancel
 is the default; no dialog wired = refused). Only `http:`/`https:` URLs are accepted; re-saving the same URL does not prompt.
 `PAC_SERVER_URL` (main-owned, dev) still seeds an unconfigured client.
+
+## Token → keychain (M4)
+
+Code: `apps/desktop/src/main/key-service.ts`, `ServerSession.mainApi`, IPC `keys:*` (preload `window.pa.keys.*`).
+
+- The renderer sends only a **token id**. Main calls the standard API itself — `POST /api/token/:id/key` (and
+  `GET /api/token/:id` for the name) — with the main-only session (jar cookie + latest access token from the vault).
+  These responses are never sanitised-and-forwarded; they do not pass through the renderer proxy at all.
+- `keys:store {tokenId, harness}` writes `sk-<key>` straight into the OS keychain: service = product
+  `keychainService`, account `default/<harness>` (single profile in M4). A non-secret metadata file
+  `<userData>/keychain-entries.json` records token id, name, masked key and time per entry.
+- `keys:list` → `{available, backend, fallback?, entries:[{profileId, harness, tokenId, tokenName, maskedKey, storedAt, present}]}`.
+- `keys:copy {tokenId}` → main writes the full key to the system clipboard; the response carries the masked key only.
+  No auto-clear and no one-time reveal (open decisions).
+- `keys:delete {harness}` removes the keychain entry + metadata.
+- Harness apply in `command` key mode provisions the entry via the same path (`KeyService.ensure`: refetches only if
+  the entry is missing or bound to another token); `pa-key default <harness>` then reads it (unchanged).
+  The Codex channel probe also uses the main-session key fetch.
+- Keychain unavailable (Linux without a Secret Service / `secret-tool`): `keys:store` refuses with an "use env key
+  mode" message *before* fetching the key; nothing is written anywhere; `keys:list` reports `fallback: 'env'`.
+- Every `keys:*` response still goes through the dispatch credential-leak guard.
+
+## Masked admin saves are blocked (M4)
+
+`POST/PUT/PATCH` to `/api/{channel,option,custom-oauth-provider,deployments}/…` whose body contains our mask
+(`**********`, `xx****xx` as a whole value, also inside JSON-in-string option values) or an access-token handle is
+answered `409 MASKED_SECRET_SAVE_BLOCKED` with a message to edit the setting in the server web UI; nothing is sent.
+
+## Local integration (M3/M4)
+
+`NEWAPI_BIN=<official rc.46 binary> PAC_M4=1 unshare -rn dbus-run-session -- scripts/integration-local-newapi.sh`
+(loopback-only namespace, throwaway sqlite DB / account / gnome-keyring, temp HOME). The dev box has no
+libsecret-tools, so the test-only `test/live/bin/secret-tool` shim (Python `secretstorage`) talks to the throwaway
+gnome-keyring-daemon; the client code path (`SecretToolKeyring`, pa-key) is unchanged.

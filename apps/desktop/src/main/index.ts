@@ -1,7 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { app, BrowserWindow, dialog, ipcMain, protocol, safeStorage, session as electronSession, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, safeStorage, session as electronSession, shell } from 'electron';
 import { INVOKE_CHANNELS, PRODUCT, type InvokeChannel } from '@pac/core';
 import { createKeyring } from '@pac/keychain';
 import { installWrapper } from '@pac/pa-key';
@@ -15,7 +15,9 @@ import { appOrigin, buildCsp, handleAppRequest, isAppUrl, navigationDecision } f
 import { ServerSession } from './proxy/server-session';
 import type { CompatRange, ServerCheck } from './proxy/server-status';
 import compat from '../../../../compat.json';
-import { runLoginSmoke } from './smoke-login';
+import { runLoginSmoke, type SmokeExtra } from './smoke-login';
+import { runKeysSmokeStep } from './smoke-keys';
+import { KeyService } from './key-service';
 
 /*
  * Main process: isolated window showing the patched upstream new-api web build on the privileged app protocol
@@ -24,6 +26,7 @@ import { runLoginSmoke } from './smoke-login';
  */
 let win: BrowserWindow | null = null;
 let serverSession: ServerSession | null = null;
+let smokeExtra: SmokeExtra | undefined;
 
 const SCHEME = PRODUCT.protocolScheme;
 const RENDERER_ROOT = join(__dirname, '../renderer');
@@ -83,7 +86,7 @@ function createWindow(): BrowserWindow {
     return { action: 'deny' };
   });
   if (process.env.PA_SMOKE === '1') {
-    if (process.env.PA_SMOKE_LOGIN === '1' && serverSession) runLoginSmoke(w, serverSession, (r, code) => { console.log('PA_SMOKE ' + JSON.stringify(r)); app.exit(code); });
+    if (process.env.PA_SMOKE_LOGIN === '1' && serverSession) runLoginSmoke(w, serverSession, (r, code) => { console.log('PA_SMOKE ' + JSON.stringify(r)); app.exit(code); }, smokeExtra);
     else runSmoke(w);
   }
   void w.loadURL(APP_URL);
@@ -167,11 +170,25 @@ app.whenReady().then(async () => {
   let helperPath = join(userData, 'bin', process.platform === 'win32' ? 'pa-key.cmd' : 'pa-key');
   try { helperPath = await installWrapper({ dir: join(userData, 'bin'), execPath: process.execPath, scriptPath: helperScript }); }
   catch { /* harness page reports the helper as missing */ }
-  const harnessHost = new HarnessHost({
-    home: homedir(), dataDir: userData, env: process.env, platform: process.platform, keyring: createKeyring(), helperPath, getCore: () => host.core,
+  const keyring = createKeyring();
+  // M4: token -> keychain/clipboard through the main-only server session; the renderer only sends token ids.
+  const keys = new KeyService({
+    keyring, api: (m, p) => srv.mainApi(m, p), clipboard: { writeText: (t) => clipboard.writeText(t) },
+    metaFile: join(userData, 'keychain-entries.json'),
   });
+  const harnessHost = new HarnessHost({
+    home: homedir(), dataDir: userData, env: process.env, platform: process.platform, keyring, helperPath, getCore: () => host.core,
+    ensureKey: (profileId, h, tokenId) => keys.ensure(profileId, h, tokenId),
+  });
+  if (process.env.PA_SMOKE === '1' && process.env.PA_SMOKE_KEYS === '1') {
+    smokeExtra = (js, secret) => runKeysSmokeStep(js, secret, {
+      tokenId: Number(process.env.PA_SMOKE_TOKEN_ID), serverUrl: host.config().serverUrl ?? '', keyring, helperPath, home: homedir(),
+      readClipboard: () => clipboard.readText(), clearClipboard: () => clipboard.clear(),
+    });
+  }
   const handlers = createHandlers({
     harness: harnessHost.harness,
+    keys,
     getCore: () => host.core,
     getConfig: () => host.config(),
     setConfig: async (patch) => {

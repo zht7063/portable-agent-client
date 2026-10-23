@@ -14,6 +14,10 @@ import {
   type InvokeReq,
   type InvokeRes,
   type IpcInvokeMap,
+  type HarnessId,
+  type KeysCopyRes,
+  type KeysListRes,
+  type StoredKeyInfo,
 } from '@pac/core';
 import { createModels, type Harness } from '@pac/harness';
 
@@ -36,10 +40,22 @@ export interface HandlerDeps {
    * request to change it needs a native main-process confirmation (full URL shown, Cancel default). Absent = refuse.
    */
   confirmServerChange?(nextUrl: string, currentUrl: string | null): Promise<boolean>;
+  /** M4: token -> keychain / clipboard (KeyService). Absent = keys:* unavailable. */
+  keys?: KeyServiceLike;
+}
+
+/** Structural view of KeyService (main-only; full keys never leave it except to keychain/clipboard/probe). */
+export interface KeyServiceLike {
+  fetchKey(tokenId: number): Promise<string>;
+  store(tokenId: number, harness: HarnessId, profileId?: string): Promise<StoredKeyInfo>;
+  list(): Promise<KeysListRes>;
+  copy(tokenId: number): Promise<KeysCopyRes>;
+  remove(harness: HarnessId, profileId?: string): Promise<{ removed: boolean }>;
 }
 
 /** Pure (no electron import) so it is unit-testable. */
-export function createHandlers({ getCore, getConfig, setConfig, harness, confirmForeignServer, confirmServerChange }: HandlerDeps): HandlerMap {
+export function createHandlers({ getCore, getConfig, setConfig, harness, confirmForeignServer, confirmServerChange, keys }: HandlerDeps): HandlerMap {
+  const k = () => { if (!keys) throw new PaException({ code: 'VALIDATION', message: 'Key storage is not available' }); return keys; };
   return {
     'config:get': async () => getConfig(),
     'config:set': async (r) => {
@@ -98,12 +114,17 @@ export function createHandlers({ getCore, getConfig, setConfig, harness, confirm
       const core = getCore();
       let ids: string[];
       try {
-        ids = (await createModels(core.http).listWithKey(await core.keys.secret(p.keyId))).map((m) => m.id);
+        const sk = keys ? await keys.fetchKey(p.keyId) : await core.keys.secret(p.keyId);
+        ids = (await createModels(core.http).listWithKey(sk)).map((m) => m.id);
       } catch {
         return { state: 'unreachable' as const, model, checkedAt, detail: 'GET /v1/models failed' };
       }
       return { state: ids.includes(model) ? ('model-listed' as const) : ('model-missing' as const), model, checkedAt };
     },
+    'keys:list': async () => k().list(),
+    'keys:store': async (r) => k().store(r?.tokenId, r?.harness, r?.profileId),
+    'keys:copy': async (r) => k().copy(r?.tokenId),
+    'keys:delete': async (r) => k().remove(r?.harness, r?.profileId),
   };
 }
 

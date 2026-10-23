@@ -19,6 +19,37 @@ const LOGOUT_PATHS = new Set(['/api/user/auth/logout', '/api/user/logout']);
 /** /api/status flags for login methods the client cannot carry: hidden so upstream does not offer them. */
 const STATUS_DISABLE = ['github_oauth', 'discord_oauth', 'linuxdo_oauth', 'telegram_oauth', 'wechat_login', 'oidc_enabled', 'passkey_login'];
 
+/**
+ * M4: admin endpoints whose forms round-trip secrets (channel keys, option values such as SMTP password / OAuth
+ * client secrets / payment keys, custom OAuth providers, deployment credentials). The client only ever shows these
+ * masked, so saving such a form would overwrite the real secret with the mask -> refused before it leaves main.
+ */
+export const ADMIN_SECRET_PATHS = /^\/api\/(channel|option|custom-oauth-provider|deployments)(\/|$)/;
+export const MASKED_SAVE_MESSAGE = '该表单包含客户端掩码后的密钥（如 abcd**********wxyz），保存会用掩码覆盖服务器上的真实值，已阻止。请在服务器网页端编辑此设置。 '
+  + 'This form contains secrets masked by the client; saving would overwrite the real values. Blocked — edit this setting in the server web UI.';
+const MASK_LONG = /\*{10}/;                 // maskSecret() for > 8 chars: abcd**********wxyz
+const MASK_SHORT = /^[^*]{2}\*{4}[^*]{2}$/; // maskSecret() for 5..8 chars (all-star masks of <= 4 chars are ambiguous, e.g. "*")
+
+/** True if any string in the (JSON or text) body carries our mask or an access-token handle. */
+export function containsMaskedValue(body: ArrayBuffer): boolean {
+  const text = new TextDecoder().decode(body);
+  if (text.includes(HANDLE_PREFIX)) return true;
+  let v: unknown;
+  try { v = JSON.parse(text); } catch { return MASK_LONG.test(text); }
+  const walk = (x: unknown): boolean => {
+    if (typeof x === 'string') {
+      if (MASK_LONG.test(x) || MASK_SHORT.test(x)) return true;
+      // Option values are often JSON-in-a-string (e.g. OAuth provider settings).
+      if (x.length > 1 && (x[0] === '{' || x[0] === '[')) { try { return walk(JSON.parse(x)); } catch { return false; } }
+      return false;
+    }
+    if (Array.isArray(x)) return x.some(walk);
+    if (x && typeof x === 'object') return Object.values(x).some(walk);
+    return false;
+  };
+  return walk(v);
+}
+
 export interface ProxyRequest { method: string; url: string; headers: Headers; body: ArrayBuffer | null }
 export interface ServerProxyOptions {
   getOrigin(): string | null;
@@ -66,6 +97,9 @@ export class ServerProxy {
     }
 
     if (req.body && req.body.byteLength > LIMITS.requestBody) return fail(413, 'TOO_LARGE', 'request body too large');
+    if (req.body && method !== 'GET' && method !== 'HEAD' && ADMIN_SECRET_PATHS.test(path) && containsMaskedValue(req.body)) {
+      return fail(409, 'MASKED_SECRET_SAVE_BLOCKED', MASKED_SAVE_MESSAGE);
+    }
 
     const headers: Record<string, string> = filterRequestHeaders(req.headers);
     const cookie = this.o.getJar().header(path, origin.startsWith('https://'));

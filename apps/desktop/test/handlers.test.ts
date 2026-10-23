@@ -16,7 +16,7 @@ describe('desktop IPC handlers', () => {
   it('has a handler for every channel; dropped v0 channels are gone', () => {
     const { handlers } = setup();
     expect(Object.keys(handlers).sort()).toEqual([...INVOKE_CHANNELS].sort());
-    for (const ch of ['auth:login', 'billing:balance', 'keys:reveal', 'keys:copy', 'chat:complete', 'models:list']) expect(ch in handlers).toBe(false);
+    for (const ch of ['auth:login', 'billing:balance', 'keys:reveal', 'chat:complete', 'models:list']) expect(ch in handlers).toBe(false);
   });
   it('config:get returns Result ok without credentials', async () => {
     const { handlers } = setup();

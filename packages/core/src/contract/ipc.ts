@@ -5,7 +5,7 @@
  */
 import type { Result } from './errors.js';
 import type { SessionView } from './session.js';
-import type { ApplyResult, HarnessApplyReq, HarnessChannelProbeReq, HarnessChannelStatus, HarnessProfile, HarnessProfileListRes, HarnessDetectRes, HarnessKeyringStatusReq, HarnessPlanReq, HarnessRollbackReq, HarnessHistory, HarnessHistoryReq, HarnessRollbackPreviewReq, KeyringStatus, Plan, RollbackPreview } from './harness.js';
+import type { HarnessId, KeyringBackend, ApplyResult, HarnessApplyReq, HarnessChannelProbeReq, HarnessChannelStatus, HarnessProfile, HarnessProfileListRes, HarnessDetectRes, HarnessKeyringStatusReq, HarnessPlanReq, HarnessRollbackReq, HarnessHistory, HarnessHistoryReq, HarnessRollbackPreviewReq, KeyringStatus, Plan, RollbackPreview } from './harness.js';
 
 // ---------- DTOs ----------
 export interface ModelInfo { id: string }
@@ -15,6 +15,31 @@ export interface ClientConfig { serverUrl: string | null; /** Non-HTTPS server: 
 export interface ConfigSetReq { serverUrl?: string }
 
 export type Empty = Record<string, never>;
+
+/** M4: one keychain entry (account `<profileId>/<harness>`). Metadata + masked key only, never the key. */
+export interface StoredKeyInfo {
+  profileId: string;
+  harness: HarnessId;
+  tokenId: number;
+  tokenName: string;
+  /** Same shape as upstream MaskTokenKey (`sk-a**********wxyz`). */
+  maskedKey: string;
+  storedAt: string;
+  /** Entry currently present in the OS keychain. */
+  present: boolean;
+}
+export interface KeysListRes {
+  available: boolean;
+  backend: KeyringBackend;
+  /** Keychain unavailable (e.g. Linux without Secret Service): use env key mode; nothing is stored in plaintext. */
+  fallback?: 'env';
+  reason?: string;
+  entries: StoredKeyInfo[];
+}
+export interface KeysStoreReq { tokenId: number; harness: HarnessId; /** Only 'default' in M4 (no multi-profile). */ profileId?: string }
+export interface KeysCopyReq { tokenId: number }
+export interface KeysCopyRes { copied: true; tokenId: number; maskedKey: string }
+export interface KeysDeleteReq { harness: HarnessId; profileId?: string }
 
 // ---------- Invoke channels (renderer -> main, request/response) ----------
 export interface IpcInvokeMap {
@@ -38,6 +63,13 @@ export interface IpcInvokeMap {
   'harness:profile:upsert': { req: HarnessProfile; res: HarnessProfile };
   /** Read-only server channel probe for Codex (GET /v1/models with the profile key, inside main). */
   'harness:channel:probe': { req: HarnessChannelProbeReq; res: HarnessChannelStatus };
+  /** M4: keychain entries (metadata + masked key). */
+  'keys:list': { req: Empty; res: KeysListRes };
+  /** M4: main fetches the token's full key (main-only session) and writes it to the keychain. Returns masked info. */
+  'keys:store': { req: KeysStoreReq; res: StoredKeyInfo };
+  /** M4: main writes the full key to the system clipboard; the renderer only gets the masked key. */
+  'keys:copy': { req: KeysCopyReq; res: KeysCopyRes };
+  'keys:delete': { req: KeysDeleteReq; res: { removed: boolean } };
 }
 export type InvokeChannel = keyof IpcInvokeMap;
 export type InvokeReq<C extends InvokeChannel> = IpcInvokeMap[C]['req'];
@@ -52,6 +84,7 @@ export const CREDENTIAL_EXCEPTION_CHANNELS = [] as const satisfies readonly Invo
 export const INVOKE_CHANNELS = [
   'config:get', 'config:set',
   'harness:detect', 'harness:plan', 'harness:apply', 'harness:rollback', 'harness:history', 'harness:rollback:preview', 'harness:keyring:status', 'harness:profile:list', 'harness:profile:upsert', 'harness:channel:probe',
+  'keys:list', 'keys:store', 'keys:copy', 'keys:delete',
 ] as const satisfies readonly InvokeChannel[];
 
 // ---------- Events (main -> renderer) ----------
@@ -82,6 +115,8 @@ export interface PaBridge {
     upsertProfile: Call<'harness:profile:upsert'>;
     probeChannel: Call<'harness:channel:probe'>;
   };
+  /** M4: token -> keychain / clipboard. Only token ids go in; masked metadata comes out. */
+  keys: { list: Call0<'keys:list'>; store: Call<'keys:store'>; copy: Call<'keys:copy'>; remove: Call<'keys:delete'> };
   onSessionChanged(listener: (payload: IpcEventMap['session:changed']) => void): () => void;
 }
 
@@ -92,4 +127,5 @@ export const BRIDGE_CHANNELS = {
   'harness.rollback': 'harness:rollback', 'harness.history': 'harness:history', 'harness.rollbackPreview': 'harness:rollback:preview',
   'harness.keyringStatus': 'harness:keyring:status', 'harness.listProfiles': 'harness:profile:list',
   'harness.upsertProfile': 'harness:profile:upsert', 'harness.probeChannel': 'harness:channel:probe',
+  'keys.list': 'keys:list', 'keys.store': 'keys:store', 'keys.copy': 'keys:copy', 'keys.remove': 'keys:delete',
 } as const satisfies Record<string, InvokeChannel>;

@@ -71,6 +71,7 @@ describe.skipIf(!live)('live: main proxy + login A against local new-api', () =>
     const full = ((await raw.json()) as { data: { key: string } }).data.key;
     expect(full.length).toBeGreaterThan(20);
     if (process.env.PAC_LIVE_KEY_OUT) writeFileSync(process.env.PAC_LIVE_KEY_OUT, full, { mode: 0o600 });
+    if (process.env.PAC_LIVE_TOKEN_ID_OUT) writeFileSync(process.env.PAC_LIVE_TOKEN_ID_OUT, String(item.id));
     for (const b of bodies) expect(b.includes(full)).toBe(false);
   });
 

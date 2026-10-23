@@ -8,7 +8,8 @@ import type { ServerSession } from './proxy/server-session';
  * access token or the full API key: localStorage/sessionStorage/document.cookie/DOM and every proxied response body.
  * Inputs (never logged): PA_SMOKE_USER, PA_SMOKE_PASS_FILE, PA_SMOKE_SECRET_FILE (full test key to look for).
  */
-export function runLoginSmoke(w: BrowserWindow, srv: ServerSession, finish: (r: unknown, code: number) => void) {
+export type SmokeExtra = (js: <T>(code: string) => Promise<T>, secret: string) => Promise<{ result: unknown; ok: boolean; haystack: string }>;
+export function runLoginSmoke(w: BrowserWindow, srv: ServerSession, finish: (r: unknown, code: number) => void, extra?: SmokeExtra) {
   const user = process.env.PA_SMOKE_USER ?? '';
   const pass = readFileSync(process.env.PA_SMOKE_PASS_FILE ?? '', 'utf8').trim();
   const secrets = new Set<string>();
@@ -67,12 +68,19 @@ export function runLoginSmoke(w: BrowserWindow, srv: ServerSession, finish: (r: 
           tokens: await tokens.text(),
         };
       })()`);
+      const testKey = process.env.PA_SMOKE_SECRET_FILE ? readFileSync(process.env.PA_SMOKE_SECRET_FILE, 'utf8').trim() : '';
+      const ex = extra ? await extra(js, testKey) : null;
+      if (ex) {
+        // Re-read renderer-visible state after the M4 actions (IPC results + DOM + storage).
+        const after = await js<string>(`document.documentElement.outerHTML + JSON.stringify(Object.entries(localStorage)) + JSON.stringify(Object.entries(sessionStorage)) + document.cookie`);
+        probe.dom = String(probe.dom) + after;
+      }
       if (process.env.PA_SMOKE_SCREENSHOT) writeFileSync(process.env.PA_SMOKE_SCREENSHOT, (await w.webContents.capturePage()).toPNG());
       const cookieValues = srv.jar.all().map((c) => c.value).filter((v) => v.length >= 8);
       cookieValues.forEach((v) => secrets.add(v));
       const haystacks: Record<string, string> = {
         cookie: String(probe.cookie), localStorage: String(probe.local), sessionStorage: String(probe.session),
-        dom: String(probe.dom), tokensResponse: String(probe.tokens), proxiedBodies: bodies.join('\n'),
+        dom: String(probe.dom), tokensResponse: String(probe.tokens), proxiedBodies: bodies.join('\n'), ...(ex ? { ipcResponses: ex.haystack } : {}),
       };
       const leaks = Object.entries(haystacks).filter(([, h]) => [...secrets].some((s) => s && h.includes(s))).map(([k]) => k);
       const r = {
@@ -80,11 +88,12 @@ export function runLoginSmoke(w: BrowserWindow, srv: ServerSession, finish: (r: 
         mainJarCookies: srv.jar.all().map((c) => `${c.name}@${c.path}`), accessTokensIssued: issued,
         responsesAudited: bodies.length, setCookieLeak: bodies.includes('SET-COOKIE-LEAK'),
         maskedKeyShown: bodies.some((b) => b.includes('**********')) && String(probe.dom).includes('****'), leaks,
+        ...(ex ? { m4: ex.result } : {}),
         serverCheck: srv.serverCheck && { verdict: srv.serverCheck.verdict, version: srv.serverCheck.serverVersion, allowLogin: srv.serverCheck.allowLogin },
       };
       clearTimeout(timer);
       const ok = loggedIn && probe.selfStatus === 401 && probe.cookie === '' && !probe.selfSetCookie && !r.setCookieLeak
-        && leaks.length === 0 && r.mainJarCookies.length > 0 && r.maskedKeyShown && r.accessTokensIssued > 0;
+        && leaks.length === 0 && r.mainJarCookies.length > 0 && r.maskedKeyShown && r.accessTokensIssued > 0 && (!ex || ex.ok);
       finish(r, ok ? 0 : 1);
     } catch (e) { clearTimeout(timer); finish({ ok: false, reason: String(e) }, 1); }
   });
