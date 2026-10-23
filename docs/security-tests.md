@@ -38,8 +38,16 @@ Guarantees:
    `data:image` payload would break span recognition and either corrupt the image or let a heuristic decision differ):
    a single line may grow to 32 MiB (= `LIMITS.responseBody`, the cap for buffered bodies); beyond that the line is
    dropped and the stream ends with `event: error` / `SSE_LINE_TOO_LARGE`. `data:image` spans are found with a linear
-   scan (no backtracking regex), so multi-MB images pass byte-identical. Raw `b64_json` (no `data:image` prefix) is
-   ordinary text and gets over-masked (display corruption only). Decision: the earlier pass-through was not
+   scan (no backtracking regex), so multi-MB images pass byte-identical.
+   **`b64_json` exception (Iris decision; no generic base64 exception).** In a JSON body, or the JSON of an SSE
+   `data:` line, a string under the exact key `b64_json` of an object that is an element of the **top-level** `data`
+   array (`data[i].b64_json`, the image-generation response shape) is a confirmed image payload when it is valid
+   base64 (alphabet, length % 4 == 0, <= 2 trailing `=`, >= 64 chars) and decodes to a PNG/JPEG/GIF/WebP header (SVG
+   not accepted). Same rules as a `data:image` payload. Decided: top-level `data[i]` only, not any depth (other
+   depths, other field names incl. `b64`/`image`/`b64_JSON`, `data` as an object, free text, invalid base64 are plain
+   text). Known values are exact-replaced first; a payload containing one is not exempt. SSE lines are not
+   re-serialised: only the exact quoted value is exempted, so lines stay byte-identical (a value written with JSON
+   escapes such as `\/` is not matched and falls back to plain text). Decision: the earlier pass-through was not
    intentional-by-design (model output can echo prompts and upstream errors), so it was fixed.
 4. **Paths are decided on their decoded form.** The vendored frontend puts `encodeURIComponent()` values in path
    segments (session ids, plugin keys/versions, task/container ids, node names), so `%` cannot be refused outright.
@@ -76,7 +84,9 @@ Read-only displays (passkey public keys, Gemini thought signatures) are not save
 - **Known values come only from SECRET_FIELDS.** A key under a field name not in `SECRET_FIELDS` (e.g. a custom
   `upstream_cred`), or one that only appears in free text, is not collected as a known value; it is masked only if the
   heuristic catches it (so not inside a header-valid `data:image` payload).
-- **A known key inside a data:image payload corrupts that image**: after exact replacement the payload is no longer
+- **A malicious upstream can also smuggle unknown keys inside a header-valid `data[i].b64_json`** (same as
+  `data:image`; only known values are guaranteed masked there).
+- **A known key inside a data:image / b64_json payload corrupts that image** (accepted): after exact replacement the payload is no longer
   valid base64, so the rest of the span is treated as plain text and over-masked.
 - **Unprefixed keys shorter than 32 characters** are not detected (scan-bundle) or masked (sanitize `looksLikeBareKey`):
   below that length the random-vs-identifier heuristic produces too many false positives. `sk-` keys are covered from
