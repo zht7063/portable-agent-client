@@ -142,6 +142,7 @@ app.whenReady().then(async () => {
     fetch: (url, init) => globalThis.fetch(url, init),
     file: join(app.getPath('userData'), 'server-session.bin'),
     cipher,
+    onCheck: (c) => reportServerCheck(c),
   });
   serverSession = srv;
   ses.protocol.handle(SCHEME, (req) => handleAppRequest({ url: req.url, method: req.method }, RENDERER_ROOT, SCHEME, undefined,
@@ -174,7 +175,7 @@ app.whenReady().then(async () => {
     setConfig: async (patch) => {
       const c = await host.set(patch);
       await srv.setServer(c.serverUrl);
-      void srv.runCheck().then(reportServerCheck);
+      void srv.runCheck();
       return c;
     },
     confirmServerChange: async (nextUrl, currentUrl) => {
@@ -201,14 +202,19 @@ app.whenReady().then(async () => {
   }
   // M3 §4: public /api/status check before any login; result cached in main (login gated in the proxy).
   await srv.setServer(host.config().serverUrl);
-  const check = await srv.runCheck();
+  // Reported via onCheck (also for background retries while unreachable).
+  await srv.runCheck();
   // Handlers are registered before the renderer loads, so its first invoke never races.
   win = createWindow();
-  reportServerCheck(check);
 });
 
 /** Shows compatibility / Turnstile / non-HTTPS findings once (warning only for HTTP; blocking states also gate login). */
+let lastReported = '';
 function reportServerCheck(c: ServerCheck | null) {
+  // Background retries while unreachable report the same finding again: show each distinct finding once.
+  const k = c ? `${c.verdict}|${c.messages.join('|')}` : '';
+  if (k === lastReported) return;
+  lastReported = k;
   if (!c || !c.messages.length) return;
   console.log(`[pac] server check: ${c.verdict} version=${c.serverVersion ?? '-'} allowLogin=${c.allowLogin}`);
   if (process.env.PA_SMOKE === '1') return;

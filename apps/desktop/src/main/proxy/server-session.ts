@@ -17,6 +17,10 @@ export interface ServerSessionOptions {
   /** Encrypted persistence file; null = memory only. */
   file: string | null;
   cipher: Cipher | null;
+  /** Called with every completed check (startup, retries, pre-login re-checks). */
+  onCheck?(c: ServerCheck): void;
+  /** Retry backoff for an unreachable server (ms): base doubling up to max. Default 2 s .. 60 s. */
+  retry?: { baseMs: number; maxMs: number };
 }
 
 export class ServerSession {
@@ -24,11 +28,16 @@ export class ServerSession {
   jar = new CookieJar();
   private origin: string | null = null;
   private check: ServerCheck | null = null;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private retryDelay = 0;
+  private inflight: Promise<ServerCheck | null> | null = null;
   readonly proxy: ServerProxy;
 
   constructor(private readonly o: ServerSessionOptions) {
     this.proxy = new ServerProxy({
-      getOrigin: () => this.origin, getCheck: () => this.check, getJar: () => this.jar, vault: this.vault, fetch: o.fetch,
+      getOrigin: () => this.origin, getCheck: () => this.check,
+      // Aegis #3: a login attempt while unreachable / unchecked re-checks first (no stale block after the server is back).
+      recheck: () => this.runCheck(), getJar: () => this.jar, vault: this.vault, fetch: o.fetch,
     });
   }
 
@@ -41,6 +50,8 @@ export class ServerSession {
     if (origin === this.origin) return;
     this.origin = origin;
     this.check = null;
+    this.cancelRetry();
+    this.retryDelay = 0;
     this.vault.clear();
     const saved = origin ? await this.load(origin) : [];
     this.jar = new CookieJar((all) => void this.persist(all), saved);
@@ -50,11 +61,31 @@ export class ServerSession {
   /** Public /api/status check (no credentials). Cached until the next call / server change. */
   async runCheck(): Promise<ServerCheck | null> {
     if (!this.origin) return null;
+    if (this.inflight) return this.inflight;
     const origin = this.origin;
-    const c = await checkServer(this.o.compat, origin, this.o.fetch);
-    if (this.origin === origin) this.check = c;
-    return c;
+    this.inflight = (async () => {
+      const c = await checkServer(this.o.compat, origin, this.o.fetch);
+      if (this.origin !== origin) return c;
+      this.check = c;
+      this.cancelRetry();
+      if (c.verdict === 'unreachable') this.scheduleRetry(); else this.retryDelay = 0;
+      this.o.onCheck?.(c);
+      return c;
+    })().finally(() => { this.inflight = null; });
+    return this.inflight;
   }
+
+  /** Aegis #3: unreachable at startup -> retry with exponential backoff until reachable or the server changes. */
+  private scheduleRetry(): void {
+    const { baseMs, maxMs } = this.o.retry ?? { baseMs: 2000, maxMs: 60000 };
+    this.retryDelay = this.retryDelay ? Math.min(this.retryDelay * 2, maxMs) : baseMs;
+    this.retryTimer = setTimeout(() => { this.retryTimer = null; void this.runCheck(); }, this.retryDelay);
+    (this.retryTimer as { unref?: () => void }).unref?.();
+  }
+  private cancelRetry(): void { if (this.retryTimer) clearTimeout(this.retryTimer); this.retryTimer = null; }
+  /** Stops background retries (app quit / tests). */
+  dispose(): void { this.cancelRetry(); }
+  get nextRetryMs(): number | null { return this.retryTimer ? this.retryDelay : null; }
 
   handle(req: ProxyRequest): Promise<Response> { return this.proxy.handle(req); }
 

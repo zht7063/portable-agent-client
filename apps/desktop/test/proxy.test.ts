@@ -283,3 +283,56 @@ describe('Aegis #2: runtime classify == scripts/compat-check.mjs serverCompat', 
     }
   });
 });
+
+describe('Aegis #3/#4: unreachable retry, pre-login re-check, trailing slashes', () => {
+  const C: CompatRange = { tag: 'v1.0.0-rc.46', minServer: 'v1.0.0-rc.46', maxServerTested: null, policy: 'same-minor-line' };
+  it('retries with backoff while unreachable, and a login attempt re-checks first', async () => {
+    const { ServerSession } = await import('../src/main/proxy/server-session');
+    let up = false; const seen: string[] = [];
+    const fetch = vi.fn(async (url: string) => {
+      if (!up) throw new Error('ECONNREFUSED');
+      if (url.endsWith('/api/status')) return Response.json({ success: true, data: { version: 'v1.0.0-rc.46' } });
+      return Response.json({ success: true, data: {} });
+    });
+    const s = new ServerSession({ compat: C, fetch, file: null, cipher: null, retry: { baseMs: 10, maxMs: 40 }, onCheck: (c) => seen.push(c.verdict) });
+    await s.setServer('https://na.example.test');
+    expect((await s.runCheck())?.verdict).toBe('unreachable');
+    expect(s.nextRetryMs).toBe(10);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(s.nextRetryMs).toBe(20); // doubled
+    await new Promise((r) => setTimeout(r, 30));
+    expect(s.nextRetryMs).toBe(40);
+    up = true;
+    // Login before the next retry fires: proxy re-checks, then forwards.
+    const res = await s.handle({ method: 'POST', url: 'pac://app/api/user/login', headers: new Headers({ 'content-type': 'application/json' }), body: new TextEncoder().encode('{}').buffer as ArrayBuffer });
+    expect(res.status).toBe(200);
+    expect(s.serverCheck?.verdict).toBe('ok');
+    expect(s.nextRetryMs).toBeNull();
+    expect(seen.filter((v) => v === 'unreachable').length).toBeGreaterThanOrEqual(3);
+    s.dispose();
+  });
+  it('server change cancels retries', async () => {
+    const { ServerSession } = await import('../src/main/proxy/server-session');
+    const s = new ServerSession({ compat: C, fetch: async () => { throw new Error('down'); }, file: null, cipher: null, retry: { baseMs: 1000, maxMs: 1000 } });
+    await s.setServer('https://a.example.test'); await s.runCheck();
+    expect(s.nextRetryMs).toBe(1000);
+    await s.setServer('https://b.example.test');
+    expect(s.nextRetryMs).toBeNull();
+    s.dispose();
+  });
+  it('login paths with trailing slashes are gated like the bare path', async () => {
+    const { calls, req } = setup({ check: evaluateStatus(C, ORIGIN, { success: true, data: { version: 'v1.0.0-rc.40' } }) });
+    for (const p of ['/api/user/login/', '/api/user/login//', '/api/user/login/2fa/', '/api/user/register/', '/api/user/auth/refresh/']) {
+      const r = await req('POST', p, { 'content-type': 'application/json' }, '{}');
+      expect(r.status, p).toBe(403);
+      expect((await r.json()).code).toBe('LOGIN_BLOCKED');
+    }
+    expect(calls).toHaveLength(0);
+  });
+  it('logout with a trailing slash clears the main session', async () => {
+    const { jar, vault, req } = setup();
+    vault.issue('real'); jar.store(['new_api_refresh=abc; Path=/api/user/auth; HttpOnly'], '/api/user/auth/refresh');
+    await req('POST', '/api/user/auth/logout/');
+    expect(vault.size).toBe(0); expect(jar.all()).toHaveLength(0);
+  });
+});

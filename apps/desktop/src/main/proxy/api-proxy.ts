@@ -23,6 +23,8 @@ export interface ProxyRequest { method: string; url: string; headers: Headers; b
 export interface ServerProxyOptions {
   getOrigin(): string | null;
   getCheck(): ServerCheck | null;
+  /** Re-run the /api/status check (used before login when the cached result is missing or unreachable). */
+  recheck?(): Promise<ServerCheck | null>;
   getJar(): CookieJar;
   vault: AccessTokenVault;
   fetch: FetchLike;
@@ -53,8 +55,11 @@ export class ServerProxy {
     const target = new URL(path + u.search, origin);
     if (target.origin !== origin) return fail(400, 'BAD_REQUEST', 'origin mismatch'); // defence in depth
 
-    if (LOGIN_PATHS.has(path) && method === 'POST') {
-      const c = this.o.getCheck();
+    // Aegis #4: match login/logout paths with trailing slashes stripped (gin redirects/accepts `/login/`).
+    const bare = path.length > 1 ? path.replace(/\/+$/, '') : path;
+    if (LOGIN_PATHS.has(bare) && method === 'POST') {
+      let c = this.o.getCheck();
+      if ((!c || c.verdict === 'unreachable') && this.o.recheck) c = await this.o.recheck();
       if (!c || !c.allowLogin) {
         return fail(403, 'LOGIN_BLOCKED', c ? c.messages.filter((m) => !m.includes('HTTPS')).join(' ') || '登录已被客户端阻止。' : '尚未完成服务器兼容性检查，请稍后重试。');
       }
@@ -85,7 +90,7 @@ export class ServerProxy {
     const setCookies = typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : [];
     if (setCookies.length) this.o.getJar().store(setCookies, path);
 
-    if (LOGOUT_PATHS.has(path) && res.ok) { this.o.vault.clear(); this.o.getJar().clear(); this.o.onSessionCleared?.(); }
+    if (LOGOUT_PATHS.has(bare) && res.ok) { this.o.vault.clear(); this.o.getJar().clear(); this.o.onSessionCleared?.(); }
 
     const outHeaders = filterResponseHeaders(res.headers);
     if (res.status >= 300 && res.status < 400) {

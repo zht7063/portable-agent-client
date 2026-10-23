@@ -24,7 +24,7 @@ Authorization, redirects not followed, 10 s timeout — and caches the result in
 | other major.minor line (`same-minor-line`), or ≠ pin (`exact`) | `incompatible` | error dialog; login blocked (needs a client with a new pin) |
 | version older than `minServer` | `too-old` | error dialog; proxy refuses `/api/user/login`, `/login/2fa`, `/login/verify`, `/register`, `/auth/refresh` (403 `LOGIN_BLOCKED` with the reason, shown by the upstream UI as a toast) |
 | not JSON / no `success` / unparseable `data.version` / non-200 | `not-new-api` | same as `too-old` |
-| network error | `unreachable` | same (re-checked on server change / restart) |
+| network error | `unreachable` | same; main retries in the background with exponential backoff (2 s doubling to 60 s, cancelled on server change) and re-checks immediately before any login request |
 | `turnstile_check: true` | — | login blocked with a message (the Turnstile widget cannot load under the renderer CSP) |
 | OAuth / OIDC / WeChat / Telegram / passkey enabled | — | message; flags are rewritten to `false` in the `/api/status` the renderer sees so upstream hides those buttons |
 | `http://` server | — | warning only (plan §9.6 undecided; default = warn) |
