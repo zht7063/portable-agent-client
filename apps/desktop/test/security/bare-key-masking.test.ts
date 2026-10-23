@@ -39,13 +39,14 @@ describe('bare key masking: ordinary IDs are not masked', () => {
     expect(looksLikeBareKey(id)).toBe(false);
     expect(maskString(`request ${id} failed`)).toBe(`request ${id} failed`);
   });
-  it('id fields keep even random-looking values (request IDs), but sk- keys are still masked there', () => {
-    const v = new AccessTokenVault();
-    const out = sanitizeJson({ id: KEY48, request_id: KEY48, requestId: KEY48, trace_id: `sk-${KEY48}` }, v) as Record<string, string>;
-    expect(out.id).toBe(KEY48);
-    expect(out.request_id).toBe(KEY48);
-    expect(out.requestId).toBe(KEY48);
-    expect(out.trace_id).not.toContain(KEY48);
+  it('high-entropy values are masked in id-like fields too (incl. nested objects/arrays)', () => {
+    const out = JSON.stringify(sanitizeJson({ id: KEY48, request_id: KEY48, user_id: KEY_DASH, nested: { fooId: KEY48, list: [{ requestId: KEY48 }] }, trace_id: `sk-${KEY48}` }, new AccessTokenVault()));
+    expect(out).not.toContain(KEY48);
+    expect(out).not.toContain(KEY_DASH);
+  });
+  it('numeric / hex / UUID IDs in id-like fields stay intact', () => {
+    const ids = { id: 1234567, request_id: '20261024030812345678901234567890', user_id: 'a3f9'.repeat(12), nested: { fooId: '123e4567-e89b-12d3-a456-426614174000', list: [{ requestId: 'E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855' }] } };
+    expect(sanitizeJson(ids, new AccessTokenVault())).toEqual(ids);
   });
   it('option key names are not masked', () => {
     const out = sanitizeJson({ data: [{ key: 'SMTPServer', value: 'smtp.example.com' }] }, new AccessTokenVault());

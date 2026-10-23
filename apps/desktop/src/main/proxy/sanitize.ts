@@ -66,8 +66,7 @@ export function looksLikeBareKey(s: string): boolean {
   for (let i = 1; i < s.length; i++) if (cls(s[i]!) !== cls(s[i - 1]!)) switches++;
   return switches >= 6;
 }
-/** Field names that hold ordinary identifiers: bare-run heuristic is not applied to them (sk-/JWT still are). */
-const ID_FIELD = /^(?:id|uuid|request_id|requestid|trace_id|traceid|.+_id|.+Id)$/;
+
 /** M7: `Bearer <token>` anywhere in free text (upstream error messages echoing the request). */
 const BEARER = /\b(bearer\s+)([A-Za-z0-9._~+/=-]{12,})/gi;
 const isRawKey = (x: string) => /^sk-[A-Za-z0-9_-]{16,}$/.test(x) || looksLikeBareKey(x); // new-api keys: 48 alnum, stored without sk-
@@ -112,7 +111,7 @@ export function sanitizeJson(v: unknown, vault: AccessTokenVault, stats: Sanitiz
       if (field !== null && SECRET_FIELDS.has(field) && x.length > 0 && !isMasked(x)) {
         if (!AMBIGUOUS.has(field) || isRawKey(x) || /^sk-/.test(x)) { stats.masked++; return maskSecret(x); }
       }
-      const m = maskString(x, !(field !== null && ID_FIELD.test(field)));
+      const m = maskString(x); // no field-name exemption: real IDs survive via ID_LIKE
       if (m !== x) stats.masked++;
       return m;
     }
@@ -126,7 +125,7 @@ export function sanitizeJson(v: unknown, vault: AccessTokenVault, stats: Sanitiz
       const bundle = isAuthBundle(o);
       for (const [k, val] of Object.entries(o)) {
         if (bundle && k === 'access_token') { out[k] = vault.issue(val as string); stats.handles++; continue; }
-        out[k] = walk(val, /Id$/.test(k) ? k : k.toLowerCase());
+        out[k] = walk(val, k.toLowerCase());
       }
       return out;
     }
