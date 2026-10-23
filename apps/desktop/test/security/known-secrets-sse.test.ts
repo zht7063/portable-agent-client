@@ -3,7 +3,7 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { CookieJar } from '../../src/main/proxy/cookie-jar';
-import { AccessTokenVault, HANDLE_PREFIX, MIN_KNOWN, knownSet, maskString, replaceKnown, sanitizeJson, sseSanitizer, SSE_TOO_LARGE_FRAME, SSE_MAX_STREAM, isPemPublicKey } from '../../src/main/proxy/sanitize';
+import { AccessTokenVault, HANDLE_PREFIX, MIN_KNOWN, knownSet, maskString, replaceKnown, sanitizeJson, sseSanitizer, SSE_TOO_LARGE_FRAME, SSE_BUFFER_LIMIT_FRAME, SSE_MAX_BUFFERED, SseBudget, sseBudget, isPemPublicKey } from '../../src/main/proxy/sanitize';
 import { ServerProxy } from '../../src/main/proxy/api-proxy';
 import { evaluateStatus } from '../../src/main/proxy/server-status';
 
@@ -170,14 +170,58 @@ describe('3 SSE is sanitised line-wise across chunk boundaries', () => {
     const line = `data: {"data":[{"b64_json":"${bigImage(2)}"},{"b64_json":"${bigImage(1)}","url":"data:image/png;base64,${bigImage(1)}"}]}\n\ndata: [DONE]\n\n`;
     expect(await run(chunked(line, 7777))).toBe(line);
   });
-  it('global stream cap: total bytes beyond maxStream -> error frame', async () => {
-    const enc = new TextEncoder();
-    const rs = new ReadableStream<Uint8Array>({ start(c) { for (let i = 0; i < 100; i++) c.enqueue(enc.encode('data: {"delta":"hello"}\n\n')); c.close(); } });
-    const out = await new Response(rs.pipeThrough(sseSanitizer([], { maxStream: 1000 }))).text();
-    expect(out.endsWith(SSE_TOO_LARGE_FRAME)).toBe(true);
-    expect(out.length).toBeLessThanOrEqual(1000 + SSE_TOO_LARGE_FRAME.length);
+  it('default global buffer cap is 64 MiB and the shared counter is 0 at rest', () => {
+    expect(SSE_MAX_BUFFERED).toBe(64 << 20); expect(sseBudget.limit).toBe(64 << 20); expect(sseBudget.held).toBe(0);
   });
-  it('default global cap is 64 MiB', () => { expect(SSE_MAX_STREAM).toBe(64 << 20); });
+  it('concurrent streams: the one overflowing the global budget errors, the others continue', async () => {
+    const enc = new TextEncoder(); const budget = new SseBudget(10_000);
+    const mk = () => { let c!: ReadableStreamDefaultController<Uint8Array>; const rs = new ReadableStream<Uint8Array>({ start(x) { c = x; } }); return { c, out: new Response(rs.pipeThrough(sseSanitizer([], {}, budget))).text() }; };
+    const a = mk(), b = mk(), z = mk();
+    a.c.enqueue(enc.encode('data: {"x":"' + 'a'.repeat(4000)));   // A holds ~4 KB partial
+    b.c.enqueue(enc.encode('data: {"x":"' + 'b'.repeat(4000)));   // B holds ~4 KB partial
+    await new Promise((r) => setTimeout(r, 0));
+    expect(budget.held).toBeGreaterThan(8000);
+    z.c.enqueue(enc.encode('data: {"x":"' + 'c'.repeat(4000)));   // Z would exceed 10 KB -> errors
+    await new Promise((r) => setTimeout(r, 0));
+    expect(await z.out).toBe(SSE_BUFFER_LIMIT_FRAME);
+    expect(budget.held).toBeLessThanOrEqual(10_000);
+    a.c.enqueue(enc.encode('"}\n\n')); b.c.enqueue(enc.encode('"}\n\n')); a.c.close(); b.c.close();
+    expect(await a.out).toBe('data: {"x":"' + 'a'.repeat(4000) + '"}\n\n');
+    expect(await b.out).toBe('data: {"x":"' + 'b'.repeat(4000) + '"}\n\n');
+    expect(budget.held).toBe(0);
+  });
+  it('long stream with cumulative bytes >> cap but small buffered lines passes (no per-stream total cap)', async () => {
+    const enc = new TextEncoder(); const budget = new SseBudget(1000);
+    const line = 'data: {"delta":"' + 'h'.repeat(100) + '"}\n\n';
+    const rs = new ReadableStream<Uint8Array>({ start(c) { for (let i = 0; i < 2000; i++) { c.enqueue(enc.encode(line.slice(0, 50))); c.enqueue(enc.encode(line.slice(50))); } c.close(); } });
+    const out = await new Response(rs.pipeThrough(sseSanitizer([], {}, budget))).text();
+    expect(out).toBe(line.repeat(2000)); expect(out.length).toBeGreaterThan(200_000); expect(budget.held).toBe(0);
+  });
+  it('counter returns to 0 after consumer cancel and upstream error', async () => {
+    const enc = new TextEncoder(); const budget = new SseBudget(1 << 20);
+    // consumer cancel
+    let c1!: ReadableStreamDefaultController<Uint8Array>;
+    const r1 = new ReadableStream<Uint8Array>({ start(x) { c1 = x; } }).pipeThrough(sseSanitizer([], {}, budget)).getReader();
+    void r1.read().catch(() => undefined);   // pull so the transform runs
+    c1.enqueue(enc.encode('data: {"x":"' + 'q'.repeat(5000)));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(budget.held).toBeGreaterThan(5000);
+    await r1.cancel(); await new Promise((r) => setTimeout(r, 0));
+    expect(budget.held).toBe(0);
+    // upstream error (abort)
+    let c2!: ReadableStreamDefaultController<Uint8Array>;
+    const r2 = new Response(new ReadableStream<Uint8Array>({ start(x) { c2 = x; } }).pipeThrough(sseSanitizer([], {}, budget))).text();
+    c2.enqueue(enc.encode('data: {"x":"' + 'w'.repeat(5000)));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(budget.held).toBeGreaterThan(5000);
+    c2.error(new Error('upstream reset'));
+    await expect(r2).rejects.toThrow();
+    expect(budget.held).toBe(0);
+    // line-too-large error path
+    const r3 = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(enc.encode('data: {"x":"' + 'e'.repeat(3000))); c.close(); } });
+    expect(await new Response(r3.pipeThrough(sseSanitizer([], { maxLine: 1000, maxText: 1000 }, budget))).text()).toBe(SSE_TOO_LARGE_FRAME);
+    expect(budget.held).toBe(0);
+  });
   it('known value (not key-shaped) masked in SSE', async () => {
     expect(await run(['data: tok=lowercase-known-', 'secret-value\n'], ['lowercase-known-secret-value'])).not.toContain('lowercase-known-secret-value');
   });

@@ -319,9 +319,19 @@ function sseLine(t: string, known: readonly string[]): string {
 export const SSE_MAX_LINE = 32 << 20;        // a line with a structurally verified image payload
 export const SSE_MAX_TEXT_LINE = 1 << 20;    // text on any line (outside verified image spans)
 export const SSE_IMAGE_WINDOW = 8 << 10;     // the first image span must start within this many chars of the line
-export const SSE_MAX_STREAM = 64 << 20;      // total bytes through one stream
+export const SSE_MAX_BUFFERED = 64 << 20;    // global: buffered (unflushed) chars across ALL live SSE streams
 export const SSE_TOO_LARGE_FRAME = '\n\nevent: error\ndata: {"success":false,"code":"SSE_LINE_TOO_LARGE"}\n\n';
-export interface SseLimits { maxLine: number; maxText: number; window: number; maxStream: number }
+export const SSE_BUFFER_LIMIT_FRAME = '\n\nevent: error\ndata: {"success":false,"code":"SSE_BUFFER_LIMIT"}\n\n';
+export interface SseLimits { maxLine: number; maxText: number; window: number }
+/** Process-wide accounting of bytes held in SSE partial-line buffers (UTF-16 code units; 1 per byte for ASCII/base64). */
+export class SseBudget {
+  held = 0;
+  constructor(readonly limit: number = SSE_MAX_BUFFERED) {}
+  /** Reserve n; false (nothing reserved) if the global total would exceed the limit. */
+  reserve(n: number): boolean { if (this.held + n > this.limit) return false; this.held += n; return true; }
+  release(n: number): void { this.held -= n; if (this.held < 0) this.held = 0; }
+}
+export const sseBudget = new SseBudget();
 const B64C = (c: number) => (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 43 || c === 47 || c === 61;
 
 /**
@@ -369,33 +379,41 @@ class SseLineMeter {
   private open(svg: boolean) { this.inSpan = true; this.span = 0; this.spanHead = ''; this.svg = svg; }
 }
 
-export function sseSanitizer(known: readonly string[], limits: Partial<SseLimits> = {}): TransformStream<Uint8Array, Uint8Array> {
-  const l: SseLimits = { maxLine: SSE_MAX_LINE, maxText: SSE_MAX_TEXT_LINE, window: SSE_IMAGE_WINDOW, maxStream: SSE_MAX_STREAM, ...limits };
+export function sseSanitizer(known: readonly string[], limits: Partial<SseLimits> = {}, budget: SseBudget = sseBudget): TransformStream<Uint8Array, Uint8Array> {
+  const l: SseLimits = { maxLine: SSE_MAX_LINE, maxText: SSE_MAX_TEXT_LINE, window: SSE_IMAGE_WINDOW, ...limits };
   const dec = new TextDecoder(); const enc = new TextEncoder();
   const clean = (t: string) => sseLine(t, known);
-  let parts: string[] = []; let meter = new SseLineMeter(l); let total = 0; let dead = false;
-  const tooLarge = (ctl: TransformStreamDefaultController<Uint8Array>) => {
-    dead = true; parts = []; ctl.enqueue(enc.encode(SSE_TOO_LARGE_FRAME)); ctl.terminate();
+  let parts: string[] = []; let meter = new SseLineMeter(l); let held = 0; let dead = false;
+  const releaseAll = () => { budget.release(held); held = 0; parts = []; };
+  const fail = (ctl: TransformStreamDefaultController<Uint8Array>, frame: string) => {
+    dead = true; releaseAll(); ctl.enqueue(enc.encode(frame)); ctl.terminate();
   };
+  const tooLarge = (ctl: TransformStreamDefaultController<Uint8Array>) => fail(ctl, SSE_TOO_LARGE_FRAME);
   return new TransformStream({
     transform(chunk, ctl) {
       if (dead) return;
-      total += chunk.byteLength;
-      if (total > l.maxStream) { tooLarge(ctl); return; }
       const t = dec.decode(chunk, { stream: true });
       let out = '', from = 0;
       for (;;) {
         const nl = t.indexOf('\n', from);
         const piece = nl < 0 ? t.slice(from) : t.slice(from, nl);
         if (!meter.feed(piece)) { if (out) ctl.enqueue(enc.encode(out)); tooLarge(ctl); return; }
-        if (nl < 0) { if (piece) parts.push(piece); break; }
-        parts.push(piece); out += clean(parts.join('')) + '\n'; parts = []; meter = new SseLineMeter(l);
+        if (nl < 0) {
+          if (piece) {
+            if (!budget.reserve(piece.length)) { if (out) ctl.enqueue(enc.encode(out)); fail(ctl, SSE_BUFFER_LIMIT_FRAME); return; }
+            held += piece.length; parts.push(piece);
+          }
+          break;
+        }
+        parts.push(piece); out += clean(parts.join('')) + '\n'; releaseAll(); meter = new SseLineMeter(l);
         from = nl + 1;
       }
       if (out) ctl.enqueue(enc.encode(out));
     },
-    flush(ctl) { if (dead) return; const r = parts.join('') + dec.decode(); if (r) ctl.enqueue(enc.encode(clean(r))); },
-  });
+    flush(ctl) { if (dead) return; const r = parts.join('') + dec.decode(); releaseAll(); dead = true; if (r) ctl.enqueue(enc.encode(clean(r))); },
+    // Consumer cancel / upstream abort: release this stream's share of the global budget (no leaks).
+    cancel() { dead = true; releaseAll(); },
+  } as Transformer<Uint8Array, Uint8Array>);
 }
 
 /** Response headers the renderer may see; everything else (Set-Cookie, auth, server internals) is dropped. */
