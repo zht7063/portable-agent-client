@@ -50,14 +50,24 @@ const SECRET_SHAPE = [
 // Aegis M7: no upper bound -- a key glued with - or _ into a longer run (`uuid-K`, `K_<100 chars>`) is found by
 // checking the whole run (if <= 128) and then each [-_]-separated segment (see maskRun).
 /**
- * Aegis M7: provider object ids (OpenAI / Anthropic style) are not secrets and their random tails look exactly like
- * keys. A run that is EXACTLY <prefix><8-64 alnum> is not masked by the heuristic (known values are still
- * exact-replaced before this). Anything more (another -/_ segment, longer tail) gets the normal checks.
- * List: OpenAI chatcmpl-/cmpl- (completions), resp_ (Responses), msg_ (Assistants messages / Anthropic messages),
- * call_ (tool calls), run_/step_/asst_/thread_ (Assistants), file- (Files), batch_ (Batch), ftjob- (fine-tuning),
- * Anthropic toolu_ (tool use ids), req_ (request ids), msgbatch_ (message batches).
+ * Aegis M7: provider object ids are not secrets, but their random tails look like keys. A run is exempt from the
+ * heuristic only if it matches one of these per-prefix shapes EXACTLY (fixed tail length/charset taken from real
+ * ids), so `<prefix><48-char key>` is never exempt. Known values are exact-replaced before this anyway.
+ * Shapes (see docs/security-tests.md "ID prefix table" for sources); prefixes without a pinned shape were removed.
  */
-const ID_PREFIX_RUN = /^(?:chatcmpl-|cmpl-|resp_|msg_|call_|run_|step_|asst_|thread_|file-|batch_|ftjob-|toolu_|req_|msgbatch_)[A-Za-z0-9]{8,64}$/;
+export const ID_PREFIX_SHAPES: readonly { prefix: string; re: RegExp; example: string }[] = [
+  { prefix: 'chatcmpl-', re: /^chatcmpl-[A-Za-z0-9]{29}$/, example: 'chatcmpl-B9MBs8CjcvOU2jLn4n570S5qMJKcT' },
+  { prefix: 'resp_', re: /^resp_[0-9a-f]{48}$/, example: 'resp_67ccd2bed1ec8190b14f964abc0542670bb6a6b452d3795b' },
+  { prefix: 'msg_', re: /^msg_(?:01[A-Za-z0-9]{22}|[A-Za-z0-9]{24})$/, example: 'msg_013Zva2CMHLNnXjNJJKqJ2EF' },
+  { prefix: 'toolu_', re: /^toolu_01[A-Za-z0-9]{21,24}$/, example: 'toolu_01A09q90qw90lq917835lq9' },
+  { prefix: 'call_', re: /^call_[A-Za-z0-9]{24}$/, example: 'call_FthC9qRpsL5kBpwwyw6c7j4k' },
+  { prefix: 'asst_', re: /^asst_[A-Za-z0-9]{17,24}$/, example: 'asst_58fDQ7d8AJHDJy8dv' },
+  { prefix: 'thread_', re: /^thread_[A-Za-z0-9]{24}$/, example: 'thread_HjA4mLzN0Gc8sYrd2kVuTq1E' },
+  { prefix: 'run_', re: /^run_[A-Za-z0-9]{24}$/, example: 'run_Xp2uH3kQ7mVb9LcR1nWs5TzA' },
+  { prefix: 'step_', re: /^step_[A-Za-z0-9]{24}$/, example: 'step_Q4wE8rT2yU6iO0pA3sD7fG1h' },
+  { prefix: 'file-', re: /^file-[A-Za-z0-9]{22,24}$/, example: 'file-6F2ksmvXxt4VdoqmHRw6kL' },
+];
+const isProviderId = (m: string) => ID_PREFIX_SHAPES.some((x) => m.startsWith(x.prefix) && x.re.test(m));
 /** Runs longer than this are masked entirely (no per-segment analysis of multi-MB blobs). */
 export const MAX_BARE_RUN = 1 << 20;
 const isRunChar = (c: number) => (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 45 || c === 95;
@@ -81,7 +91,7 @@ function maskBareRuns(s: string): string {
   return last === 0 ? s : out + s.slice(last);
 }
 function maskRun(m: string): string {
-  if (ID_PREFIX_RUN.test(m)) return m;
+  if (isProviderId(m)) return m;
   if (m.length <= 128 && looksLikeBareKey(m)) return maskSecret(m);
   if (!/[-_]/.test(m)) return m;
   return m.split(/([-_])/).map((seg) => (looksLikeBareKey(seg) ? maskSecret(seg) : seg)).join('');
@@ -102,6 +112,8 @@ function imageMagic(p: string, svg = true): boolean {
   if (b.length >= 12 && b.subarray(0, 4).toString('latin1') === 'RIFF') return b.subarray(8, 12).toString('latin1') === 'WEBP';
   return IMAGE_MAGIC.slice(0, 4).some((m) => m.every((x, i) => b[i] === x)) || (svg && (b[0] === 0x3c || /^\s*<(?:\?xml|svg)/.test(b.toString('latin1'))));
 }
+/** The data:image payload predicate (shared by maskString and the SSE promotion check). */
+export const isDataImagePayload = (p: string): boolean => validB64(p, MIN_B64_PAYLOAD) && imageMagic(p);
 const ID_LIKE = [
   /^[0-9a-f]+$/i,                                                          // hex digests / hex IDs (any case)
   /^[0-9a-f]{8}(?:-?[0-9a-f]{4}){3}-?[0-9a-f]{12}(?:[-_][0-9a-z]+)*$/,      // UUID-ish, lowercase only (uuid-K must not pass)
@@ -140,7 +152,7 @@ const isMasked = (s: string) => s.includes('****') || s.startsWith(HANDLE_PREFIX
 export function maskString(s: string, bare = true): string {
   let out = '', last = 0;
   for (const m of imageSpans(s)) {
-    if (!validB64(m.payload, MIN_B64_PAYLOAD) || !imageMagic(m.payload)) continue;
+    if (!isDataImagePayload(m.payload)) continue;
     // only the verified payload span gets the base64 treatment
     out += maskPlain(s.slice(last, m.start), bare) + maskPlain(m.payload, bare, BARE_RUN_B64_IMAGE);
     last = m.start + m.payload.length;

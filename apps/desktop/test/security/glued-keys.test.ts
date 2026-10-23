@@ -1,6 +1,6 @@
 // Aegis M7: keys glued with - / _ into longer runs, and false-positive probes for common ID shapes.
 import { describe, expect, it } from 'vitest';
-import { AccessTokenVault, MAX_BARE_RUN, knownSet, maskString, replaceKnown, sanitizeJson } from '../../src/main/proxy/sanitize';
+import { AccessTokenVault, ID_PREFIX_SHAPES, MAX_BARE_RUN, knownSet, maskString, replaceKnown, sanitizeJson } from '../../src/main/proxy/sanitize';
 
 const K = 'Zq7Rw2Lp9Xv4Tm8Nk3Hd6Jf1Bc5Gs0YeQa2Wu7Ir4Ot9Pl3S';
 let seed = 3;
@@ -38,34 +38,73 @@ describe('false-positive probes (pinned; ordinary IDs stay readable)', () => {
   ];
   it.each(unchanged)('%s unchanged', (_n, s) => { expect(maskString(s)).toBe(s); });
 
-  // Provider ids: allowlisted prefixes (ID_PREFIX_RUN) + 8-64 alnum tail are never masked by the heuristic.
+  // Provider ids: only exact per-prefix shapes (ID_PREFIX_SHAPES) are exempt from the heuristic.
   const probes: [string, string, boolean][] = [
-    ['chatcmpl- (29-char mixed tail: whole id 38 chars looks random)', 'chatcmpl-9xYzAbCdEf1234GhIjKl5678M', false],
+    ['chatcmpl- (29 base62)', 'chatcmpl-9xYzAbCdEf1234GhIjKl5678MnOpQ', false],
     ['resp_ (48 hex)', 'resp_67ccd2bed1ec8190b14f964abc0542670bb6a6b452d3795b', false],
-    ['msg_ (24 mixed)', 'msg_01XFDUDYJgAACzvnptvVoYEL', false],
+    ['msg_ (01 + 22)', 'msg_01XFDUDYJgAACzvnptvVoYEL', false],
     ['call_ (24 mixed)', 'call_Fq2kXz9LmN3pRtVw8YbC4dEh', false],
-    ['file- (24 mixed)', 'file-AbC123dEf456GhI789jKl0', false],
-    ['run_ (32 mixed tail)', 'run_Fq2kXz9LmN3pRtVw8YbC4dEhJ7sQ1uWa', false],
+    ['file- (22 mixed)', 'file-AbC123dEf456GhI789jK', false],
+    ['run_ (32 mixed tail: not a real run_ shape -> heuristic applies)', 'run_Fq2kXz9LmN3pRtVw8YbC4dEhJ7sQ1uWa', true],
   ];
   it.each(probes)('%s -> masked=%s', (_n, s, m) => { expect(maskString(s) !== s).toBe(m); });
 });
 
-describe('ID prefix allowlist does not hide keys', () => {
-  const prefixes = ['chatcmpl-', 'cmpl-', 'resp_', 'msg_', 'call_', 'run_', 'step_', 'asst_', 'thread_', 'file-', 'batch_', 'ftjob-', 'toolu_', 'req_', 'msgbatch_'];
-  it.each(prefixes)('%s<K> is left alone by the heuristic but a KNOWN K is still masked (JSON + text)', (p) => {
+// Deterministic PRNG so failures are reproducible.
+const rng = (seed: number) => () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x80000000; };
+const A62 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+const HEX = '0123456789abcdef';
+const pick = (r: () => number, a: string, n: number) => { let o = ''; for (let i = 0; i < n; i++) o += a[Math.floor(r() * a.length)]; return o; };
+/** A random 48-char base62 key with upper+lower+digit and many class switches (new-api token shape). */
+const key48 = (r: () => number) => { for (;;) { const k = pick(r, A62, 48); if (/[a-z]/.test(k) && /[A-Z]/.test(k) && /[0-9]/.test(k) && maskString(k) !== k) return k; } };
+
+describe('ID prefix allowlist: exact per-prefix shapes', () => {
+  const synth: Record<string, (r: () => number) => string> = {
+    'chatcmpl-': (r) => 'chatcmpl-' + pick(r, A62, 29),
+    'resp_': (r) => 'resp_' + pick(r, HEX, 48),
+    'msg_': (r) => (r() < 0.5 ? 'msg_01' + pick(r, A62, 22) : 'msg_' + pick(r, A62, 24)),
+    'toolu_': (r) => 'toolu_01' + pick(r, A62, 21 + Math.floor(r() * 4)),
+    'call_': (r) => 'call_' + pick(r, A62, 24),
+    'asst_': (r) => 'asst_' + pick(r, A62, 17 + Math.floor(r() * 8)),
+    'thread_': (r) => 'thread_' + pick(r, A62, 24),
+    'run_': (r) => 'run_' + pick(r, A62, 24),
+    'step_': (r) => 'step_' + pick(r, A62, 24),
+    'file-': (r) => 'file-' + pick(r, A62, 22 + Math.floor(r() * 3)),
+  };
+  it('table and synthetic generators cover the same prefixes', () => {
+    expect(ID_PREFIX_SHAPES.map((x) => x.prefix).sort()).toEqual(Object.keys(synth).sort());
+  });
+  it.each(ID_PREFIX_SHAPES.map((x) => [x.prefix, x.example] as const))('%s example %s matches its shape and is unchanged', (p, ex) => {
+    expect(ID_PREFIX_SHAPES.find((x) => x.prefix === p)!.re.test(ex)).toBe(true);
+    expect(maskString(ex)).toBe(ex);
+    expect(maskString(`id=${ex}, next`)).toBe(`id=${ex}, next`);
+  });
+  it.each(Object.keys(synth))('%s: 200 synthetic real-shape ids -> 0 masked', (p) => {
+    const r = rng(p.length * 7919); let masked = 0;
+    for (let i = 0; i < 200; i++) { const id = synth[p]!(r); if (maskString(id) !== id) masked++; }
+    expect(masked).toBe(0);
+  });
+  it.each(ID_PREFIX_SHAPES.map((x) => x.prefix))('%s + unknown 48-char key -> masked 15/15', (p) => {
+    const r = rng(p.charCodeAt(0) * 31 + p.length); let masked = 0;
+    for (let i = 0; i < 15; i++) {
+      const k = key48(r);
+      const outs = [maskString(`${p}${k}`), maskString(`error: ${p}${k} rejected`), JSON.stringify(sanitizeJson({ id: `${p}${k}` }, new AccessTokenVault()))];
+      if (outs.every((o) => !o.includes(k))) masked++;
+    }
+    expect(masked).toBe(15);
+  });
+  it.each(ID_PREFIX_SHAPES.map((x) => x.prefix))('%s + KNOWN key is exact-replaced (JSON + text)', (p) => {
     const s = `${p}${K}`;
-    expect(maskString(s)).toBe(s);
     const v = new AccessTokenVault(); v.issue(K);
     expect(JSON.stringify(sanitizeJson({ id: s, message: `failed ${s}` }, v))).not.toContain(K);
     expect(JSON.stringify(sanitizeJson({ id: s, api_key: K }, new AccessTokenVault()))).not.toContain(K);
     expect(maskString(replaceKnown(s, knownSet([K])))).not.toContain(K);
   });
-  it.each(prefixes)('%s<id>-<K> / %s<K>_x / prefix with a >64 tail are not exempt', (p) => {
+  it.each(ID_PREFIX_SHAPES.map((x) => x.prefix))('%s<id>-<K> / %s<K>_x / double K are not exempt', (p) => {
     for (const s of [`${p}abc12345-${K}`, `${p}${K}_${K}`, `${p}${K}${K}`]) expect(maskString(s)).not.toContain(K);
   });
-  it('unknown prefixes get the normal checks', () => {
-    expect(maskString(`key_${K}`)).not.toContain(K);
-    expect(maskString(`chatcmpl${K}`)).not.toContain(K);
+  it('removed / unknown prefixes get the normal checks', () => {
+    for (const p of ['cmpl-', 'batch_', 'ftjob-', 'req_', 'msgbatch_', 'key_', 'chatcmpl']) expect(maskString(`${p}${K}`)).not.toContain(K);
   });
 });
 
