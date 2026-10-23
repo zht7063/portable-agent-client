@@ -316,35 +316,85 @@ function sseLine(t: string, known: readonly string[]): string {
   return out + plain(t.slice(last));
 }
 
-export const SSE_MAX_LINE = 32 << 20;       // lines carrying an image (b64_json / data:image)
-export const SSE_MAX_TEXT_LINE = 1 << 20;   // any other line
-const SSE_IMAGE_MARK = /"b64_json"|data:image\//i;
+export const SSE_MAX_LINE = 32 << 20;        // a line with a structurally verified image payload
+export const SSE_MAX_TEXT_LINE = 1 << 20;    // text on any line (outside verified image spans)
+export const SSE_IMAGE_WINDOW = 8 << 10;     // the first image span must start within this many chars of the line
+export const SSE_MAX_STREAM = 64 << 20;      // total bytes through one stream
 export const SSE_TOO_LARGE_FRAME = '\n\nevent: error\ndata: {"success":false,"code":"SSE_LINE_TOO_LARGE"}\n\n';
-export function sseSanitizer(known: readonly string[], maxLine = SSE_MAX_LINE, maxText = SSE_MAX_TEXT_LINE): TransformStream<Uint8Array, Uint8Array> {
+export interface SseLimits { maxLine: number; maxText: number; window: number; maxStream: number }
+const B64C = (c: number) => (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 43 || c === 47 || c === 61;
+
+/**
+ * Aegis M7: incremental, structural accounting for one SSE line. Only a `data: {` / `data:{` line can carry image
+ * spans; a span starts right after `"b64_json":"` (or `"b64_json": "`) or `data:image/<type>;base64,`, the first one
+ * within `window` chars, and counts as image only once its first 24 base64 chars decode to an image header
+ * (PNG/JPEG/GIF/WebP; SVG too for data:image). Everything else is text and limited to maxText, so a fake marker
+ * cannot buy the 32 MiB allowance: rejection happens as soon as ~maxText non-image chars have been seen.
+ */
+class SseLineMeter {
+  len = 0; text = 0; private head = ''; private structured: boolean | null = null; private tail = '';
+  private inSpan = false; private span = 0; private spanHead = ''; private svg = false; private verified = false;
+  constructor(private readonly l: SseLimits) {}
+  /** false = limit exceeded */
+  feed(t: string): boolean {
+    for (let i = 0; i < t.length; i++) {
+      const c = t.charCodeAt(i); this.len++;
+      if (this.structured === null) {
+        this.head += t[i];
+        if (this.head === 'data:{' || this.head === 'data: {') this.structured = true;
+        else if (!'data:{'.startsWith(this.head) && !'data: {'.startsWith(this.head)) this.structured = false;
+      }
+      if (this.inSpan) {
+        if (B64C(c)) {
+          this.span++;
+          if (this.span <= 24) this.spanHead += t[i];
+          if (this.span === 24) {
+            if (imageMagic(this.spanHead, this.svg)) this.verified = true;
+            else { this.text += this.span; this.inSpan = false; }
+          }
+          continue;
+        }
+        if (this.span < 24) this.text += this.span;
+        this.inSpan = false;
+      }
+      if (++this.text > this.l.maxText) return false;
+      if (this.structured && (this.verified || this.len <= this.l.window)) {
+        this.tail = (this.tail + t[i]).slice(-64);
+        if (c === 34 && (this.tail.endsWith('"b64_json":"') || this.tail.endsWith('"b64_json": "'))) this.open(false);
+        else if (c === 44 && /data:image\/[a-z0-9.+-]+;base64,$/i.test(this.tail)) this.open(true);
+      }
+    }
+    return this.len <= this.l.maxLine;
+  }
+  private open(svg: boolean) { this.inSpan = true; this.span = 0; this.spanHead = ''; this.svg = svg; }
+}
+
+export function sseSanitizer(known: readonly string[], limits: Partial<SseLimits> = {}): TransformStream<Uint8Array, Uint8Array> {
+  const l: SseLimits = { maxLine: SSE_MAX_LINE, maxText: SSE_MAX_TEXT_LINE, window: SSE_IMAGE_WINDOW, maxStream: SSE_MAX_STREAM, ...limits };
   const dec = new TextDecoder(); const enc = new TextEncoder();
   const clean = (t: string) => sseLine(t, known);
-  const limit = (l: string) => (SSE_IMAGE_MARK.test(l) ? maxLine : maxText);
-  const parts: string[] = []; let pending = 0; let image = false; // partial line, kept as pieces
+  let parts: string[] = []; let meter = new SseLineMeter(l); let total = 0; let dead = false;
   const tooLarge = (ctl: TransformStreamDefaultController<Uint8Array>) => {
-    parts.length = 0; pending = 0; ctl.enqueue(enc.encode(SSE_TOO_LARGE_FRAME)); ctl.terminate();
+    dead = true; parts = []; ctl.enqueue(enc.encode(SSE_TOO_LARGE_FRAME)); ctl.terminate();
   };
   return new TransformStream({
     transform(chunk, ctl) {
+      if (dead) return;
+      total += chunk.byteLength;
+      if (total > l.maxStream) { tooLarge(ctl); return; }
       const t = dec.decode(chunk, { stream: true });
-      const nl = t.lastIndexOf('\n');
-      if (nl < 0) {
-        parts.push(t); pending += t.length;
-        if (!image && pending > maxText) { const j = parts.join(''); parts.length = 0; parts.push(j); image = SSE_IMAGE_MARK.test(j); }
-        if (pending > (image ? maxLine : maxText)) tooLarge(ctl);
-        return;
+      let out = '', from = 0;
+      for (;;) {
+        const nl = t.indexOf('\n', from);
+        const piece = nl < 0 ? t.slice(from) : t.slice(from, nl);
+        if (!meter.feed(piece)) { if (out) ctl.enqueue(enc.encode(out)); tooLarge(ctl); return; }
+        if (nl < 0) { if (piece) parts.push(piece); break; }
+        parts.push(piece); out += clean(parts.join('')) + '\n'; parts = []; meter = new SseLineMeter(l);
+        from = nl + 1;
       }
-      const lines = (parts.join('') + t.slice(0, nl)).split('\n');
-      parts.length = 0; pending = 0; image = false;
-      if (lines.some((l) => l.length > limit(l))) { tooLarge(ctl); return; }
-      ctl.enqueue(enc.encode(lines.map(clean).join('\n') + '\n'));
-      const rest = t.slice(nl + 1); if (rest) { parts.push(rest); pending = rest.length; }
+      if (out) ctl.enqueue(enc.encode(out));
     },
-    flush(ctl) { const r = parts.join('') + dec.decode(); if (r) ctl.enqueue(enc.encode(clean(r))); },
+    flush(ctl) { if (dead) return; const r = parts.join('') + dec.decode(); if (r) ctl.enqueue(enc.encode(clean(r))); },
   });
 }
 

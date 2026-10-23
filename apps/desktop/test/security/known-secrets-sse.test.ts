@@ -3,7 +3,7 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { CookieJar } from '../../src/main/proxy/cookie-jar';
-import { AccessTokenVault, HANDLE_PREFIX, MIN_KNOWN, knownSet, maskString, replaceKnown, sanitizeJson, sseSanitizer, SSE_TOO_LARGE_FRAME, isPemPublicKey } from '../../src/main/proxy/sanitize';
+import { AccessTokenVault, HANDLE_PREFIX, MIN_KNOWN, knownSet, maskString, replaceKnown, sanitizeJson, sseSanitizer, SSE_TOO_LARGE_FRAME, SSE_MAX_STREAM, isPemPublicKey } from '../../src/main/proxy/sanitize';
 import { ServerProxy } from '../../src/main/proxy/api-proxy';
 import { evaluateStatus } from '../../src/main/proxy/server-status';
 
@@ -119,7 +119,7 @@ describe('3 SSE is sanitised line-wise across chunk boundaries', () => {
     expect(out).not.toContain(K);
   });
   it('a line beyond the limit is not forwarded; the stream ends with an SSE error frame', async () => {
-    const t = sseSanitizer([], 1000, 1000);
+    const t = sseSanitizer([], { maxLine: 1000, maxText: 1000 });
     const enc = new TextEncoder();
     const rs = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(enc.encode('data: ok\n')); for (let i = 0; i < 5; i++) c.enqueue(enc.encode(`x${K}`.repeat(10))); c.close(); } });
     const out = await new Response(rs.pipeThrough(t)).text();
@@ -132,12 +132,52 @@ describe('3 SSE is sanitised line-wise across chunk boundaries', () => {
     expect(await run(chunked(big, 7000))).toBe(SSE_TOO_LARGE_FRAME);
     const unterminated = `data: ${'a '.repeat(600_000)}`;
     expect(await run(chunked(unterminated, 7000))).toBe(SSE_TOO_LARGE_FRAME);
-    const img = `data: {"data":[{"b64_json":"${bigImage(2)}"}]}\n\n`; // ~2.8 MB, marker split across chunks below
-    const out = await run(chunked(img, 13));
+    const img = `data: {"data":[{"b64_json":"${bigImage(2)}"}]}\n\n`; // ~2.8 MB, marker split across chunks (101-char chunks)
+    const out = await run(chunked(img, 101));
     expect(out).toBe(img);
     const durl = `data: {"url":"data:image/png;base64,${bigImage(2)}"}\n\n`;
     expect(await run(chunked(durl, 9000))).toBe(durl);
   });
+  /** Pull-based source: counts how much the sanitizer actually consumed before it gave up. */
+  const pulled = async (gen: (i: number) => string | null) => {
+    const enc = new TextEncoder(); let i = 0; let consumed = 0;
+    const rs = new ReadableStream<Uint8Array>({
+      pull(c) { const x = gen(i++); if (x === null) { c.close(); return; } consumed += x.length; c.enqueue(enc.encode(x)); },
+    }, { highWaterMark: 0 });
+    const out = await new Response(rs.pipeThrough(sseSanitizer([]))).text();
+    return { out, consumed };
+  };
+  const CH = 64 << 10;
+  it('fake marker (no image header), 32 MiB line: rejected after ~1 MiB, not after buffering 32 MiB', async () => {
+    const head = 'data: {"data":[{"b64_json":"';
+    const { out, consumed } = await pulled((i) => (i === 0 ? head : i * CH > (32 << 20) ? null : 'A'.repeat(CH)));
+    expect(out).toBe(SSE_TOO_LARGE_FRAME);
+    expect(consumed).toBeLessThan((1 << 20) + 2 * CH);
+  });
+  it('marker on a non-JSON line, or a real image marker after the 8 KiB window, does not promote', async () => {
+    const img = bigImage(2);
+    for (const head of [`data: "b64_json":"`, `event: x "b64_json":"`, `data: {"pad":"${'p'.repeat(9000)}","data":[{"b64_json":"`]) {
+      const { out, consumed } = await pulled((i) => (i === 0 ? head : i * CH > img.length ? null : img.slice((i - 1) * CH, i * CH)));
+      expect(out).toBe(SSE_TOO_LARGE_FRAME);
+      expect(consumed).toBeLessThan((1 << 20) + 2 * CH + head.length);
+    }
+  });
+  it('text outside a verified image span is still limited to ~1 MiB on an image line', async () => {
+    const line = `data: {"data":[{"b64_json":"${bigImage(1)}","note":"${'t'.repeat(1_100_000)}"}]}\n\n`;
+    expect(await run(chunked(line, CH))).toBe(SSE_TOO_LARGE_FRAME);
+  });
+  it('two real images on one line (b64_json and data:image) pass byte-identical', async () => {
+    const line = `data: {"data":[{"b64_json":"${bigImage(2)}"},{"b64_json":"${bigImage(1)}","url":"data:image/png;base64,${bigImage(1)}"}]}\n\ndata: [DONE]\n\n`;
+    expect(await run(chunked(line, 7777))).toBe(line);
+  });
+  it('global stream cap: total bytes beyond maxStream -> error frame', async () => {
+    const enc = new TextEncoder();
+    const rs = new ReadableStream<Uint8Array>({ start(c) { for (let i = 0; i < 100; i++) c.enqueue(enc.encode('data: {"delta":"hello"}\n\n')); c.close(); } });
+    const out = await new Response(rs.pipeThrough(sseSanitizer([], { maxStream: 1000 }))).text();
+    expect(out.endsWith(SSE_TOO_LARGE_FRAME)).toBe(true);
+    expect(out.length).toBeLessThanOrEqual(1000 + SSE_TOO_LARGE_FRAME.length);
+  });
+  it('default global cap is 64 MiB', () => { expect(SSE_MAX_STREAM).toBe(64 << 20); });
   it('known value (not key-shaped) masked in SSE', async () => {
     expect(await run(['data: tok=lowercase-known-', 'secret-value\n'], ['lowercase-known-secret-value'])).not.toContain('lowercase-known-secret-value');
   });
