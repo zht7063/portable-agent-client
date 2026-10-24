@@ -55,6 +55,7 @@ jobs:
           cp scripts/check-placeholders.cjs "$T/apps/desktop/scripts/"
           jq '.["$placeholders"]=["sourceUrl","sourceOffer"] | .sourceOffer="PLACEHOLDER: source offer pending."' ../../packages/core/src/product.config.json > "$T/packages/core/src/product.config.json"
           (cd "$T/apps/desktop" && refuse 'unreplaced placeholder' env PA_LOCAL_BUILD=1 node scripts/check-placeholders.cjs --official)
+          echo 'working tree status before the real-config cases:'; git status --porcelain
           # 2. real config, PA_BUILD_COMMIT that is not HEAD
           refuse 'does not match git HEAD\|working tree is dirty' env PA_BUILD_COMMIT=0000000000000000000000000000000000000000 node scripts/check-placeholders.cjs --official
           # 3. real config, dirty working tree
