@@ -26,14 +26,16 @@ describe('local packaging config (H4)', () => {
     for (const n of ['pack:dir', 'pack:linux', 'pack:win', 'pack:mac']) expect(pkg.scripts[n]).toContain('build:prod');
   });
 
-  it('installers: unsigned NSIS x64 (custom dir, shortcuts) and dmg arm64+x64, local only', () => {
+  it('installers: unsigned NSIS x64 (custom dir, shortcuts) and dmg arm64+x64 (LOCAL ad-hoc signed), local only', async () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const cfg = require(join(app, 'electron-builder.config.cjs')) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
-    expect(cfg.mac.identity).toBe(process.env.PA_LOCAL_BUILD === '1' ? '-' : null);
-    // LOCAL mac builds are ad-hoc signed ('-'); official ones (placeholders replaced, PA_LOCAL_BUILD=0) stay null.
-    const ident = (env: Record<string, string>) => spawnSync(process.execPath, ['-e', "process.stdout.write(JSON.stringify(require('./electron-builder.config.cjs').mac.identity))"], { cwd: app, encoding: 'utf8', env: { ...process.env, ...env } });
-    expect(ident({ PA_LOCAL_BUILD: '1' }).stdout).toBe('"-"');
-    expect(ident({ PA_LOCAL_BUILD: '0' }).status).not.toBe(0); // official config refuses with today's placeholders
+    expect(cfg.mac.identity).toBeNull(); // no Developer ID; LOCAL builds are ad-hoc signed in afterPack
+    const calls: unknown[][] = [];
+    const ctx = (plat: string) => ({ electronPlatformName: plat, appOutDir: '/out/mac-arm64', packager: { appInfo: { productFilename: 'portable-agent' } } });
+    const fake = (...a: unknown[]) => { calls.push(a); };
+    expect(await cfg.afterPack(ctx('darwin'), fake)).toBe(process.env.PA_LOCAL_BUILD === '1');
+    expect(await cfg.afterPack(ctx('win32'), fake)).toBe(false);
+    if (process.env.PA_LOCAL_BUILD === '1') expect(calls).toEqual([['codesign', ['--force', '--deep', '--sign', '-', '--timestamp=none', '/out/mac-arm64/portable-agent.app'], { stdio: 'inherit' }]]);
     expect(cfg.nsis).toMatchObject({ oneClick: false, allowToChangeInstallationDirectory: true, createDesktopShortcut: true, createStartMenuShortcut: true });
     expect(cfg.win.certificateFile ?? cfg.win.signtoolOptions ?? cfg.win.azureSignOptions).toBeUndefined();
     const pkg = JSON.parse(readFileSync(join(app, 'package.json'), 'utf8')) as { scripts: Record<string, string> };

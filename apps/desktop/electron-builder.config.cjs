@@ -8,6 +8,15 @@ const placeholderWarning = assertNoPlaceholders(product, process.env);
 if (placeholderWarning) console.warn(placeholderWarning);
 const LOCAL = process.env.PA_LOCAL_BUILD === '1';
 
+/** afterPack: ad-hoc sign the LOCAL macOS .app (runs before the dmg is built). No-op elsewhere. */
+async function adHocSignLocalMac(ctx, run = require('node:child_process').execFileSync) {
+  if (!LOCAL || ctx.electronPlatformName !== 'darwin') return false;
+  const app = require('node:path').join(ctx.appOutDir, `${ctx.packager.appInfo.productFilename}.app`);
+  run('codesign', ['--force', '--deep', '--sign', '-', '--timestamp=none', app], { stdio: 'inherit' });
+  console.log(`  • ad-hoc signed (LOCAL)  ${app}`);
+  return true;
+}
+
 module.exports = {
   appId: product.appId,
   productName: product.productName,
@@ -48,10 +57,11 @@ module.exports = {
   // LOCAL builds (pack:dir, pack:*:local) are marked in the file name; official ones are not.
   artifactName: `\${name}-\${version}-\${os}-\${arch}${LOCAL ? '-LOCAL' : ''}.\${ext}`,
   // Installers (local, unsigned, never published): `bun run pack:mac` (dmg arm64 + x64, must run on macOS) and
-  // `bun run pack:win` (NSIS x64). No Developer ID signing and no Windows certificate. LOCAL mac builds are ad-hoc
-  // signed (identity '-') so the arm64 app is not reported as "damaged"; official mac builds stay unsigned (null)
-  // until signing/notarization is decided.
-  mac: { target: 'dir', identity: LOCAL ? '-' : null, category: 'public.app-category.developer-tools' },
+  // `bun run pack:win` (NSIS x64). No Developer ID signing and no Windows certificate (identity null). LOCAL mac
+  // builds are ad-hoc signed in afterPack (codesign --sign -; electron-builder 25 has no identity '-' support) so the
+  // arm64 app is not reported as "damaged"; official mac builds stay unsigned until signing/notarization is decided.
+  afterPack: adHocSignLocalMac,
+  mac: { target: 'dir', identity: null, category: 'public.app-category.developer-tools' },
   dmg: { writeUpdateInfo: false },
   win: { target: 'dir', signAndEditExecutable: true, verifyUpdateCodeSignature: false },
   nsis: {
