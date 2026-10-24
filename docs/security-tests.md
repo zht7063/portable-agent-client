@@ -51,8 +51,10 @@ Guarantees:
    all concurrent SSE streams <= 64 MiB. There is no cumulative per-stream cap, so long sessions are never cut. When a
    reservation would exceed the global cap, the stream with the **largest** buffered usage (possibly not the
    requester) is ended with `event: error` / `SSE_BUFFER_LIMIT` and its bytes released, repeatedly, until the request
-   fits; if the requester itself is the largest, it is the one ended. A stream over its own 32 MiB also gets
-   `SSE_BUFFER_LIMIT`. A stream's bytes are released on line flush, stream end, error frames, exceptions thrown while
+   fits; if the requester itself is the largest, it is the one ended. A stream only ever buffers its current
+   partial line, and the line-length check (`SseLineMeter`, 32 MiB) runs before the budget reservation, so a single
+   stream growing past 32 MiB ends with `SSE_LINE_TOO_LARGE`, not `SSE_BUFFER_LIMIT`; the per-stream 32 MiB budget
+   cap is a backstop that is not reachable with the default limits (only with a custom `maxLine` above it). A stream's bytes are released on line flush, stream end, error frames, exceptions thrown while
    sanitising (try/catch release, then rethrow) and consumer cancel / upstream abort; `sseBudget.held` returns to 0.
    **Idle timeout**: while a stream holds a partial line, no new data for 120 s (`SSE_IDLE_MS`) ends it with
    `event: error` / `SSE_IDLE_TIMEOUT` and releases its bytes, so a stream dropped without cancel cannot pin budget.
