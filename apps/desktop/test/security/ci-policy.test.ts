@@ -35,7 +35,7 @@ describe('CI workflow policy', () => {
     });
     it(`${f}: asserts that --official refuses (placeholder fixture, wrong PA_BUILD_COMMIT, dirty tree)`, () => {
       expect(code).toContain("refuse 'unreplaced placeholder' env PA_LOCAL_BUILD=1 node scripts/check-placeholders.cjs --official");
-      expect(code).toContain('PA_BUILD_COMMIT=0000000000000000000000000000000000000000 node scripts/check-placeholders.cjs --official');
+      expect(code).toContain("refuse 'does not match git HEAD' env PA_BUILD_COMMIT=0000000000000000000000000000000000000000 node scripts/check-placeholders.cjs --official");
       expect(code).toContain("refuse 'working tree is dirty' node scripts/check-placeholders.cjs --official");
     });
   }

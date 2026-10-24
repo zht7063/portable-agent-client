@@ -8,7 +8,7 @@ import { ServerProxy } from '../../src/main/proxy/api-proxy';
 import { evaluateStatus } from '../../src/main/proxy/server-status';
 
 const ORIGIN = 'https://na.example.test';
-const K = 'Zq7Rw2Lp9Xv4Tm8Nk3Hd6Jf1Bc5Gs0YeQa2Wu7Ir4Ot9Pl3S'; // 48-char key-shaped secret
+const K = 'TestKey0Fake0Not0Real0Dummy0Value000000000000000'; // 48-char key-shaped secret
 const fill = (magic: number[] | string) => {
   const m = typeof magic === 'string' ? Buffer.from(magic) : Buffer.from(magic);
   return Buffer.concat([m, Buffer.from('x'.repeat(69 - m.length))]).toString('base64'); // 92 chars, no padding
