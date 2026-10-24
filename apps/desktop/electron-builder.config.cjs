@@ -6,6 +6,7 @@ const { assertNoPlaceholders } = require('./scripts/check-placeholders.cjs');
 // Aegis M6 item 6: refuse to package with unreplaced sourceUrl/sourceOffer unless PA_LOCAL_BUILD=1.
 const placeholderWarning = assertNoPlaceholders(product, process.env);
 if (placeholderWarning) console.warn(placeholderWarning);
+const LOCAL = process.env.PA_LOCAL_BUILD === '1';
 
 module.exports = {
   appId: product.appId,
@@ -23,8 +24,12 @@ module.exports = {
     'dist/**',
     'LICENSE', 'NOTICE', 'THIRD-PARTY-LICENSES.md',
     'node_modules/@napi-rs/keyring/**',
+    // Only the binary matching the package's arch (${arch} is expanded per target by electron-builder); the stage
+    // may hold several (multi-arch dmg build from one stage dir).
     'node_modules/@napi-rs/keyring-darwin-*/**',
     'node_modules/@napi-rs/keyring-win32-*/**',
+    '!node_modules/@napi-rs/keyring-darwin-!(${arch})/**',
+    '!node_modules/@napi-rs/keyring-win32-!(${arch})-msvc/**',
     // Never ship the Linux keyring binary (bundles libdbus, AFL-2.1 OR GPL-2.0+); Linux uses secret-tool.
     '!node_modules/@napi-rs/keyring-linux-*/**',
   ],
@@ -40,7 +45,8 @@ module.exports = {
   // Default target is an unpacked dir; `bun run pack:linux` builds AppImage + deb locally (never published).
   linux: { target: 'dir', category: 'Development', maintainer: `${product.productName} (placeholder) <noreply@example.invalid>`, synopsis: `${product.productName} desktop client (based on new-api)` },
   deb: { packageCategory: 'devel' },
-  artifactName: '${name}-${version}-${os}-${arch}-LOCAL.${ext}',
+  // LOCAL builds (pack:dir, pack:*:local) are marked in the file name; official ones are not.
+  artifactName: `\${name}-\${version}-\${os}-\${arch}${LOCAL ? '-LOCAL' : ''}.\${ext}`,
   // Installers (local, unsigned, never published): `bun run pack:mac` (dmg arm64 + x64, must run on macOS) and
   // `bun run pack:win` (NSIS x64). No signing: mac identity null (ad-hoc on arm64), no Windows certificate.
   mac: { target: 'dir', identity: null, category: 'public.app-category.developer-tools' },
@@ -54,7 +60,7 @@ module.exports = {
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
     shortcutName: product.productName,
-    uninstallDisplayName: `${product.productName} (LOCAL build)`,
+    uninstallDisplayName: `${product.productName}${LOCAL ? ' (LOCAL build)' : ''}`,
     deleteAppDataOnUninstall: false,
     differentialPackage: false,
     license: '../../LICENSE',

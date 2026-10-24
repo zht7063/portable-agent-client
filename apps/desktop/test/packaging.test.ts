@@ -33,8 +33,17 @@ describe('local packaging config (H4)', () => {
     expect(cfg.nsis).toMatchObject({ oneClick: false, allowToChangeInstallationDirectory: true, createDesktopShortcut: true, createStartMenuShortcut: true });
     expect(cfg.win.certificateFile ?? cfg.win.signtoolOptions ?? cfg.win.azureSignOptions).toBeUndefined();
     const pkg = JSON.parse(readFileSync(join(app, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
-    expect(pkg.scripts['pack:win']).toMatch(/PA_LOCAL_BUILD=1 electron-builder .*--win nsis --x64 --publish never/);
-    expect(pkg.scripts['pack:mac']).toMatch(/PA_LOCAL_BUILD=1 electron-builder .*--mac dmg --arm64 --x64 --publish never/);
+    expect(pkg.scripts['pack:win:local']).toMatch(/PA_LOCAL_BUILD=1 electron-builder .*--win nsis --x64 --publish never/);
+    expect(pkg.scripts['pack:mac:local']).toMatch(/PA_LOCAL_BUILD=1 electron-builder .*--mac dmg --arm64 --x64 --publish never/);
+    // Per-arch packages carry only their own keyring binary (stage may hold both for the arm64+x64 dmg run).
+    expect(cfg.files).toEqual(expect.arrayContaining(['!node_modules/@napi-rs/keyring-darwin-!(${arch})/**', '!node_modules/@napi-rs/keyring-win32-!(${arch})-msvc/**']));
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { Minimatch } = require(require.resolve('minimatch', { paths: [require.resolve('app-builder-lib', { paths: [require.resolve('electron-builder', { paths: [app] })] })] })) as { Minimatch: new (p: string) => { match: (s: string) => boolean } };
+    const excl = (a: string) => new Minimatch('node_modules/@napi-rs/keyring-darwin-!(${arch})/**'.replace('${arch}', a));
+    expect(excl('arm64').match('node_modules/@napi-rs/keyring-darwin-x64/keyring.darwin-x64.node')).toBe(true);
+    expect(excl('arm64').match('node_modules/@napi-rs/keyring-darwin-arm64/keyring.darwin-arm64.node')).toBe(false);
+    expect(excl('x64').match('node_modules/@napi-rs/keyring-darwin-arm64/keyring.darwin-arm64.node')).toBe(true);
+    expect(excl('x64').match('node_modules/@napi-rs/keyring-darwin-x64/keyring.darwin-x64.node')).toBe(false);
     // Local Electron only for a native linux build; other targets download the official zip.
     expect(cfg.electronDist({ platformName: 'win32', arch: 'x64' })).toBeNull();
     expect(cfg.electronDist({ platformName: 'darwin', arch: 'arm64' })).toBeNull();

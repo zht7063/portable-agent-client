@@ -19,8 +19,10 @@
 ```bash
 bun install --frozen-lockfile
 cd apps/desktop
-bun run pack:dir     # prod build + stage + electron-builder --dir         -> release/linux-unpacked/
-bun run pack:linux   # prod build + stage + electron-builder AppImage + deb -> release/*-LOCAL.AppImage, *-LOCAL.deb
+bun run pack:dir          # prod build + stage + electron-builder --dir (LOCAL) -> release/linux-unpacked/
+bun run pack:linux:local  # LOCAL AppImage + deb -> release/*-LOCAL.AppImage, *-LOCAL.deb
+# Official scripts (pack:linux / pack:win / pack:mac) run scripts/check-placeholders.cjs first and REFUSE while the
+# source offer is a placeholder; their artifacts carry no -LOCAL suffix.
 ```
 
 `electron-builder.config.cjs`: `publish: null`, every script passes `--publish never`; Electron is taken from the
@@ -61,8 +63,10 @@ packaged JS, all license files present (asar + `resources/licenses/`), no keyrin
 - **Source location / offer**: `sourceUrl` and `sourceOffer` in `packages/core/src/product.config.json`
   (placeholder: this repository, which is currently private — see open question below).
   They stay listed in `"$placeholders"`; `electron-builder.config.cjs` (scripts/check-placeholders.cjs) **refuses to
-  package** while either is unreplaced, unless the explicit local flag `PA_LOCAL_BUILD=1` is set. Only `pack:dir` and
-  `pack:linux` (artifacts named `*-LOCAL`, never distributed) set it. A release build must replace both values, drop
+  package** while either is unreplaced, unless the explicit local flag `PA_LOCAL_BUILD=1` is set. Only `pack:dir` and the
+  `pack:*:local` scripts (artifacts named `*-LOCAL`, never distributed) set it; the official `pack:linux`, `pack:win`,
+  `pack:mac` never do. The guard passes with either a public https `sourceUrl` (decision a) or a written `sourceOffer`
+  (decision b), provided neither is still listed in `$placeholders` and no placeholder text remains. A release build must replace both values, drop
   them from `"$placeholders"`, and run electron-builder without the flag.
 
 ## Corresponding Source
@@ -83,20 +87,20 @@ Rules for any future distribution (not done yet):
 
 ## Local installers: Windows (NSIS) and macOS (dmg) — unsigned, LOCAL, never published
 
-All builds are local and named `*-LOCAL.*` (`PA_LOCAL_BUILD=1`, same placeholder rule as `pack:dir`/`pack:linux`).
+Today only the `:local` variants work (named `*-LOCAL.*`, `PA_LOCAL_BUILD=1`); the official `pack:win`/`pack:mac` refuse until the source-offer decision is applied.
 Nothing is signed or notarized; nothing is uploaded (`publish: null`, `--publish never`). appId/productName/branding
 are still placeholders (see the TODO below).
 
 | Platform | Command (in `apps/desktop`) | Build host | Output in `release/` |
 | --- | --- | --- | --- |
-| Windows x64 | `bun run pack:win` | Windows (or Linux/macOS **with wine**) | `portable-agent-<ver>-win-x64-LOCAL.exe` (NSIS, + `win-unpacked/`) |
-| macOS arm64 + x64 | `bun run pack:mac` | **macOS only** (dmg needs hdiutil) | `portable-agent-<ver>-mac-arm64-LOCAL.dmg`, `…-mac-x64-LOCAL.dmg` (+ `mac*/`) |
-| Linux x64 | `bun run pack:linux` | Linux | AppImage + deb |
+| Windows x64 | `bun run pack:win:local` (official: `pack:win`) | Windows (or Linux/macOS **with wine**) | `portable-agent-<ver>-win-x64-LOCAL.exe` (NSIS, + `win-unpacked/`) |
+| macOS arm64 + x64 | `bun run pack:mac:local` (official: `pack:mac`) | **macOS only** (dmg needs hdiutil) | `portable-agent-<ver>-mac-arm64-LOCAL.dmg`, `…-mac-x64-LOCAL.dmg` (+ `mac*/`) |
+| Linux x64 | `bun run pack:linux:local` (official: `pack:linux`) | Linux | AppImage + deb |
 
 - NSIS installer: assisted (not one-click), per-user by default with optional elevation, install directory can be
   changed, desktop + Start-menu shortcuts, AGPL license page, uninstaller (app data is kept on uninstall).
 - Native keychain module: `scripts/stage.mjs` stages `@napi-rs/keyring` + the target's binary and declares them as
-  `dependencies` in the staged package.json (electron-builder drops undeclared node_modules). bun installs only the
+  `dependencies` (each per-arch package keeps only its own `keyring-<os>-<arch>` binary via `!(${arch})` excludes) in the staged package.json (electron-builder drops undeclared node_modules). bun installs only the
   host's binary; for a cross-build fetch the target's package first, e.g.
   `npm pack @napi-rs/keyring-win32-x64-msvc@2.1.2` → extract to `<dir>/node_modules/@napi-rs/keyring-win32-x64-msvc/`
   and run with `PA_NATIVE_PREBUILT_DIR=<dir>`. Without it the build warns and the app falls back to env key mode.

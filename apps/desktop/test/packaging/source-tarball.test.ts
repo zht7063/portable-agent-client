@@ -25,6 +25,8 @@ describe('source tarball', () => {
     for (const l of list) expect(l).toMatch(/^\S+ 0\/0 /);
     const names = execFileSync('tar', ['-tzf', a.file], { encoding: 'utf8' }).trim().split('\n');
     expect(names.some((n) => n.endsWith('/SOURCE-INFO.txt'))).toBe(true);
+    const info = execFileSync('tar', ['-xzOf', a.file, names.find((n) => n.endsWith('/SOURCE-INFO.txt'))!], { encoding: 'utf8' });
+    for (const s of ['pack:linux', 'pack:win', 'pack:mac', 'pack:dir', 'pack:linux:local', 'pack:win:local', 'pack:mac:local']) expect(info).toContain(s);
     expect(readdirSync(OUT).some((f) => f.endsWith('-source.tar.gz.sha256'))).toBe(true);
   }, 120_000);
 });

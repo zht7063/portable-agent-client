@@ -130,6 +130,30 @@ describe('scan-bundle', () => {
     expect(r.stderr).not.toContain('renderer/a.js');
     expect(r.stderr).not.toContain('app.asar:');
   });
+  it('shipped allowlist: SVG chunk entry stays sha256-pinned and its globs cover linux/win and both mac .app layouts', async () => {
+    const { globToRegExp } = await import(SCRIPT) as { globToRegExp: (g: string) => RegExp };
+    const al = JSON.parse(readFileSync(resolve(SCRIPT, '../scan-bundle-allowlist.json'), 'utf8')) as { entries: { sha256: string; paths: string[] }[] };
+    expect(al.entries).toHaveLength(1);
+    const e = al.entries[0]!;
+    expect(e.sha256).toMatch(/^[0-9a-f]{64}$/);
+    const ok = (p: string) => e.paths.some((g) => globToRegExp(g).test(p));
+    const inner = 'app.asar:dist/renderer/static/js/async/24151.abc123.js';
+    for (const p of ['renderer/static/js/async/24151.abc123.js', `linux-unpacked/resources/${inner}`, `win-unpacked/resources/${inner}`,
+      `mac-arm64/Portable Agent.app/Contents/Resources/${inner}`, `mac/Portable Agent.app/Contents/Resources/${inner}`]) expect(ok(p), p).toBe(true);
+    for (const p of [`mac/Portable Agent.app/Contents/Resources/app.asar:dist/renderer/static/js/async/99999.abc.js`, 'renderer/static/js/other.js',
+      `mac/Portable Agent.app/Contents/Resources/app.asar:dist/main/24151.abc.js`]) expect(ok(p), p).toBe(false);
+  });
+  it('mac .app asar layout (arm64 + x64) is scanned and the allowlist form matches it', () => {
+    const h = createHash('sha256').update(BARE).digest('hex');
+    const app = (d: string) => `${d}/Portable Agent.app/Contents/Resources/app.asar`;
+    fixture({ [app('mac-arm64')]: asar({ 'dist/renderer/c.js': `z("${BARE}")` }), [app('mac')]: asar({ 'dist/renderer/c.js': `z("${BARE}")` }),
+      '/allow.json': JSON.stringify({ entries: [{ sha256: h, paths: ['**/Contents/Resources/app.asar:dist/renderer/*.js'], reason: 'test fixture' }] }) });
+    expect(run({ PA_SCAN_ALLOWLIST: join(dir, 'allow.json') }).status).toBe(0);
+    const r = run(); // default allowlist does not cover this fixture hash: both mac asars are reported
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('mac-arm64/');
+    expect(r.stderr).toContain('mac/Portable Agent.app');
+  });
   it.each([['CI', 'true'], ['CI', 'TRUE'], ['CI', '1'], ['GITHUB_ACTIONS', 'true'], ['GITHUB_ACTIONS', 'True'], ['GITHUB_ACTIONS', '1']])('PA_SCAN_ALLOWLIST override is refused when %s=%s', (k, v) => {
     fixture({ 'renderer/a.js': 'ok', '/allow.json': JSON.stringify({ entries: [] }) });
     const r = run({ PA_SCAN_ALLOWLIST: join(dir, 'allow.json'), [k]: v });

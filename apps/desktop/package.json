@@ -15,9 +15,12 @@
     "smoke:packaged": "node scripts/smoke-packaged.mjs",
     "build:main:prod": "node scripts/build-main.mjs --prod",
     "build:prod": "bun run build:main:prod && bun run build:renderer",
-    "pack:linux": "bun run build:prod && node scripts/stage.mjs && PA_LOCAL_BUILD=1 electron-builder --config electron-builder.config.cjs --linux AppImage deb --publish never",
-    "pack:win": "bun run build:prod && PA_TARGET_PLATFORM=win32 PA_TARGET_ARCH=x64 node scripts/stage.mjs && PA_LOCAL_BUILD=1 electron-builder --config electron-builder.config.cjs --win nsis --x64 --publish never",
-    "pack:mac": "bun run build:prod && PA_TARGET_PLATFORM=darwin PA_TARGET_ARCH=arm64,x64 node scripts/stage.mjs && PA_LOCAL_BUILD=1 electron-builder --config electron-builder.config.cjs --mac dmg --arm64 --x64 --publish never"
+    "pack:linux": "node scripts/check-placeholders.cjs && bun run build:prod && node scripts/stage.mjs && electron-builder --config electron-builder.config.cjs --linux AppImage deb --publish never",
+    "pack:linux:local": "bun run build:prod && node scripts/stage.mjs && PA_LOCAL_BUILD=1 electron-builder --config electron-builder.config.cjs --linux AppImage deb --publish never",
+    "pack:win": "node scripts/check-placeholders.cjs && bun run build:prod && PA_TARGET_PLATFORM=win32 PA_TARGET_ARCH=x64 node scripts/stage.mjs && electron-builder --config electron-builder.config.cjs --win nsis --x64 --publish never",
+    "pack:win:local": "bun run build:prod && PA_TARGET_PLATFORM=win32 PA_TARGET_ARCH=x64 node scripts/stage.mjs && PA_LOCAL_BUILD=1 electron-builder --config electron-builder.config.cjs --win nsis --x64 --publish never",
+    "pack:mac": "node scripts/check-placeholders.cjs && bun run build:prod && PA_TARGET_PLATFORM=darwin PA_TARGET_ARCH=arm64,x64 node scripts/stage.mjs && electron-builder --config electron-builder.config.cjs --mac dmg --arm64 --x64 --publish never",
+    "pack:mac:local": "bun run build:prod && PA_TARGET_PLATFORM=darwin PA_TARGET_ARCH=arm64,x64 node scripts/stage.mjs && PA_LOCAL_BUILD=1 electron-builder --config electron-builder.config.cjs --mac dmg --arm64 --x64 --publish never"
   },
   "dependencies": {
     "@pac/core": "workspace:*",
