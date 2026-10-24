@@ -34,8 +34,8 @@ describe('local packaging config (H4)', () => {
     expect(cfg.win.certificateFile ?? cfg.win.signtoolOptions ?? cfg.win.azureSignOptions).toBeUndefined();
     const pkg = JSON.parse(readFileSync(join(app, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
     expect(pkg.scripts['pack:win:local']).toMatch(/PA_LOCAL_BUILD=1 electron-builder .*--win nsis --x64 --publish never/);
-    expect(pkg.scripts['pack:mac:local']).toMatch(/PA_LOCAL_BUILD=1 electron-builder .*--mac dmg --arm64 --x64 --publish never/);
-    // Per-arch packages carry only their own keyring binary (stage may hold both for the arm64+x64 dmg run).
+    expect(pkg.scripts['pack:mac:local']).toMatch(/PA_LOCAL_BUILD=1 electron-builder .*--mac dmg --arm64 --publish never && .*PA_TARGET_ARCH=x64 node scripts\/stage\.mjs && PA_LOCAL_BUILD=1 electron-builder .*--mac dmg --x64 --publish never/);
+    // Per-arch packages carry only their own keyring binary (defense in depth; pack:mac stages each arch separately).
     expect(cfg.files).toEqual(expect.arrayContaining(['!node_modules/@napi-rs/keyring-darwin-!(${arch})/**', '!node_modules/@napi-rs/keyring-win32-!(${arch})-msvc/**']));
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { Minimatch } = require(require.resolve('minimatch', { paths: [require.resolve('app-builder-lib', { paths: [require.resolve('electron-builder', { paths: [app] })] })] })) as { Minimatch: new (p: string) => { match: (s: string) => boolean } };
@@ -59,7 +59,7 @@ describe('local packaging config (H4)', () => {
   });
 
   it.skipIf(!built)('stage: linux has no native modules; darwin stages only @napi-rs/keyring(+darwin binary)', () => {
-    const run = (platform: string) => spawnSync(process.execPath, ['scripts/stage.mjs'], { cwd: app, env: { ...process.env, PA_TARGET_PLATFORM: platform, PA_TARGET_ARCH: 'arm64' }, encoding: 'utf8' });
+    const run = (platform: string, arch = 'arm64') => spawnSync(process.execPath, ['scripts/stage.mjs'], { cwd: app, env: { ...process.env, PA_TARGET_PLATFORM: platform, PA_TARGET_ARCH: arch }, encoding: 'utf8' });
     const l = run('linux');
     expect(l.status).toBe(0);
     expect(existsSync(join(app, 'stage', 'node_modules'))).toBe(false);
@@ -72,6 +72,16 @@ describe('local packaging config (H4)', () => {
     // Declared so electron-builder actually packs the staged native module (it drops undeclared node_modules).
     expect(Object.keys(sp.dependencies as Record<string, string>).sort()).toEqual(mods.map((m) => `@napi-rs/${m}`).sort());
     expect(sp.main).toBe('dist/main/index.cjs');
+    // Aegis round 3 item 5: one arch per stage, so the declared deps match the bundled arch exactly.
+    for (const a of ['arm64', 'x64']) {
+      expect(run('darwin', a).status).toBe(0);
+      const deps = Object.keys((JSON.parse(readFileSync(join(app, 'stage', 'package.json'), 'utf8')) as { dependencies: Record<string, string> }).dependencies);
+      expect(deps.filter((k) => /keyring-darwin-/.test(k) && k !== `@napi-rs/keyring-darwin-${a}`)).toEqual([]);
+      expect(readdirSync(join(app, 'stage', 'node_modules', '@napi-rs')).filter((m) => /^keyring-darwin-/.test(m) && m !== `keyring-darwin-${a}`)).toEqual([]);
+    }
+    const multi = run('darwin', 'arm64,x64');
+    expect(multi.status).not.toBe(0);
+    expect(multi.stderr).toContain('single arch');
     run('linux');
   });
 

@@ -49,8 +49,10 @@ if (platform === 'darwin' || platform === 'win32') {
   // Cross-builds: bun installs only the host's optional platform binary. PA_NATIVE_PREBUILT_DIR may point at a dir
   // with node_modules/@napi-rs/keyring-<plat>/ fetched separately (e.g. `npm pack`), same version, MIT-checked.
   const prebuiltReq = process.env.PA_NATIVE_PREBUILT_DIR ? createRequire(join(process.env.PA_NATIVE_PREBUILT_DIR, 'package.json')) : null;
-  // PA_TARGET_ARCH may list several archs (comma-separated) for a multi-arch dmg; each arch binary is staged.
-  for (const a of arch.split(',')) {
+  // One arch per stage (pack:mac stages and packages arm64 and x64 separately), so the generated package.json
+  // declares exactly the binary that is bundled.
+  if (!/^(x64|arm64|ia32|armv7l)$/.test(arch)) throw new Error(`PA_TARGET_ARCH must be a single arch (got ${arch})`);
+  for (const a of [arch]) {
     const plat = { darwin: `darwin-${a}`, win32: `win32-${a}-msvc` }[platform];
     try { copy(`@napi-rs/keyring-${plat}`, keyringReq); } catch (e) {
       try { if (!prebuiltReq) throw e; copy(`@napi-rs/keyring-${plat}`, prebuiltReq); } catch (e2) { console.warn(`warning: @napi-rs/keyring-${plat} not installed (${e2.message}); keychain will fall back to env mode`); }

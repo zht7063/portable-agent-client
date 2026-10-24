@@ -21,8 +21,9 @@ bun install --frozen-lockfile
 cd apps/desktop
 bun run pack:dir          # prod build + stage + electron-builder --dir (LOCAL) -> release/linux-unpacked/
 bun run pack:linux:local  # LOCAL AppImage + deb -> release/*-LOCAL.AppImage, *-LOCAL.deb
-# Official scripts (pack:linux / pack:win / pack:mac) run scripts/check-placeholders.cjs first and REFUSE while the
-# source offer is a placeholder; their artifacts carry no -LOCAL suffix.
+# Official scripts (pack:linux / pack:win / pack:mac) run `PA_LOCAL_BUILD=0 node scripts/check-placeholders.cjs --official`
+# first and REFUSE while the source offer is a placeholder; they set PA_LOCAL_BUILD=0 explicitly (an inherited
+# PA_LOCAL_BUILD=1 cannot bypass the guard) and their artifacts carry no -LOCAL suffix.
 ```
 
 `electron-builder.config.cjs`: `publish: null`, every script passes `--publish never`; Electron is taken from the
@@ -66,8 +67,16 @@ packaged JS, all license files present (asar + `resources/licenses/`), no keyrin
   package** while either is unreplaced, unless the explicit local flag `PA_LOCAL_BUILD=1` is set. Only `pack:dir` and the
   `pack:*:local` scripts (artifacts named `*-LOCAL`, never distributed) set it; the official `pack:linux`, `pack:win`,
   `pack:mac` never do. The guard passes with either a public https `sourceUrl` (decision a) or a written `sourceOffer`
-  (decision b), provided neither is still listed in `$placeholders` and no placeholder text remains. A release build must replace both values, drop
-  them from `"$placeholders"`, and run electron-builder without the flag.
+  (decision b), provided neither is still listed in `$placeholders` and no placeholder text remains (PLACEHOLDER,
+  place-holder, TODO, TBD, FIXME, `<...>`, example.invalid). `sourceUrl` must be `https://<host>/<owner>/<repo>` on an
+  allowlisted host (github.com, gitlab.com, codeberg.org): no userinfo, IP, port, localhost or .example/.invalid/.test
+  hosts, no TODO/TBD path. `sourceOffer` must be at least 120 characters and state a validity period ("valid for at
+  least three years …") and a contact (email or https URL). In official mode (`--official`) the guard also needs a
+  clean 40-hex build commit (`PA_BUILD_COMMIT` or `git rev-parse HEAD`) and anonymously GETs
+  `<sourceUrl>/tree/<commit>` (no credentials, no redirects followed) and requires HTTP 200. A release build must
+  replace both values, drop them from `"$placeholders"`, and use the official scripts (which force `PA_LOCAL_BUILD=0`).
+  `pack:mac` stages and packages arm64 and x64 in two separate runs, so each package's generated `package.json`
+  declares only the keychain binary it bundles.
 
 ## Corresponding Source
 
@@ -139,6 +148,13 @@ bun run build:prod && node scripts/stage.mjs \
   && electron-builder --config electron-builder.config.cjs --linux AppImage deb --publish never
 # 3. scripts/source-tarball.sh <build-commit>; node scripts/scan-bundle.mjs
 ```
+
+Manual release sign-off (in addition to the automatic guard):
+
+- [ ] Logged out / in a private window (no GitHub session, no token), open `<sourceUrl>/tree/<build-commit>` and
+      confirm it loads (HTTP 200) and shows exactly the commit the artifacts were built from (compare with
+      About → build commit and `SOURCE-INFO`).
+- [ ] The tarball from `scripts/source-tarball.sh <build-commit>` matches that commit.
 
 While the placeholder source links are unreplaced, `scripts/check-placeholders.cjs` makes this command fail by design.
 Still open alongside it: branding, signing/notarization, macOS/Windows hosts, publishing (see below).
