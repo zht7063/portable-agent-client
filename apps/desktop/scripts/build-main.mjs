@@ -33,7 +33,7 @@ await build({ ...common, entryPoints: ['src/preload/index.ts'], external: ['elec
 await build({ ...common, entryPoints: ['../../packages/pa-key/src/main.ts'], external: ['@napi-rs/keyring'], outfile: join(out, 'key-helper/pa-key.cjs') });
 // Window/taskbar icon for Windows/Linux (macOS uses the bundle's .icns); ships inside app.asar via dist/**.
 mkdirSync(out, { recursive: true });
-copyFileSync(join(app, 'build/icon-window.png'), join(out, 'icon.png'));
+copyFileSync(join(app, 'build/icons/256x256.png'), join(out, 'icon.png'));
 if (prod) {
   const bad = ['main/index.cjs', 'preload/index.cjs', 'key-helper/pa-key.cjs']
     .filter((f) => /PA_SMOKE|runLoginSmoke|runUiSmokeStep|runKeysSmokeStep|smoke/i.test(readFileSync(join(out, f), 'utf8')));

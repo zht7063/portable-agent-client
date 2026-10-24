@@ -11,8 +11,7 @@ describe('swift-client app icon', () => {
   it('generated icon files exist with the expected formats and sizes', () => {
     expect(existsSync(join(app, 'build/icon-source.jpeg'))).toBe(true);
     expect(png('build/icon.png')).toEqual({ sig: 'PNG', w: 1024, h: 1024 });
-    expect(png('build/icon-window.png')).toEqual({ sig: 'PNG', w: 256, h: 256 });
-    for (const n of [16, 24, 32, 48, 64, 128, 256, 512, 1024]) expect(png(`build/icons/${n}x${n}.png`)).toEqual({ sig: 'PNG', w: n, h: n });
+    for (const n of [16, 24, 32, 48, 64, 128, 256, 512]) expect(png(`build/icons/${n}x${n}.png`)).toEqual({ sig: 'PNG', w: n, h: n });
     const icns = readFileSync(join(app, 'build/icon.icns'));
     expect(icns.subarray(0, 4).toString()).toBe('icns');
     const types: string[] = [];
@@ -22,6 +21,21 @@ describe('swift-client app icon', () => {
     expect(ico.readUInt16LE(2)).toBe(1);
     const sizes = Array.from({ length: ico.readUInt16LE(4) }, (_, k) => ico[6 + k * 16] || 256).sort((a, b) => a - b);
     expect(sizes).toEqual([16, 24, 32, 48, 64, 128, 256]);
+  });
+
+  it('no duplicate/oversized outputs and no metadata (EXIF, MakerNote, thumbnail, ICC, text chunks)', () => {
+    for (const f of ['build/icon-window.png', 'build/icons/1024x1024.png']) expect(existsSync(join(app, f))).toBe(false);
+    const jpg = readFileSync(join(app, 'build/icon-source.jpeg'));
+    for (let i = 2; jpg[i + 1] !== 0xda; i += 2 + jpg.readUInt16BE(i + 2)) {
+      const m = jpg[i + 1]!;
+      expect(m >= 0xe0 && m <= 0xef, `APP${m - 0xe0} segment`).toBe(false);
+      expect(m).not.toBe(0xfe);
+    }
+    const pngs = ['build/icon.png', ...[16, 24, 32, 48, 64, 128, 256, 512].map((n) => `build/icons/${n}x${n}.png`)];
+    for (const f of pngs) {
+      const b = readFileSync(join(app, f));
+      for (let i = 8; i < b.length; i += 12 + b.readUInt32BE(i)) expect(['IHDR', 'PLTE', 'tRNS', 'IDAT', 'IEND']).toContain(b.subarray(i + 4, i + 8).toString());
+    }
   });
 
   it('electron-builder uses the icons for the app, dmg, NSIS installer and Linux', () => {
@@ -38,6 +52,9 @@ describe('swift-client app icon', () => {
 
   it('the BrowserWindow gets the PNG icon on Windows/Linux and build-main ships it in dist/', () => {
     expect(readFileSync(join(app, 'src/main/index.ts'), 'utf8')).toContain("icon: join(__dirname, '../icon.png')");
-    expect(readFileSync(join(app, 'scripts/build-main.mjs'), 'utf8')).toContain("copyFileSync(join(app, 'build/icon-window.png'), join(out, 'icon.png'))");
+    const stage = readFileSync(join(app, 'scripts/stage.mjs'), 'utf8');
+    expect(stage).toContain("cpSync(join(app, 'dist', 'icon.png'), join(stage, 'dist', 'icon.png'))");
+    expect(stage).toContain("stage: dist/icon.png was not staged");
+    expect(readFileSync(join(app, 'scripts/build-main.mjs'), 'utf8')).toContain("copyFileSync(join(app, 'build/icons/256x256.png'), join(out, 'icon.png'))");
   });
 });
