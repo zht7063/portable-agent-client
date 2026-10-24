@@ -3,6 +3,10 @@
 name: installers
 on:
   workflow_dispatch:
+  # TEMPORARY: dispatch is refused until this file is on the default branch; this push trigger (feat/installer only)
+  # lets the branch run it. REMOVE before merging PR #3.
+  push:
+    branches: [feat/installer]
 permissions:
   contents: read
 concurrency:
