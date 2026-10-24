@@ -1,7 +1,7 @@
 // M7: scripts/scan-bundle.mjs flags secret shapes and weakened main/preload settings, never prints the match.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -177,6 +177,19 @@ describe('scan-bundle', () => {
   it('the repo allowlist is well-formed and every entry is justified', () => {
     const a = JSON.parse(readFileSync(resolve(SCRIPT, '../scan-bundle-allowlist.json'), 'utf8'));
     for (const e of a.entries) { expect(e.sha256).toMatch(/^[0-9a-f]{64}$/); expect(e.reason.length).toBeGreaterThan(10); expect(e.paths.length).toBeGreaterThan(0); }
+  });
+  it('symlinks are skipped, not followed (no loops, nothing outside the scanned dir)', () => {
+    dir = mkdtempSync(join(tmpdir(), 'pa-scan-'));
+    mkdirSync(join(dir, 'b', 'Versions', 'A'), { recursive: true });
+    writeFileSync(join(dir, 'b', 'Versions', 'A', 'ok.js'), 'x()');
+    writeFileSync(join(dir, 'outside.js'), `const k = "${KEY}";`);
+    symlinkSync(join(dir, 'b'), join(dir, 'b', 'Versions', 'loop'));
+    symlinkSync('A', join(dir, 'b', 'Versions', 'Current'));
+    symlinkSync(join(dir, 'outside.js'), join(dir, 'b', 'linked.js'));
+    const r = run();
+    expect(r.status).toBe(0);
+    writeFileSync(join(dir, 'b', 'Versions', 'A', 'bad.js'), `const k = "${KEY}";`);
+    expect(run().status).not.toBe(0); // real files are still scanned
   });
   it('missing directory is an error, not a pass', () => {
     const r = spawnSync(process.execPath, [SCRIPT, join(tmpdir(), 'pa-scan-does-not-exist')], { encoding: 'utf8' });

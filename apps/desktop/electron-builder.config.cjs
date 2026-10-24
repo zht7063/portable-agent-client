@@ -48,8 +48,10 @@ module.exports = {
   // LOCAL builds (pack:dir, pack:*:local) are marked in the file name; official ones are not.
   artifactName: `\${name}-\${version}-\${os}-\${arch}${LOCAL ? '-LOCAL' : ''}.\${ext}`,
   // Installers (local, unsigned, never published): `bun run pack:mac` (dmg arm64 + x64, must run on macOS) and
-  // `bun run pack:win` (NSIS x64). No signing: mac identity null (ad-hoc on arm64), no Windows certificate.
-  mac: { target: 'dir', identity: null, category: 'public.app-category.developer-tools' },
+  // `bun run pack:win` (NSIS x64). No Developer ID signing and no Windows certificate. LOCAL mac builds are ad-hoc
+  // signed (identity '-') so the arm64 app is not reported as "damaged"; official mac builds stay unsigned (null)
+  // until signing/notarization is decided.
+  mac: { target: 'dir', identity: LOCAL ? '-' : null, category: 'public.app-category.developer-tools' },
   dmg: { writeUpdateInfo: false },
   win: { target: 'dir', signAndEditExecutable: true, verifyUpdateCodeSignature: false },
   nsis: {

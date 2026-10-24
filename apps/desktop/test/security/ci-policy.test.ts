@@ -7,7 +7,7 @@ const WF = resolve(__dirname, '../../../../.github/workflows');
 const files = readdirSync(WF).filter((f) => /\.ya?ml$/.test(f));
 
 describe('CI workflow policy', () => {
-  it('there are exactly the ci and compat workflows', () => expect(files.sort()).toEqual(['ci.yml', 'compat.yml', 'installers.yml']));
+  it('there are exactly the ci, compat and installers workflows', () => expect(files.sort()).toEqual(['ci.yml', 'compat.yml', 'installers.yml']));
   for (const f of files) {
     const y = readFileSync(join(WF, f), 'utf8');
     const code = y.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
@@ -54,6 +54,12 @@ describe('CI workflow policy', () => {
       const retention = [...code.matchAll(/retention-days: (\d+)/g)].map((m) => m[1]);
       expect(retention).toEqual(['7', '7']);
       for (const m of code.matchAll(/apps\/desktop\/release\/(\S+)/g)) expect(m[1]).toMatch(/-LOCAL\./);
+      // pinned runner images, integrity-checked x64 keyring (no --force), ad-hoc signature verified
+      expect([...code.matchAll(/runs-on: (\S+)/g)].map((m) => m[1])).toEqual(['windows-2025', 'macos-14']);
+      expect(code).not.toMatch(/--force\b/);
+      expect(code).toMatch(/test "\$got" = "\$lock"/);
+      expect(code).toContain('codesign --verify --deep --strict');
+      expect(code).toContain("grep -q 'Signature=adhoc'");
     });
   });
 
