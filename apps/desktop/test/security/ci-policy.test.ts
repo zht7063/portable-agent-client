@@ -37,11 +37,10 @@ describe('CI workflow policy', () => {
 
   describe('installers.yml (LOCAL unsigned installers, artifacts only)', () => {
     const code = readFileSync(join(WF, 'installers.yml'), 'utf8').split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
-    it('manual dispatch (+ the temporary feat/installer-only push trigger, to be removed before merge)', () => {
-      expect(code).toMatch(/^on:\n {2}workflow_dispatch:\n/m);
-      expect(code).not.toMatch(/^\s*(?:pull_request|pull_request_target|schedule|workflow_run|repository_dispatch):/m);
-      const push = code.match(/^ {2}push:\n {4}branches: \[(.*)\]$/m);
-      if (push) expect(push[1]).toBe('feat/installer');
+    it('manual dispatch only (no push or other automatic trigger)', () => {
+      expect(code).toMatch(/^on:\n {2}workflow_dispatch:\n(?! )/m);
+      expect(code).not.toMatch(/^\s*(?:push|pull_request|pull_request_target|schedule|workflow_run|repository_dispatch|workflow_call):/m);
+      expect(readFileSync(join(WF, 'installers.yml'), 'utf8')).not.toMatch(/\bpush:/);
     });
     it('no secrets/publish/release steps; only LOCAL pack scripts; unsigned; artifacts kept 7 days', () => {
       expect(code).not.toMatch(/secrets\.|GITHUB_TOKEN|github\.token|gh release|softprops|npm publish|pull_request_target/i);
