@@ -5,9 +5,10 @@
       "sha256": "a5979044b51b95dbe9c35b2f3fb0701ba9deb44b64e8fdb754635582dc255349",
       "paths": [
         "renderer/static/js/async/24151.*.js",
-        "**/resources/app.asar:dist/renderer/static/js/async/24151.*.js"
+        "**/resources/app.asar:dist/renderer/static/js/async/24151.*.js",
+        "**/Contents/Resources/app.asar:dist/renderer/static/js/async/24151.*.js"
       ],
-      "pathsNote": "rsbuild chunk 24151 with a content-hash suffix ('*' only covers the hash, which changes on any rebuild of that chunk); the asar form is the same file inside the packaged app (linux-unpacked today, any platform's resources/ dir).",
+      "pathsNote": "rsbuild chunk 24151 with a content-hash suffix ('*' only covers the hash, which changes on any rebuild of that chunk); the asar form is the same file inside the packaged app (linux-unpacked today, any platform's resources/ dir). The Contents/Resources form is the macOS .app layout (release/mac-arm64/<App>.app/..., release/mac/<App>.app/... for x64).",
       "reason": "SVG path data (attr d of a 512x512 react-icons icon: run of absolute H/V/z commands like 'H128V512H0V352...'), not a secret"
     }
   ]

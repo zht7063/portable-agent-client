@@ -31,6 +31,7 @@ writeFileSync(join(stage, 'package.json'), JSON.stringify({
 for (const f of ['LICENSE', 'NOTICE', 'THIRD-PARTY-LICENSES.md']) cpSync(join(repo, f), join(stage, f));
 
 const staged = [];
+const stagedVersions = {};
 if (platform === 'darwin' || platform === 'win32') {
   // bun's isolated linker exposes @napi-rs/keyring only to its dependent (@pac/keychain), and the platform binary
   // only next to @napi-rs/keyring itself, so resolve from there.
@@ -41,10 +42,27 @@ if (platform === 'darwin' || platform === 'win32') {
     if (lic !== 'MIT') throw new Error(`${name}: unexpected license ${lic}`);
     cpSync(src, join(stage, 'node_modules', ...name.split('/')), { recursive: true });
     staged.push(name);
+    stagedVersions[name] = JSON.parse(readFileSync(join(src, 'package.json'), 'utf8')).version;
   };
   copy('@napi-rs/keyring');
   const keyringReq = createRequire(keychainReq.resolve('@napi-rs/keyring/package.json'));
-  const plat = { darwin: `darwin-${arch}`, win32: `win32-${arch}-msvc` }[platform];
-  try { copy(`@napi-rs/keyring-${plat}`, keyringReq); } catch (e) { console.warn(`warning: @napi-rs/keyring-${plat} not installed (${e.message}); keychain will fall back to env mode`); }
+  // Cross-builds: bun installs only the host's optional platform binary. PA_NATIVE_PREBUILT_DIR may point at a dir
+  // with node_modules/@napi-rs/keyring-<plat>/ fetched separately (e.g. `npm pack`), same version, MIT-checked.
+  const prebuiltReq = process.env.PA_NATIVE_PREBUILT_DIR ? createRequire(join(process.env.PA_NATIVE_PREBUILT_DIR, 'package.json')) : null;
+  // One arch per stage (pack:mac stages and packages arm64 and x64 separately), so the generated package.json
+  // declares exactly the binary that is bundled.
+  if (!/^(x64|arm64|ia32|armv7l)$/.test(arch)) throw new Error(`PA_TARGET_ARCH must be a single arch (got ${arch})`);
+  for (const a of [arch]) {
+    const plat = { darwin: `darwin-${a}`, win32: `win32-${a}-msvc` }[platform];
+    try { copy(`@napi-rs/keyring-${plat}`, keyringReq); } catch (e) {
+      try { if (!prebuiltReq) throw e; copy(`@napi-rs/keyring-${plat}`, prebuiltReq); } catch (e2) { console.warn(`warning: @napi-rs/keyring-${plat} not installed (${e2.message}); keychain will fall back to env mode`); }
+    }
+  }
+}
+// electron-builder only packs node_modules that the app package.json declares; without this the native keyring
+// module was silently dropped from mac/win packages (keychain fell back to env mode).
+if (staged.length) {
+  const sp = join(stage, 'package.json');
+  writeFileSync(sp, JSON.stringify({ ...JSON.parse(readFileSync(sp, 'utf8')), dependencies: stagedVersions }, null, 2));
 }
 console.log(`staged ${platform}-${arch}: native modules [${staged.join(', ') || 'none'}]`);

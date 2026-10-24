@@ -1,0 +1,109 @@
+# LOCAL test builds (not for distribution): Windows unsigned; macOS ad-hoc signed only; no release. Manual dispatch only; no secrets.
+# Artifacts are named *-LOCAL.* (pack:*:local, PA_LOCAL_BUILD=1) and kept 7 days. See docs/release.md.
+name: installers
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: installers-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+  PA_REQUIRE_WEB_DEPS: '1'
+jobs:
+  win:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.19.0
+      - run: bun install --frozen-lockfile
+      - run: bun run install:web
+      - name: Pack NSIS x64 (LOCAL, unsigned, publish never)
+        working-directory: apps/desktop
+        run: bun run pack:win:local
+      - name: Bundle scan
+        run: node scripts/scan-bundle.mjs
+      - name: Checksums
+        working-directory: apps/desktop/release
+        run: |
+          ls -la
+          for f in *-LOCAL.exe; do sha256sum "$f" > "$f.sha256"; cat "$f.sha256"; done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: portable-agent-win-x64-LOCAL
+          path: |
+            apps/desktop/release/*-LOCAL.exe
+            apps/desktop/release/*-LOCAL.exe.sha256
+          if-no-files-found: error
+          retention-days: 7
+  mac:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.19.0
+      - run: bun install --frozen-lockfile
+      - run: bun run install:web
+      - name: Fetch x64 keyring binary (host is arm64; same version as @napi-rs/keyring, integrity-checked)
+        run: |
+          v=$(ls node_modules/.bun | sed -n 's/^@napi-rs+keyring@\([0-9.]*\)$/\1/p' | head -1)
+          test -n "$v"
+          pkg="@napi-rs/keyring-darwin-x64@$v"
+          lock=$(grep -o "\"$pkg\", \"\", {[^}]*}, \"sha512-[A-Za-z0-9+/=]*\"" bun.lock | grep -o 'sha512-[A-Za-z0-9+/=]*')
+          reg=$(npm view "$pkg" dist.integrity)
+          echo "lockfile $lock"; echo "registry $reg"
+          test -n "$lock" && test "$lock" = "$reg"
+          d="$RUNNER_TEMP/prebuilt"; mkdir -p "$d/dl" "$d/node_modules/@napi-rs/keyring-darwin-x64"
+          tgz=$(cd "$d/dl" && npm pack "$pkg" --silent --ignore-scripts)
+          got="sha512-$(openssl dgst -sha512 -binary "$d/dl/$tgz" | base64 | tr -d '\n')"
+          echo "tarball  $got"
+          test "$got" = "$lock"
+          tar -xzf "$d/dl/$tgz" -C "$d/node_modules/@napi-rs/keyring-darwin-x64" --strip-components=1
+          echo "PA_NATIVE_PREBUILT_DIR=$d" >> "$GITHUB_ENV"
+      - name: Pack dmg arm64 + x64 (LOCAL, unsigned, publish never)
+        working-directory: apps/desktop
+        run: bun run pack:mac:local
+      - name: Verify ad-hoc code signature (LOCAL mac builds, identity '-')
+        working-directory: apps/desktop/release
+        run: |
+          for app in mac*/*.app; do
+            echo "== $app"
+            codesign --verify --deep --strict --verbose=2 "$app"
+            codesign -dv "$app" 2> sig.txt; cat sig.txt
+            grep -q 'Signature=adhoc' sig.txt
+          done
+          rm -f sig.txt
+      - name: Bundle scan
+        run: node scripts/scan-bundle.mjs
+      - name: Checksums
+        working-directory: apps/desktop/release
+        run: |
+          ls -la
+          for f in *-LOCAL.dmg; do shasum -a 256 "$f" > "$f.sha256"; cat "$f.sha256"; done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: portable-agent-mac-LOCAL
+          path: |
+            apps/desktop/release/*-LOCAL.dmg
+            apps/desktop/release/*-LOCAL.dmg.sha256
+          if-no-files-found: error
+          retention-days: 7

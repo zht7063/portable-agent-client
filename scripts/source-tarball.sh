@@ -24,7 +24,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
   echo "commit: $COMMIT"
   echo "upstream: $(git show "$COMMIT:compat.json" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const c=JSON.parse(s);console.log(c.upstream+' '+c.tag+' '+c.commit)})")"
   echo "license: AGPL-3.0-only (see LICENSE, NOTICE)"
-  echo "build: see docs/release.md (bun install --frozen-lockfile; cd apps/desktop; bun run pack:dir | pack:linux)"
+  echo "build: see docs/release.md (bun install --frozen-lockfile; bun run install:web; cd apps/desktop; official: bun run pack:linux | pack:win | pack:mac (refuse while sourceUrl/sourceOffer are placeholders); LOCAL: bun run pack:dir | pack:linux:local | pack:win:local | pack:mac:local)"
 } > "$TMP/SOURCE-INFO.txt"
 # Reproducible (Aegis M6 item 4): same commit -> byte-identical tarball. Fixed mtime (commit time),
 # numeric owner/group 0, sorted entries, no gzip name/timestamp, fixed umask-independent modes.

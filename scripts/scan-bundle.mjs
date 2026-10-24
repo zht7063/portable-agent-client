@@ -10,7 +10,7 @@
 //     case, lower case and a digit (so hex digests and single-case IDs never match).
 //   - main/preload only: weakened webPreferences, openDevTools, remote module, generic ipcRenderer exposure
 // Upstream renderer code legitimately contains words like "token"; only concrete secret shapes are flagged.
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 
@@ -87,7 +87,11 @@ const EXT = /\.(?:c|m)?js$|\.html$|\.json$|\.map$|\.txt$|\.svg$/;
 function* walk(d) {
   for (const e of readdirSync(d)) {
     const p = join(d, e);
-    if (statSync(p).isDirectory()) yield* walk(p); else if (EXT.test(e) || e.endsWith('.asar')) yield p;
+    const st = lstatSync(p);
+    // Symlinks are skipped (never followed): .app bundles contain framework symlinks (Versions/Current, ...) whose
+    // targets are walked at their real path anyway, and following links could loop or escape the scanned dir.
+    if (st.isSymbolicLink()) continue;
+    if (st.isDirectory()) yield* walk(p); else if (EXT.test(e) || e.endsWith('.asar')) yield p;
   }
 }
 
