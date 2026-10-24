@@ -41,9 +41,28 @@ module.exports = {
   linux: { target: 'dir', category: 'Development', maintainer: `${product.productName} (placeholder) <noreply@example.invalid>`, synopsis: `${product.productName} desktop client (based on new-api)` },
   deb: { packageCategory: 'devel' },
   artifactName: '${name}-${version}-${os}-${arch}-LOCAL.${ext}',
-  mac: { target: 'dir', identity: null },
-  win: { target: 'dir' },
-  // Use the locally installed Electron; no download.
-  // Resolved through this package's node_modules (bun's isolated linker does not hoist electron to the repo root).
-  electronDist: require('node:path').join(require('node:path').dirname(require.resolve('electron/package.json', { paths: [__dirname] })), 'dist'),
+  // Installers (local, unsigned, never published): `bun run pack:mac` (dmg arm64 + x64, must run on macOS) and
+  // `bun run pack:win` (NSIS x64). No signing: mac identity null (ad-hoc on arm64), no Windows certificate.
+  mac: { target: 'dir', identity: null, category: 'public.app-category.developer-tools' },
+  dmg: { writeUpdateInfo: false },
+  win: { target: 'dir', signAndEditExecutable: true, verifyUpdateCodeSignature: false },
+  nsis: {
+    oneClick: false,
+    perMachine: false,
+    allowElevation: true,
+    allowToChangeInstallationDirectory: true,
+    createDesktopShortcut: true,
+    createStartMenuShortcut: true,
+    shortcutName: product.productName,
+    uninstallDisplayName: `${product.productName} (LOCAL build)`,
+    deleteAppDataOnUninstall: false,
+    differentialPackage: false,
+    license: '../../LICENSE',
+  },
+  // Linux host building Linux: use the locally installed Electron (no download), resolved through this package's
+  // node_modules (bun's isolated linker does not hoist electron to the repo root). Other target platforms return
+  // null, so electron-builder fetches the matching official Electron zip (checksum-verified) into its cache.
+  electronDist: (opts) => (opts.platformName === 'linux' && process.platform === 'linux' && opts.arch === process.arch
+    ? require('node:path').join(require('node:path').dirname(require.resolve('electron/package.json', { paths: [__dirname] })), 'dist')
+    : null),
 };

@@ -1,6 +1,6 @@
 // Aegis M6 item 6: a build must not ship the unreplaced source-offer placeholders (AGPL §6/§13 source offer).
 // product.config.json keeps the placeholders for now; any packaging run fails while they are unreplaced unless the
-// build is explicitly a LOCAL one (PA_LOCAL_BUILD=1, set only by pack:dir / pack:linux, whose artifacts are named
+// build is explicitly a LOCAL one (PA_LOCAL_BUILD=1, set only by pack:dir / pack:linux / pack:win / pack:mac, whose artifacts are named
 // *-LOCAL and are never distributed). A release build must replace sourceUrl/sourceOffer and drop them from
 // "$placeholders" first.
 /* global module */

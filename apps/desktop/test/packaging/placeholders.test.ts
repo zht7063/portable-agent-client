@@ -44,7 +44,7 @@ describe('source-offer placeholder check', () => {
     const scripts = JSON.parse(readFileSync(join(DESKTOP, 'package.json'), 'utf8')).scripts as Record<string, string>;
     for (const [name, cmd] of Object.entries(scripts)) {
       if (cmd.includes('electron-builder')) {
-        expect(['pack:dir', 'pack:linux']).toContain(name);
+        expect(['pack:dir', 'pack:linux', 'pack:win', 'pack:mac']).toContain(name);
         expect(cmd).toContain('PA_LOCAL_BUILD=1 electron-builder');
       }
     }

@@ -81,7 +81,45 @@ Rules for any future distribution (not done yet):
 2. Keep that commit reachable at `sourceUrl`, or ship/offer the matching source tarball alongside the binary.
 3. Network use (§13) is not applicable to the client itself, but the About page offers source to every user anyway.
 
+## Local installers: Windows (NSIS) and macOS (dmg) — unsigned, LOCAL, never published
+
+All builds are local and named `*-LOCAL.*` (`PA_LOCAL_BUILD=1`, same placeholder rule as `pack:dir`/`pack:linux`).
+Nothing is signed or notarized; nothing is uploaded (`publish: null`, `--publish never`). appId/productName/branding
+are still placeholders (see the TODO below).
+
+| Platform | Command (in `apps/desktop`) | Build host | Output in `release/` |
+| --- | --- | --- | --- |
+| Windows x64 | `bun run pack:win` | Windows (or Linux/macOS **with wine**) | `portable-agent-<ver>-win-x64-LOCAL.exe` (NSIS, + `win-unpacked/`) |
+| macOS arm64 + x64 | `bun run pack:mac` | **macOS only** (dmg needs hdiutil) | `portable-agent-<ver>-mac-arm64-LOCAL.dmg`, `…-mac-x64-LOCAL.dmg` (+ `mac*/`) |
+| Linux x64 | `bun run pack:linux` | Linux | AppImage + deb |
+
+- NSIS installer: assisted (not one-click), per-user by default with optional elevation, install directory can be
+  changed, desktop + Start-menu shortcuts, AGPL license page, uninstaller (app data is kept on uninstall).
+- Native keychain module: `scripts/stage.mjs` stages `@napi-rs/keyring` + the target's binary and declares them as
+  `dependencies` in the staged package.json (electron-builder drops undeclared node_modules). bun installs only the
+  host's binary; for a cross-build fetch the target's package first, e.g.
+  `npm pack @napi-rs/keyring-win32-x64-msvc@2.1.2` → extract to `<dir>/node_modules/@napi-rs/keyring-win32-x64-msvc/`
+  and run with `PA_NATIVE_PREBUILT_DIR=<dir>`. Without it the build warns and the app falls back to env key mode.
+- Cross-building Windows on Linux needs wine (rcedit + NSIS uninstaller extraction). Without wine only a portable zip
+  works: `PA_LOCAL_BUILD=1 electron-builder --config electron-builder.config.cjs --win zip --x64 --publish never -c.win.signAndEditExecutable=false`
+  (after `bun run build:prod` and `PA_TARGET_PLATFORM=win32 PA_TARGET_ARCH=x64 node scripts/stage.mjs`); the exe then
+  keeps Electron's default version info.
+- For Windows/macOS targets electron-builder downloads the official Electron zip (checksum-verified) into its cache;
+  the local Electron is used only for native Linux builds.
+- Scan: `node scripts/scan-bundle.mjs` scans `release/` recursively (`win-unpacked/`, `mac*/…app`, app.asar). The
+  compressed `.exe`/`.dmg` themselves are not unpacked; scan the unpacked dirs produced by the same run.
+
+### Unsigned caveats
+- **Windows SmartScreen**: "Windows protected your PC" → *More info* → *Run anyway*. Some AV may flag unsigned NSIS.
+- **macOS Gatekeeper**: "cannot be opened / is damaged" → right-click → *Open*, or System Settings → Privacy &
+  Security → *Open Anyway*, or `xattr -dr com.apple.quarantine "/Applications/<App>.app"`. arm64 builds are ad-hoc
+  signed by the toolchain; no Developer ID, not notarized.
+- Distribution to others needs the AGPL source-offer decision, real branding/appId, and signing (Apple Developer ID +
+  notarization; Windows code-signing certificate).
+
 ## TODO: official production packaging (blocked on a decision)
+
+Also pending: branding/appId (placeholders) and signing for Windows/macOS installers.
 
 **Pending yubai's decision on how the AGPL Corresponding Source is offered**: (a) a public source repository at
 `sourceUrl`, or (b) a written offer (`sourceOffer`) with the matching source tarball. Until then there is **no**
