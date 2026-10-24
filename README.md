@@ -1,4 +1,4 @@
-# Portable Agent client (placeholder name)
+# swift-client
 
 A desktop client for [new-api](https://github.com/QuantumNous/new-api) servers. It configures local coding agents (Pi, Claude Code, Codex) against your relay, and keeps keys in the OS keychain. Status: **M0–M3** of plan v2. The UI is the upstream new-api web frontend (vendored, patched, built with bun + Rsbuild via `scripts/build-new-api-web.sh`); renderer `/api/*` requests are forwarded by the main process to the configured server with a main-only session (M3, see `docs/proxy.md`).
 

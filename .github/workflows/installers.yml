@@ -42,7 +42,7 @@ jobs:
           for f in *-LOCAL.exe; do sha256sum "$f" > "$f.sha256"; cat "$f.sha256"; done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: portable-agent-win-x64-LOCAL
+          name: swift-client-win-x64-LOCAL
           path: |
             apps/desktop/release/*-LOCAL.exe
             apps/desktop/release/*-LOCAL.exe.sha256
@@ -101,7 +101,7 @@ jobs:
           for f in *-LOCAL.dmg; do shasum -a 256 "$f" > "$f.sha256"; cat "$f.sha256"; done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: portable-agent-mac-LOCAL
+          name: swift-client-mac-LOCAL
           path: |
             apps/desktop/release/*-LOCAL.dmg
             apps/desktop/release/*-LOCAL.dmg.sha256

@@ -23,7 +23,7 @@ describe('keyring backends', () => {
     expect(await k.get('default/codex')).toBeNull();
     for (const c of calls) expect(c.args.join(' ')).not.toContain(SECRET);
     expect(calls.find((c) => c.args[0] === 'store')!.input).toBe(SECRET);
-    expect(calls.find((c) => c.args[0] === 'store')!.args).toEqual(['store', '--label=Portable Agent (default/codex)', 'service', 'portable-agent', 'account', 'default/codex']);
+    expect(calls.find((c) => c.args[0] === 'store')!.args).toEqual(['store', '--label=swift-client (default/codex)', 'service', 'portable-agent', 'account', 'default/codex']);
   });
   it('secret-tool unavailable: no D-Bus, not installed, or service error', async () => {
     const never: ExecLite = async () => { throw new Error('must not run'); };

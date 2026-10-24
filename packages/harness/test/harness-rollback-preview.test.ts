@@ -76,7 +76,7 @@ describe('rollback guards external edits (Aegis #1)', () => {
     const edited = (await readFile(s.config, 'utf8')) + '\n[tui]\nanimations = false\n';
     await writeFile(s.config, edited);
     expect((await s.h.previewRollback('codex', 'last')).externalEdits).toEqual([s.config]);
-    await expect(s.h.rollback('codex', 'last')).rejects.toThrow(/Modified after Portable Agent last wrote them/);
+    await expect(s.h.rollback('codex', 'last')).rejects.toThrow(/Modified after swift-client last wrote them/);
     await expect(s.h.rollback('codex', 'first-write')).rejects.toThrow(/confirm overwrite/);
     expect(await readFile(s.config, 'utf8')).toBe(edited); // untouched
     await s.h.rollback('codex', 'first-write', { overwriteExternal: true });

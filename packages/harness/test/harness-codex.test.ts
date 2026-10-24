@@ -28,7 +28,7 @@ describe('codex adapter: values', () => {
   it('provider table: /v1 base, responses, auth command (no shell quoting) or env_key; plaintext refused', () => {
     expect(codexBaseUrl('http://h:3000')).toBe('http://h:3000/v1');
     expect(codexBaseUrl('http://h:3000/v1/')).toBe('http://h:3000/v1');
-    expect(codexProvider(profile(), '/x y/pa-key')).toEqual({ name: 'Portable Agent', base_url: 'http://new-api.test:3000/v1', wire_api: 'responses', auth: { command: '/x y/pa-key', args: ['default', 'codex'] } });
+    expect(codexProvider(profile(), '/x y/pa-key')).toEqual({ name: 'swift-client', base_url: 'http://new-api.test:3000/v1', wire_api: 'responses', auth: { command: '/x y/pa-key', args: ['default', 'codex'] } });
     expect(codexProvider(profile({ keyMode: 'env', envVar: 'RAIN' }), '/x')).toMatchObject({ env_key: 'RAIN' });
     expect(codexProvider(profile({ keyMode: 'env' }), '/x')).not.toHaveProperty('auth');
     expect(() => codexProvider(profile({ keyMode: 'plaintext' }), '/x')).toThrow(/Plaintext/);
@@ -56,7 +56,7 @@ describe('codex adapter: plan/apply/rollback', () => {
     expect(text.startsWith('# keep me\nmodel = "deepseek-v4-pro-responses"\nmodel_reasoning_effort = "high"\nmodel_provider = "pa"\n')).toBe(true);
     expect(text).toContain('[mcp_servers.x]\ncommand = "npx"\n');
     const j = parseToml(text);
-    expect(j.model_providers).toEqual({ pa: { name: 'Portable Agent', base_url: 'http://new-api.test:3000/v1', wire_api: 'responses', auth: { command: s.helper, args: ['default', 'codex'] } } });
+    expect(j.model_providers).toEqual({ pa: { name: 'swift-client', base_url: 'http://new-api.test:3000/v1', wire_api: 'responses', auth: { command: s.helper, args: ['default', 'codex'] } } });
     expect(text).not.toContain('sk-');
     expect(JSON.parse(await readFile(s.auth, 'utf8')).OPENAI_API_KEY).toBe(SECRET); // untouched
     expect(JSON.stringify(await s.state.load())).not.toContain(SECRET);

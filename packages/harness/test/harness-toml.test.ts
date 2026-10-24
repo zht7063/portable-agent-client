@@ -20,7 +20,7 @@ args = ["-y", "foo"]
 [profiles.fast]
 model = "o4-mini"
 `;
-const PROV = { name: 'Portable Agent', base_url: 'http://h/v1', wire_api: 'responses', auth: { command: '/a b/pa-key', args: ['default', 'codex'] } };
+const PROV = { name: 'swift-client', base_url: 'http://h/v1', wire_api: 'responses', auth: { command: '/a b/pa-key', args: ['default', 'codex'] } };
 
 describe('mergeOwnedToml', () => {
   it('replaces top-level keys in place (keeps trailing comment), replaces the provider table and its subtables, keeps the rest byte-for-byte', () => {
@@ -57,7 +57,7 @@ describe('toml: user comments inside our table (Aegis low)', () => {
   it('keeps full-line comments from the replaced section above our block, and on removal', async () => {
     const { mergeOwnedToml } = await import('@pac/harness');
     const src = 'model = "x"\n\n[model_providers.pa]\n# my note about pa\nname = "old"\n# second note\nbase_url = "http://old"\n\n# servers\n[mcp_servers.a]\ncommand = "npx"\n';
-    const out = mergeOwnedToml(src, [{ path: ['model_providers', 'pa'], value: { name: 'Portable Agent', base_url: 'http://h/v1', wire_api: 'responses' } }]);
+    const out = mergeOwnedToml(src, [{ path: ['model_providers', 'pa'], value: { name: 'swift-client', base_url: 'http://h/v1', wire_api: 'responses' } }]);
     expect(out).toContain('# my note about pa');
     expect(out).toContain('# second note');
     expect(out.indexOf('# my note about pa')).toBeLessThan(out.indexOf('[model_providers.pa]'));

@@ -42,11 +42,27 @@ jobs:
         run: bun run test
       - name: Compat + licenses
         run: bun run compat && bun run licenses
-      - name: Official packaging guard refuses while the source offer is a placeholder (even with PA_LOCAL_BUILD=1 inherited)
+      - name: Product config passes the static source-offer check (no placeholders; reachability is checked only by --official)
+        working-directory: apps/desktop
+        run: PA_LOCAL_BUILD=0 node scripts/check-placeholders.cjs
+      - name: Official guard (--official) refuses when packaging conditions are not met (independent of the real config)
         working-directory: apps/desktop
         run: |
-          if PA_LOCAL_BUILD=1 node scripts/check-placeholders.cjs --official 2> guard.err; then echo "guard unexpectedly passed"; exit 1; fi
-          cat guard.err; grep -q 'unreplaced placeholder' guard.err; rm guard.err
+          set -u
+          E="$RUNNER_TEMP/guard.err"  # outside the checkout, so it cannot make the tree dirty
+          refuse() { local want="$1"; shift; if "$@" 2> "$E"; then echo "guard unexpectedly passed: $*"; exit 1; fi; cat "$E"; grep -q "$want" "$E"; }
+          # 1. fixture config with placeholders (copy of the guard in a temp repo layout), even with PA_LOCAL_BUILD=1 inherited
+          T=$(mktemp -d); mkdir -p "$T/apps/desktop/scripts" "$T/packages/core/src"
+          cp scripts/check-placeholders.cjs "$T/apps/desktop/scripts/"
+          jq '.["$placeholders"]=["sourceUrl","sourceOffer"] | .sourceOffer="PLACEHOLDER: source offer pending."' ../../packages/core/src/product.config.json > "$T/packages/core/src/product.config.json"
+          (cd "$T/apps/desktop" && refuse 'unreplaced placeholder' env PA_LOCAL_BUILD=1 node scripts/check-placeholders.cjs --official)
+          echo 'working tree status before the real-config cases:'; git status --porcelain
+          # 2. real config, PA_BUILD_COMMIT that is not HEAD
+          refuse 'does not match git HEAD' env PA_BUILD_COMMIT=0000000000000000000000000000000000000000 node scripts/check-placeholders.cjs --official
+          # 3. real config, dirty working tree
+          touch ci-dirty-marker.txt
+          refuse 'working tree is dirty' node scripts/check-placeholders.cjs --official
+          rm -f ci-dirty-marker.txt "$E"; rm -rf "$T"
       - name: Production build
         working-directory: apps/desktop
         run: bun run build:prod
