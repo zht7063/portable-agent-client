@@ -23,7 +23,21 @@ describe('local packaging config (H4)', () => {
     const pkg = JSON.parse(readFileSync(join(app, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
     for (const s of Object.values(pkg.scripts)) if (s.includes('electron-builder')) expect(s).toContain('--publish never');
     // Packaging scripts build the production (smoke-free) main bundle.
-    for (const n of ['pack:dir', 'pack:linux']) expect(pkg.scripts[n]).toContain('build:prod');
+    for (const n of ['pack:dir', 'pack:linux', 'pack:win', 'pack:mac']) expect(pkg.scripts[n]).toContain('build:prod');
+  });
+
+  it('installers: unsigned NSIS x64 (custom dir, shortcuts) and dmg arm64+x64, local only', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const cfg = require(join(app, 'electron-builder.config.cjs')) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(cfg.mac.identity).toBeNull();
+    expect(cfg.nsis).toMatchObject({ oneClick: false, allowToChangeInstallationDirectory: true, createDesktopShortcut: true, createStartMenuShortcut: true });
+    expect(cfg.win.certificateFile ?? cfg.win.signtoolOptions ?? cfg.win.azureSignOptions).toBeUndefined();
+    const pkg = JSON.parse(readFileSync(join(app, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
+    expect(pkg.scripts['pack:win']).toMatch(/PA_LOCAL_BUILD=1 electron-builder .*--win nsis --x64 --publish never/);
+    expect(pkg.scripts['pack:mac']).toMatch(/PA_LOCAL_BUILD=1 electron-builder .*--mac dmg --arm64 --x64 --publish never/);
+    // Local Electron only for a native linux build; other targets download the official zip.
+    expect(cfg.electronDist({ platformName: 'win32', arch: 'x64' })).toBeNull();
+    expect(cfg.electronDist({ platformName: 'darwin', arch: 'arm64' })).toBeNull();
   });
 
   it('M6: license materials ship as plain files in resources/licenses (and inside the app)', () => {
@@ -46,7 +60,8 @@ describe('local packaging config (H4)', () => {
     expect(mods).toContain('keyring');
     expect(mods.some((m) => m.startsWith('keyring-linux'))).toBe(false);
     const sp = JSON.parse(readFileSync(join(app, 'stage', 'package.json'), 'utf8')) as Record<string, unknown>;
-    expect(sp).not.toHaveProperty('dependencies');
+    // Declared so electron-builder actually packs the staged native module (it drops undeclared node_modules).
+    expect(Object.keys(sp.dependencies as Record<string, string>).sort()).toEqual(mods.map((m) => `@napi-rs/${m}`).sort());
     expect(sp.main).toBe('dist/main/index.cjs');
     run('linux');
   });
