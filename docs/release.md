@@ -72,7 +72,7 @@ packaged JS, all license files present (asar + `resources/licenses/`), no keyrin
   allowlisted host (github.com, gitlab.com, codeberg.org): no userinfo, IP, port, localhost or .example/.invalid/.test
   hosts, no TODO/TBD path. `sourceOffer` must be at least 120 characters and state a validity period ("valid for at
   least three years …") and a contact (email or https URL). In official mode (`--official`) the guard also needs a
-  clean 40-hex build commit (`PA_BUILD_COMMIT` or `git rev-parse HEAD`) and anonymously GETs
+  clean working tree and uses `git rev-parse HEAD` as the build commit (`PA_BUILD_COMMIT`, if set, must equal HEAD; `build-main.mjs --prod` enforces the same and always appends `-dirty` for a dirty tree); the fetch times out after 15 s and anonymously GETs
   `<sourceUrl>/tree/<commit>` (no credentials, no redirects followed) and requires HTTP 200. A release build must
   replace both values, drop them from `"$placeholders"`, and use the official scripts (which force `PA_LOCAL_BUILD=0`).
   `pack:mac` stages and packages arm64 and x64 in two separate runs, so each package's generated `package.json`
@@ -155,6 +155,10 @@ Manual release sign-off (in addition to the automatic guard):
       confirm it loads (HTTP 200) and shows exactly the commit the artifacts were built from (compare with
       About → build commit and `SOURCE-INFO`).
 - [ ] The tarball from `scripts/source-tarball.sh <build-commit>` matches that commit.
+- [ ] If a written offer is used: read the final `sourceOffer` text as shown in About — correct legal entity, a
+      working contact (email/URL), a validity period of at least three years, and how the source is delivered.
+- [ ] The release tag exists on the public repository and points at the build commit
+      (`git ls-remote --tags <sourceUrl> <tag>` run anonymously shows `<build-commit>`).
 
 While the placeholder source links are unreplaced, `scripts/check-placeholders.cjs` makes this command fail by design.
 Still open alongside it: branding, signing/notarization, macOS/Windows hosts, publishing (see below).

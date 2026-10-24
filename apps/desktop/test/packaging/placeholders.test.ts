@@ -8,10 +8,11 @@ import { describe, expect, it } from 'vitest';
 
 const DESKTOP = resolve(__dirname, '../..');
 const req = createRequire(import.meta.url);
-const { unreplacedPlaceholders, assertNoPlaceholders, sourceUrlProblem, sourceOfferProblem, assertOfficialRelease } = req(join(DESKTOP, 'scripts/check-placeholders.cjs')) as {
+const { unreplacedPlaceholders, assertNoPlaceholders, buildCommit, sourceUrlProblem, sourceOfferProblem, assertOfficialRelease } = req(join(DESKTOP, 'scripts/check-placeholders.cjs')) as {
   sourceUrlProblem: (u: string) => string | null;
   sourceOfferProblem: (t: string) => string | null;
-  assertOfficialRelease: (p: object, o: { commit?: string; fetchImpl?: (u: string, init: Record<string, unknown>) => Promise<{ status: number }> }) => Promise<void>;
+  assertOfficialRelease: (p: object, o: { commit?: string; timeoutMs?: number; fetchImpl?: (u: string, init: Record<string, unknown>) => Promise<{ status: number }> }) => Promise<void>;
+  buildCommit: (env: Record<string, string | undefined>, git?: (...a: string[]) => string) => string;
   unreplacedPlaceholders: (p: object) => string[];
   assertNoPlaceholders: (p: object, env: Record<string, string | undefined>) => string | null;
 };
@@ -154,5 +155,28 @@ describe('Aegis round 3: source URL / offer rules and official reachability chec
     expect(r.status).toBe(1);
     expect(r.stderr).toContain('refusing to package');
     expect(cli({ ...publicRepo, $placeholders: [] }, { PA_BUILD_COMMIT: `${C}-dirty` }, ['--official']).status).toBe(1);
+  });
+  it('official check times out (AbortSignal.timeout) instead of hanging', async () => {
+    let sawSignal = false;
+    const hang = (_u: string, init: Record<string, unknown>) => new Promise<{ status: number }>((_r, rej) => {
+      const sig = init.signal as AbortSignal; sawSignal = sig instanceof AbortSignal;
+      sig.addEventListener('abort', () => rej(sig.reason));
+    });
+    await expect(assertOfficialRelease(publicRepo, { commit: C, fetchImpl: hang, timeoutMs: 50 })).rejects.toThrow(/timed out after 50 ms/);
+    expect(sawSignal).toBe(true);
+  });
+  it('build commit: PA_BUILD_COMMIT must equal git HEAD and the tree must be clean', () => {
+    const git = (head: string, status = '') => (...a: string[]) => (a[0] === 'rev-parse' ? `${head}\n` : status);
+    expect(buildCommit({}, git(C))).toBe(C);
+    expect(buildCommit({ PA_BUILD_COMMIT: C }, git(C))).toBe(C);
+    expect(() => buildCommit({ PA_BUILD_COMMIT: 'b'.repeat(40) }, git(C))).toThrow(/does not match git HEAD/);
+    expect(() => buildCommit({ PA_BUILD_COMMIT: C }, git(C, ' M x.ts\n'))).toThrow(/dirty/);
+    expect(() => buildCommit({}, git(C, '?? new.txt\n'))).toThrow(/dirty/);
+    expect(() => buildCommit({ PA_BUILD_COMMIT: C }, git(''))).toThrow(/HEAD/);
+  });
+  it('official CLI: a PA_BUILD_COMMIT that differs from HEAD is refused (real repo)', () => {
+    const r = spawnSync(process.execPath, ['scripts/check-placeholders.cjs', '--official'], { cwd: DESKTOP, encoding: 'utf8', env: { ...process.env, PA_LOCAL_BUILD: '1', PA_BUILD_COMMIT: C } });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('refusing to package');
   });
 });

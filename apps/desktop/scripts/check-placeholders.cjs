@@ -4,7 +4,7 @@
 // artifacts are named *-LOCAL and are never distributed). The official pack scripts run
 // `node scripts/check-placeholders.cjs --official` with PA_LOCAL_BUILD=0 (an inherited PA_LOCAL_BUILD=1 cannot bypass
 // it) and additionally verify that the source URL is anonymously reachable at the build commit.
-/* global module, require, process, console, URL, fetch */
+/* global module, require, process, console, URL, fetch, AbortSignal, __dirname */
 'use strict';
 
 /** Hosts accepted for a public source URL (AGPL §13 "Corresponding Source" location). */
@@ -74,23 +74,35 @@ function assertNoPlaceholders(product, env) {
  * Official release check: placeholders replaced (PA_LOCAL_BUILD is ignored) and, if a sourceUrl is used, an anonymous
  * GET of <sourceUrl>/tree/<commit> returns 200 (no redirects, no credentials). fetchImpl is injectable for tests.
  */
-async function assertOfficialRelease(product, { commit, fetchImpl = fetch } = {}) {
+async function assertOfficialRelease(product, { commit, fetchImpl = fetch, timeoutMs = 15000 } = {}) {
   assertNoPlaceholders(product, {});
   if (!commit || !/^[0-9a-f]{40}$/.test(commit)) throw new Error(`official build needs a clean 40-hex build commit (got ${JSON.stringify(commit)})`);
   if (typeof product.sourceUrl !== 'string' || !product.sourceUrl.trim()) return; // decision (b): written offer only
   const url = `${product.sourceUrl.trim().replace(/\/+$/, '')}/tree/${commit}`;
   let status;
-  try { status = (await fetchImpl(url, { method: 'GET', redirect: 'manual', credentials: 'omit', headers: { 'user-agent': 'portable-agent-release-check' } })).status; }
-  catch (e) { throw new Error(`source URL check failed for ${url}: ${e.message}`); }
+  try { status = (await fetchImpl(url, { method: 'GET', redirect: 'manual', credentials: 'omit', headers: { 'user-agent': 'portable-agent-release-check' }, signal: AbortSignal.timeout(timeoutMs) })).status; }
+  catch (e) {
+    const why = e && (e.name === 'TimeoutError' || e.name === 'AbortError') ? `timed out after ${timeoutMs} ms` : e.message;
+    throw new Error(`source URL check failed for ${url}: ${why}`);
+  }
   if (status !== 200) throw new Error(`source URL ${url} is not anonymously reachable at the build commit (HTTP ${status}; need 200)`);
 }
 
-function buildCommit(env = process.env) {
-  if (env.PA_BUILD_COMMIT) return env.PA_BUILD_COMMIT;
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { execFileSync } = require('node:child_process');
-  const git = (...a) => execFileSync('git', a, { encoding: 'utf8' }).trim();
-  return git('status', '--porcelain') ? `${git('rev-parse', 'HEAD')}-dirty` : git('rev-parse', 'HEAD');
+/**
+ * Official build commit: the git HEAD of a clean working tree. PA_BUILD_COMMIT, if set, must equal HEAD (it cannot
+ * be used to skip the HEAD/dirty checks). gitImpl(...args) -> stdout is injectable for tests.
+ */
+function buildCommit(env = process.env, gitImpl) {
+  const git = gitImpl ?? ((...a) => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { execFileSync } = require('node:child_process');
+    return execFileSync('git', a, { cwd: __dirname, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  });
+  const head = String(git('rev-parse', 'HEAD')).trim();
+  if (!/^[0-9a-f]{40}$/.test(head)) throw new Error(`cannot determine git HEAD (got ${JSON.stringify(head)})`);
+  if (String(git('status', '--porcelain')).trim()) throw new Error('working tree is dirty; official builds need a clean checkout');
+  if (env.PA_BUILD_COMMIT && env.PA_BUILD_COMMIT !== head) throw new Error(`PA_BUILD_COMMIT (${env.PA_BUILD_COMMIT}) does not match git HEAD (${head})`);
+  return head;
 }
 
 module.exports = { SOURCE_HOSTS, PLACEHOLDER_RE, sourceUrlProblem, sourceOfferProblem, placeholderProblems, unreplacedPlaceholders, assertNoPlaceholders, assertOfficialRelease, buildCommit };
@@ -101,7 +113,7 @@ if (require.main === module) {
   const product = require('../../../packages/core/src/product.config.json');
   const fail = (e) => { console.error(`refusing to package: ${e.message}`); process.exit(1); };
   if (process.argv.includes('--official')) {
-    let commit; try { commit = buildCommit(); } catch (e) { fail(e); }
+    let commit; try { assertNoPlaceholders(product, {}); commit = buildCommit(); } catch (e) { fail(e); }
     assertOfficialRelease(product, { commit }).then(() => console.log(`official release check passed (${commit})`), fail);
   } else {
     try { const w = assertNoPlaceholders(product, process.env); if (w) console.warn(w); } catch (e) { fail(e); }

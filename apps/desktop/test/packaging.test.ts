@@ -85,6 +85,23 @@ describe('local packaging config (H4)', () => {
     run('linux');
   });
 
+  it('build-main: PA_BUILD_COMMIT cannot hide a different HEAD (prod fails) or a dirty tree (-dirty suffix)', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'pa-commit-'));
+    try {
+      const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: app, encoding: 'utf8' }).stdout.trim();
+      const dirty = spawnSync('git', ['status', '--porcelain'], { cwd: app, encoding: 'utf8' }).stdout.trim() !== '';
+      const b = (commit: string, prod: boolean, d: string) => spawnSync(process.execPath, ['scripts/build-main.mjs', ...(prod ? ['--prod'] : [])], { cwd: app, env: { ...process.env, PA_OUT_DIR: join(tmp, d), PA_BUILD_COMMIT: commit }, encoding: 'utf8' });
+      const wrong = b('f'.repeat(40), true, 'wrong');
+      expect(wrong.status).toBe(1);
+      expect(wrong.stderr).toContain('does not match git HEAD');
+      expect(b('f'.repeat(40), false, 'wrongdev').status).toBe(0); // dev build only warns
+      expect(b(head, true, 'ok').status).toBe(0);
+      const main = readFileSync(join(tmp, 'ok', 'main', 'index.cjs'), 'utf8');
+      expect(main).toContain(JSON.stringify(head + (dirty ? '-dirty' : '')).slice(0, -1));
+      if (dirty) expect(main).toContain(`${head}-dirty`);
+    } finally { rmSync(tmp, { recursive: true, force: true }); }
+  });
+
   it('production main bundle has no smoke code; the dev bundle keeps it', () => {
     const tmp = mkdtempSync(join(tmpdir(), 'pa-build-'));
     try {
