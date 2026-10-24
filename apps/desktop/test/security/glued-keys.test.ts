@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { AccessTokenVault, ID_PREFIX_SHAPES, JsonTooDeepError, MAX_BARE_RUN, knownSet, maskString, replaceKnown, sanitizeJson } from '../../src/main/proxy/sanitize';
 
-const K = 'TestKey0Fake0Not0Real0Dummy0Value000000000000000';
+const K = 'Zq7Rw2Lp9Xv4Tm8Nk3Hd6Jf1Bc5Gs0YeQa2Wu7Ir4Ot9Pl3S';
 let seed = 3;
 const rnd = (n: number, abc: string) => { let o = ''; for (let i = 0; i < n; i++) { seed = (seed * 1103515245 + 12345) >>> 0; o += abc[seed % abc.length]; } return o; };
 const B64URL = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';

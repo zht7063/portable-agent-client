@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { AccessTokenVault, knownSet, maskString, sanitizeJson, sseSanitizer } from '../../src/main/proxy/sanitize';
 
-const K = 'TestKey0Fake0Not0Real0Dummy0Value000000000000000';
+const K = 'Zq7Rw2Lp9Xv4Tm8Nk3Hd6Jf1Bc5Gs0YeQa2Wu7Ir4Ot9Pl3S';
 const MAGIC: Record<string, number[]> = {
   png: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], jpeg: [0xff, 0xd8, 0xff, 0xe0], gif: [...Buffer.from('GIF89a')],
   webp: [...Buffer.from('RIFF'), 0, 0, 0, 0, ...Buffer.from('WEBP')],
