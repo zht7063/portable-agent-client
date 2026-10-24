@@ -130,6 +130,13 @@ are still placeholders (see the TODO below).
 - Distribution to others needs the AGPL source-offer decision, real branding/appId, and signing (Apple Developer ID +
   notarization; Windows code-signing certificate).
 
+## Official installer build (manual workflow)
+
+`.github/workflows/release-build.yml` (workflow_dispatch only, contents: read, no secrets, no publish/release step)
+runs the official `pack:win` (NSIS x64, unsigned) and `pack:mac` (dmg arm64 + x64, ad-hoc signed in afterPack) on
+windows-2025 / macos-14. Their `--official` guard runs first and refuses until the source repo is public and reachable
+at the build commit. Then: ad-hoc signature verification, scan-bundle, `.sha256` files, artifacts kept 7 days.
+
 ## TODO: official production packaging (blocked on a decision)
 
 Also pending: branding/appId (placeholders) and signing for Windows/macOS installers.

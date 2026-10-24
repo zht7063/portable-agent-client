@@ -20,7 +20,7 @@ const realProduct = JSON.parse(readFileSync(resolve(DESKTOP, '../../packages/cor
 // The pre-release placeholder state (both fields listed, placeholder offer text) as a fixture: the guard must keep
 // refusing it even though the real config has been filled in for 0.1.0-beta.1.
 const product = { ...realProduct, $placeholders: ['sourceUrl', 'sourceOffer'], sourceOffer: 'PLACEHOLDER: source offer pending.' };
-const OFFER = 'Written offer, valid for at least three years from the date of this release: anyone may obtain the complete Corresponding Source by writing to source@portable-agent.org.';
+const OFFER = 'Written offer, valid for at least three years from the date of this release: anyone may obtain the complete Corresponding Source by writing to source@example.org.';
 const replaced = { sourceUrl: 'https://github.com/zht7063/portable-agent-client', sourceOffer: OFFER };
 
 const cli = (prod: object | null, env: Record<string, string> = {}, args: string[] = []) => {
@@ -136,9 +136,9 @@ describe('Aegis round 3: source URL / offer rules and official reachability chec
   });
   it('offer: minimum length, validity period and contact required', () => {
     expect(sourceOfferProblem(OFFER)).toBeNull();
-    expect(sourceOfferProblem('Email source@portable-agent.org, valid for three years.')).toMatch(/shorter/);
+    expect(sourceOfferProblem('Email source@example.org, valid for three years.')).toMatch(/shorter/);
     expect(sourceOfferProblem(OFFER.replace('valid for at least three years from the date of this release', 'offered by the authors of this release software'))).toMatch(/validity/);
-    expect(sourceOfferProblem(OFFER.replace('source@portable-agent.org', 'the authors of the project at their office'))).toMatch(/contact/);
+    expect(sourceOfferProblem(OFFER.replace('source@example.org', 'the authors of the project at their office'))).toMatch(/contact/);
   });
   const C = 'a'.repeat(40);
   it('official check: anonymous GET <sourceUrl>/tree/<commit> must return 200 (injectable fetch)', async () => {
