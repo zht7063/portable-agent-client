@@ -1,4 +1,4 @@
-# LOCAL (unsigned, not for distribution) installer builds. Manual dispatch only; no secrets, no publish/release step.
+# LOCAL test builds (not for distribution): Windows unsigned; macOS ad-hoc signed only; no release. Manual dispatch only; no secrets.
 # Artifacts are named *-LOCAL.* (pack:*:local, PA_LOCAL_BUILD=1) and kept 7 days. See docs/release.md.
 name: installers
 on:
