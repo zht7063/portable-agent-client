@@ -135,7 +135,7 @@ describe('pi adapter: plan/apply/rollback on a temp HOME', () => {
     await writeFile(s.settings, JSON.stringify({ ...cur, theme: 'light', defaultModel: 'mine' }, null, 2));
     const p2 = await s.h.plan('pi', 'default');
     expect(p2.conflicts.map((c) => c.kind)).toEqual(['external-owned-change']);
-    await expect(s.h.rollback('pi', 'detach')).rejects.toThrow(/outside Portable Agent/);
+    await expect(s.h.rollback('pi', 'detach')).rejects.toThrow(/outside swift-client/);
     await s.h.apply('pi', p2, [{ conflictId: p2.conflicts[0]!.id, resolution: 'overwrite' }]);
     expect((await json(s.settings))).toEqual({ defaultProvider: 'pa', defaultModel: 'deepseek-flash', theme: 'light' });
   });

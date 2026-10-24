@@ -16,7 +16,10 @@ const { unreplacedPlaceholders, assertNoPlaceholders, buildCommit, sourceUrlProb
   unreplacedPlaceholders: (p: object) => string[];
   assertNoPlaceholders: (p: object, env: Record<string, string | undefined>) => string | null;
 };
-const product = JSON.parse(readFileSync(resolve(DESKTOP, '../../packages/core/src/product.config.json'), 'utf8'));
+const realProduct = JSON.parse(readFileSync(resolve(DESKTOP, '../../packages/core/src/product.config.json'), 'utf8'));
+// The pre-release placeholder state (both fields listed, placeholder offer text) as a fixture: the guard must keep
+// refusing it even though the real config has been filled in for 0.1.0-beta.1.
+const product = { ...realProduct, $placeholders: ['sourceUrl', 'sourceOffer'], sourceOffer: 'PLACEHOLDER: source offer pending.' };
 const OFFER = 'Written offer, valid for at least three years from the date of this release: anyone may obtain the complete Corresponding Source by writing to source@portable-agent.org.';
 const replaced = { sourceUrl: 'https://github.com/zht7063/portable-agent-client', sourceOffer: OFFER };
 
@@ -55,7 +58,11 @@ describe('official pack guard (pack:linux / pack:win / pack:mac)', () => {
 });
 
 describe('source-offer placeholder check', () => {
-  it('current product config still has the placeholders (kept on purpose)', () => {
+  it('release config 0.1.0-beta.1: public sourceUrl, no placeholders, no written offer; the fixture still has them', () => {
+    expect(realProduct.$placeholders).toEqual([]);
+    expect(realProduct.sourceUrl).toBe('https://github.com/zht7063/portable-agent-client');
+    expect(realProduct.sourceOffer).toBeUndefined();
+    expect(unreplacedPlaceholders(realProduct)).toEqual([]);
     expect(unreplacedPlaceholders(product)).toEqual(['sourceOffer', 'sourceUrl']);
   });
   it('errors without the explicit local flag', () => {
@@ -72,13 +79,13 @@ describe('source-offer placeholder check', () => {
     expect(unreplacedPlaceholders({ sourceUrl: '', sourceOffer: '' })).toEqual(['sourceOffer', 'sourceUrl']);
     expect(assertNoPlaceholders(replaced, {})).toBeNull();
   });
-  it('electron-builder config itself fails to load without the flag and loads with it', () => {
+  it('electron-builder config loads with the filled-in release config, with or without the flag (refusal is covered by the CLI tests)', () => {
     const load = (env: Record<string, string>) => spawnSync(process.execPath, ['-e', "require('./electron-builder.config.cjs')"], {
       cwd: DESKTOP, encoding: 'utf8', env: { ...process.env, PA_LOCAL_BUILD: '', ...env },
     });
-    const bad = load({});
-    expect(bad.status).not.toBe(0);
-    expect(bad.stderr).toContain('unreplaced placeholder');
+    const ok = load({});
+    expect(ok.status).toBe(0);
+    expect(ok.stderr).not.toContain('unreplaced placeholder');
     expect(load({ PA_LOCAL_BUILD: '1' }).status).toBe(0);
   });
   it('only the LOCAL pack scripts set the flag; official ones explicitly clear it and run the --official guard first', () => {

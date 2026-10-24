@@ -42,11 +42,9 @@ jobs:
         run: bun run test
       - name: Compat + licenses
         run: bun run compat && bun run licenses
-      - name: Official packaging guard refuses while the source offer is a placeholder (even with PA_LOCAL_BUILD=1 inherited)
+      - name: Product config passes the static source-offer check (no placeholders; reachability is checked only by --official)
         working-directory: apps/desktop
-        run: |
-          if PA_LOCAL_BUILD=1 node scripts/check-placeholders.cjs --official 2> guard.err; then echo "guard unexpectedly passed"; exit 1; fi
-          cat guard.err; grep -q 'unreplaced placeholder' guard.err; rm guard.err
+        run: PA_LOCAL_BUILD=0 node scripts/check-placeholders.cjs
       - name: Production build
         working-directory: apps/desktop
         run: bun run build:prod
