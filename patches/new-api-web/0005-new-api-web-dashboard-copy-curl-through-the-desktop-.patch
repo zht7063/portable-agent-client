@@ -1,0 +1,46 @@
+From 3e7211d36cc427b2e0c607342e4034566c76f5da Mon Sep 17 00:00:00 2001
+From: "Engineer (bot)" <zht7063@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 02:17:45 +0800
+Subject: [PATCH] new-api-web: dashboard copy-curl through the desktop main
+ process
+
+---
+ .../dashboard/components/overview/overview-dashboard.tsx  | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/src/features/dashboard/components/overview/overview-dashboard.tsx b/src/features/dashboard/components/overview/overview-dashboard.tsx
+index 9282490..722eebd 100644
+--- a/src/features/dashboard/components/overview/overview-dashboard.tsx
++++ b/src/features/dashboard/components/overview/overview-dashboard.tsx
+@@ -15,6 +15,7 @@ You should have received a copy of the GNU Affero General Public License
+ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
++Modified by portable-agent-client (patch 0005): in the desktop client 'Copy curl' is built and copied by main (real key never in the renderer).
+ */
+ import { useQuery } from '@tanstack/react-query'
+ import { Link } from '@tanstack/react-router'
+@@ -51,6 +52,7 @@ import { IconBadge, type IconBadgeTone } from '@/components/ui/icon-badge'
+ import { fetchTokenKey, getApiKeys } from '@/features/keys/api'
+ import type { ApiKey } from '@/features/keys/types'
+ import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
++import { isPaDesktop, paCopyCurl } from '@/pa-local'
+ import { getUserModels } from '@/lib/api'
+ import { handleServerError } from '@/lib/handle-server-error'
+ import { MOTION_TRANSITION } from '@/lib/motion'
+@@ -296,6 +298,12 @@ function RequestPreview(props: {
+     if (!props.example.keyId || isCopying) return
+ 
+     setIsCopying(true)
++    if (isPaDesktop()) {
++      // Desktop: the renderer only ever sees masked keys; main fetches the key, builds the curl and copies it.
++      await paCopyCurl(props.example.keyId, props.example.endpoint, props.example.model, t)
++      setIsCopying(false)
++      return
++    }
+     try {
+       const result = await fetchTokenKey(props.example.keyId)
+       const key = result.success && result.data?.key ? result.data.key : ''
+-- 
+2.47.3
+

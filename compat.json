@@ -1,9 +1,16 @@
 {
-  "$comment": "Upstream pin (plan v2 §4). tag/commit = vendored new-api web snapshot (M2). minServer/maxServerTested are provisional until verified in M3 (/api/status) and the CI matrix (M7).",
+  "$comment": "Upstream pin (plan v2 §4). tag/commit = vendored new-api web snapshot (M2). maxServerTested verified in M3 against the official v1.0.0-rc.46 release binary (local integration: scripts/integration-local-newapi.sh). minServer stays provisional (= pin) until the M7 CI matrix tests older servers.",
   "upstream": "https://github.com/QuantumNous/new-api",
   "tag": "v1.0.0-rc.46",
   "commit": "7d8b91268dab69d7150f345c448b5e250163146a",
   "minServer": "v1.0.0-rc.46",
-  "maxServerTested": null,
-  "policy": "same-minor-line"
+  "maxServerTested": "v1.0.0-rc.46",
+  "policy": "same-minor-line",
+  "compatMatrix": {
+    "$comment": "Official new-api Docker image tags checked by the manual-only .github/workflows/compat.yml (docs/ci.md).",
+    "image": "calciumion/new-api",
+    "versions": [
+      { "tag": "v1.0.0-rc.46", "digest": "sha256:abf1f675efa1847b90c049c03766e2daaf62a78998aae3625cf34b6a045b1b97", "$verified": "2026-10-24 via Docker Hub tags API and registry-1.docker.io manifest HEAD (multi-arch index, amd64+arm64); image name from upstream docker-compose.yml" }
+    ]
+  }
 }

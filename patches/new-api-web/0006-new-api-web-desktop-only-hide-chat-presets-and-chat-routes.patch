@@ -1,0 +1,184 @@
+From 2bfd7e45205dbd2e48d2657d2897bdc76d619b32 Mon Sep 17 00:00:00 2001
+From: "Engineer (bot)" <zht7063@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 02:40:11 +0800
+Subject: [PATCH] new-api-web: desktop-only hide chat presets and chat routes
+
+---
+ src/components/layout/components/nav-group.tsx |  3 +++
+ src/features/chat/hooks/use-active-chat-key.ts |  5 +++++
+ src/features/chat/lib/chat-links.ts            |  4 ++++
+ src/hooks/use-sidebar-data.ts                  | 15 ++++++++++-----
+ src/routes/_authenticated/chat/$chatId.tsx     |  5 +++++
+ src/routes/_authenticated/chat2link.tsx        |  7 ++++++-
+ 6 files changed, 33 insertions(+), 6 deletions(-)
+
+diff --git a/src/components/layout/components/nav-group.tsx b/src/components/layout/components/nav-group.tsx
+index 5cf10de..0f1466b 100644
+--- a/src/components/layout/components/nav-group.tsx
++++ b/src/components/layout/components/nav-group.tsx
+@@ -15,6 +15,7 @@ You should have received a copy of the GNU Affero General Public License
+ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
++Modified by portable-agent-client (patch 0006): desktop client hides chat presets / chat routes (they would put a masked key into a link).
+ */
+ import { Link, useLocation } from '@tanstack/react-router'
+ import { ChevronRight } from 'lucide-react'
+@@ -55,6 +56,7 @@ import type {
+   NavGroup as NavGroupProps,
+ } from '../types'
+ import { ChatPresetsItem } from './chat-presets-item'
++import { isPaDesktop } from '@/pa-local/lib/pa'
+ 
+ /**
+  * Sidebar navigation group component
+@@ -75,6 +77,7 @@ export function NavGroup({ title, items }: NavGroupProps) {
+ 
+           // Special handling: dynamic chat presets list
+           if (item.type === 'chat-presets') {
++            if (isPaDesktop()) return null
+             return <ChatPresetsItem key={key} item={item as NavChatPresets} />
+           }
+ 
+diff --git a/src/features/chat/hooks/use-active-chat-key.ts b/src/features/chat/hooks/use-active-chat-key.ts
+index 6c6b737..d5a9923 100644
+--- a/src/features/chat/hooks/use-active-chat-key.ts
++++ b/src/features/chat/hooks/use-active-chat-key.ts
+@@ -15,6 +15,7 @@ You should have received a copy of the GNU Affero General Public License
+ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
++Modified by portable-agent-client (patch 0006): desktop client hides chat presets / chat routes (they would put a masked key into a link).
+ */
+ import { useQuery } from '@tanstack/react-query'
+ import { t } from 'i18next'
+@@ -26,8 +27,12 @@ import {
+   createServerError,
+ } from '@/lib/server-error-message'
+ import { useAuthStore } from '@/stores/auth-store'
++import { isPaDesktop } from '@/pa-local/lib/pa'
+ 
+ export async function fetchActiveChatKey() {
++  if (isPaDesktop()) {
++    throw new Error('Chat links are not available in the desktop client.')
++  }
+   const result = await getApiKeys({ p: 1, size: 50 })
+   if (!result.success) {
+     throw createServerError(result, t('Failed to load API keys'))
+diff --git a/src/features/chat/lib/chat-links.ts b/src/features/chat/lib/chat-links.ts
+index 770d0ac..71c1ba7 100644
+--- a/src/features/chat/lib/chat-links.ts
++++ b/src/features/chat/lib/chat-links.ts
+@@ -15,8 +15,10 @@ You should have received a copy of the GNU Affero General Public License
+ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
++Modified by portable-agent-client (patch 0006): desktop client hides chat presets / chat routes (they would put a masked key into a link).
+ */
+ import { API_KEY_STATUS } from '@/features/keys/constants'
++import { isPaDesktop } from '@/pa-local/lib/pa'
+ 
+ export type ChatLinkType = 'web' | 'custom-protocol' | 'fluent'
+ 
+@@ -155,6 +157,8 @@ export function resolveChatUrl({
+   apiKey,
+   serverAddress,
+ }: ResolveChatUrlParams): string {
++  // Desktop: the renderer only ever holds masked keys; never build a chat link from one.
++  if (isPaDesktop()) return ''
+   let url = template
+   const safeServerAddress = serverAddress || ''
+ 
+diff --git a/src/hooks/use-sidebar-data.ts b/src/hooks/use-sidebar-data.ts
+index 3531887..8403200 100644
+--- a/src/hooks/use-sidebar-data.ts
++++ b/src/hooks/use-sidebar-data.ts
+@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
+ Modified by portable-agent-client (patch 0002): desktop-only "Desktop" nav group (local pages in src/pa-local).
++Modified by portable-agent-client (patch 0006): desktop client hides chat presets / chat routes (they would put a masked key into a link).
+ */
+ import {
+   Activity,
+@@ -64,11 +65,15 @@ export function useSidebarData(): SidebarData {
+             url: '/playground',
+             icon: FlaskConical,
+           },
+-          {
+-            title: t('Chat'),
+-            icon: MessageSquare,
+-            type: 'chat-presets',
+-          },
++          ...(isPaDesktop()
++            ? []
++            : [
++                {
++                  title: t('Chat'),
++                  icon: MessageSquare,
++                  type: 'chat-presets' as const,
++                },
++              ]),
+         ],
+       },
+       {
+diff --git a/src/routes/_authenticated/chat/$chatId.tsx b/src/routes/_authenticated/chat/$chatId.tsx
+index 4c8f1a0..29ce9cd 100644
+--- a/src/routes/_authenticated/chat/$chatId.tsx
++++ b/src/routes/_authenticated/chat/$chatId.tsx
+@@ -15,6 +15,7 @@ You should have received a copy of the GNU Affero General Public License
+ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
++Modified by portable-agent-client (patch 0006): desktop client hides chat presets / chat routes (they would put a masked key into a link).
+ */
+ import { Link, createFileRoute, redirect } from '@tanstack/react-router'
+ import { Loader2, MessageCircleWarning } from 'lucide-react'
+@@ -25,12 +26,16 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+ import { Button } from '@/components/ui/button'
+ import { useActiveChatKey } from '@/features/chat/hooks/use-active-chat-key'
+ import { useChatPresets } from '@/features/chat/hooks/use-chat-presets'
++import { isPaDesktop } from '@/pa-local/lib/pa'
+ import {
+   chatLinkRequiresApiKey,
+   resolveChatUrl,
+ } from '@/features/chat/lib/chat-links'
+ 
+ export const Route = createFileRoute('/_authenticated/chat/$chatId')({
++  beforeLoad: () => {
++    if (isPaDesktop()) throw redirect({ to: '/dashboard' })
++  },
+   loader: async ({ params }) => {
+     if (!Number.isInteger(Number(params.chatId))) {
+       throw redirect({ to: '/dashboard' })
+diff --git a/src/routes/_authenticated/chat2link.tsx b/src/routes/_authenticated/chat2link.tsx
+index afbc646..61f960f 100644
+--- a/src/routes/_authenticated/chat2link.tsx
++++ b/src/routes/_authenticated/chat2link.tsx
+@@ -15,8 +15,9 @@ You should have received a copy of the GNU Affero General Public License
+ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
++Modified by portable-agent-client (patch 0006): desktop client hides chat presets / chat routes (they would put a masked key into a link).
+ */
+-import { createFileRoute, useNavigate } from '@tanstack/react-router'
++import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
+ import { Loader2 } from 'lucide-react'
+ import { useEffect, useMemo } from 'react'
+ import { useTranslation } from 'react-i18next'
+@@ -26,8 +27,12 @@ import { useActiveChatKey } from '@/features/chat/hooks/use-active-chat-key'
+ import { useChatPresets } from '@/features/chat/hooks/use-chat-presets'
+ import { resolveChatUrl } from '@/features/chat/lib/chat-links'
+ import { handleServerError } from '@/lib/handle-server-error'
++import { isPaDesktop } from '@/pa-local/lib/pa'
+ 
+ export const Route = createFileRoute('/_authenticated/chat2link')({
++  beforeLoad: () => {
++    if (isPaDesktop()) throw redirect({ to: '/dashboard' })
++  },
+   component: Chat2LinkPage,
+ })
+ 
+-- 
+2.47.3
+

@@ -1,0 +1,49 @@
+From e85d2c438cd3abb6c22735a25c6c6f9db1e3b420 Mon Sep 17 00:00:00 2001
+From: "Engineer (bot)" <zht7063@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 02:17:22 +0800
+Subject: [PATCH] new-api-web: desktop-only server settings link on sign-in
+ page
+
+---
+ src/features/auth/sign-in/index.tsx | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/src/features/auth/sign-in/index.tsx b/src/features/auth/sign-in/index.tsx
+index 1b76aad..de9b5e5 100644
+--- a/src/features/auth/sign-in/index.tsx
++++ b/src/features/auth/sign-in/index.tsx
+@@ -15,11 +15,13 @@ You should have received a copy of the GNU Affero General Public License
+ along with this program. If not, see <https://www.gnu.org/licenses/>.
+ 
+ For commercial licensing, please contact support@quantumnous.com
++Modified by portable-agent-client (patch 0004): desktop-only link to the local server settings page (/pa-server).
+ */
+ import { Link, useSearch } from '@tanstack/react-router'
+ import { useTranslation } from 'react-i18next'
+ 
+ import { useStatus } from '@/hooks/use-status'
++import { isPaDesktop } from '@/pa-local'
+ 
+ import { AuthLayout } from '../auth-layout'
+ import { TermsFooter } from '../components/terms-footer'
+@@ -54,6 +56,17 @@ export function SignIn() {
+ 
+         <UserAuthForm redirectTo={redirect} />
+ 
++        {isPaDesktop() && (
++          <p className='text-muted-foreground text-center text-sm'>
++            <Link
++              to='/pa-server'
++              className='hover:text-primary font-medium underline underline-offset-4'
++            >
++              {t('Server settings')}
++            </Link>
++          </p>
++        )}
++
+         <TermsFooter
+           variant='sign-in'
+           status={status}
+-- 
+2.47.3
+

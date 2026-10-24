@@ -10,8 +10,10 @@ This project is licensed under the GNU Affero General Public License v3.0 only
 This client is based on new-api (https://github.com/QuantumNous/new-api),
 Copyright (c) QuantumNous and contributors, licensed under AGPL-3.0. The
 upstream new-api web frontend is vendored at the version pinned in compat.json
-(v1.0.0-rc.46, commit 7d8b91268dab69d7150f345c448b5e250163146a; vendoring
-lands in milestone M2).
+(v1.0.0-rc.46, commit 7d8b91268dab69d7150f345c448b5e250163146a) as a pristine
+copy in vendor/new-api-web/ (upstream LICENSE and NOTICE kept there as LICENSE
+and NOTICE.upstream; source pin in vendor/new-api-web/UPSTREAM). The bundled
+frontend is a MODIFIED version of that code.
 
 Pursuant to Section 7(b) of the AGPLv3, the upstream project requires the
 following legal notice and author attribution to be preserved in the
@@ -25,8 +27,10 @@ together with a visible link to the original project:
 https://github.com/QuantumNous/new-api
 
 Per Section 7(c), modifications to upstream new-api code are marked as such:
-the vendored tree carries a record of local patches (vendor/new-api-web/PATCHES.md,
-from M2), and this repository's own code is identified in docs/PROVENANCE.md.
+local patches are kept as a separate patch queue (patches/new-api-web/*.patch,
+listed with reasons and dates in patches/new-api-web/README.md) applied at build
+time, each modified file carries a "Modified by portable-agent-client" note, and
+this repository's own code is identified in docs/PROVENANCE.md.
 This product does not represent itself as the original new-api.
 
 ==== Third-Party Notices ====

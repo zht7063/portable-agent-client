@@ -5,17 +5,26 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "packageManager": "bun@1.4.2",
-  "workspaces": ["packages/*", "apps/*"],
-  "engines": { "node": ">=22.18" },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
     "typecheck": "bun run --filter '*' typecheck",
     "lint": "eslint .",
-    "test": "vitest run",
+    "test": "vitest run && bash scripts/test-local-pages.sh --no-install",
     "test:live": "vitest run -c vitest.live.config.ts",
+    "test:compat": "vitest run -c vitest.compat.config.ts",
     "build": "bun run --filter '*' build",
     "licenses": "node scripts/check-licenses.mjs",
     "compat": "node scripts/compat-check.mjs",
-    "check": "bun run typecheck && bun run lint && bun run test && bun run compat"
+    "check": "bun run typecheck && bun run lint && bun run test && bun run compat",
+    "test:local-pages": "bash scripts/test-local-pages.sh",
+    "test:unit": "vitest run",
+    "install:web": "bash scripts/build-new-api-web.sh --prepare-only"
   },
   "devDependencies": {
     "@eslint/js": "^9.14.0",

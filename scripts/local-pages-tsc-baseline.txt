@@ -1,0 +1,5 @@
+# Pre-existing upstream typecheck errors in the pristine new-api web snapshot (vendor/new-api-web @ compat.json tag),
+# NOT caused by our patches/pages. One file path per line; errors in any other file fail scripts/test-local-pages.sh.
+# Re-check on every upstream update (scripts/update-upstream.sh) and remove entries that no longer apply.
+# Needs ../pkg/billingexpr/testdata from the Go repo, which is outside web/:
+src/features/pricing/lib/__tests__/billing-expression.test.ts

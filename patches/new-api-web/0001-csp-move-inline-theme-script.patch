@@ -1,0 +1,64 @@
+From 3b06a285a7801c39d7de92c161f9e242b5c31359 Mon Sep 17 00:00:00 2001
+From: "Engineer (bot)" <zht7063@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 01:15:24 +0800
+Subject: [PATCH] new-api-web: move inline theme script to /theme-init.js for
+ strict CSP
+
+---
+ index.html           | 16 ++--------------
+ public/theme-init.js | 16 ++++++++++++++++
+ 2 files changed, 18 insertions(+), 14 deletions(-)
+ create mode 100644 public/theme-init.js
+
+diff --git a/index.html b/index.html
+index b91e7b6..24dd5de 100644
+--- a/index.html
++++ b/index.html
+@@ -17,20 +17,8 @@
+     <!-- Resolve the theme before first paint so the page never flashes light
+          and one-shot detectors (e.g. Dark Reader) see the real theme.
+          Keep in sync with ThemeProvider and THEME_STORAGE_KEYS.mode. -->
+-    <script>
+-      ;(function () {
+-        var theme = 'system'
+-        try {
+-          theme = localStorage.getItem('newapi:theme:v1:mode') || 'system'
+-        } catch (e) {}
+-        if (theme !== 'dark' && theme !== 'light') {
+-          theme = window.matchMedia('(prefers-color-scheme: dark)').matches
+-            ? 'dark'
+-            : 'light'
+-        }
+-        document.documentElement.classList.add(theme)
+-      })()
+-    </script>
++    <!-- Modified by portable-agent-client (patch 0001): inline script moved to /theme-init.js for strict CSP. -->
++    <script src="/theme-init.js"></script>
+     <!--umami-->
+     <!--Google Analytics-->
+   </head>
+diff --git a/public/theme-init.js b/public/theme-init.js
+new file mode 100644
+index 0000000..68c270c
+--- /dev/null
++++ b/public/theme-init.js
+@@ -0,0 +1,16 @@
++/*
++ * Modified by portable-agent-client (AGPL-3.0 §5(a)/§7(c)), patch 0001: theme pre-paint script moved
++ * out of index.html so the page runs under a strict CSP (script-src 'self', no inline scripts).
++ */
++;(function () {
++  var theme = 'system'
++  try {
++    theme = localStorage.getItem('newapi:theme:v1:mode') || 'system'
++  } catch (e) {}
++  if (theme !== 'dark' && theme !== 'light') {
++    theme = window.matchMedia('(prefers-color-scheme: dark)').matches
++      ? 'dark'
++      : 'light'
++  }
++  document.documentElement.classList.add(theme)
++})()
+-- 
+2.47.3
+

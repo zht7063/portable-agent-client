@@ -1,0 +1,37 @@
+{
+  "name": "@pac/core",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "description": "Controlled config-file layer, IPC contract, HTTP base, session base, key orchestration.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "src/index.ts",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./contract": {
+      "source": "./src/contract/index.ts",
+      "types": "./src/contract/index.ts",
+      "default": "./dist/contract/index.js"
+    },
+    "./fs": {
+      "source": "./src/fs/index.ts",
+      "types": "./src/fs/index.ts",
+      "default": "./dist/fs/index.js"
+    },
+    "./product": {
+      "source": "./src/product.ts",
+      "types": "./src/product.ts",
+      "default": "./dist/product.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit"
+  },
+  "dependencies": {}
+}

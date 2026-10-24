@@ -9,3 +9,4 @@ stage/
 release/
 .pac-session.json
 .tmp-upstream/
+.build/
