@@ -5,7 +5,7 @@
 //                                           tree-shaken; the build fails if any smoke marker survives.
 import { build } from 'esbuild';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -31,6 +31,9 @@ const common = {
 await build({ ...common, entryPoints: ['src/main/index.ts'], external: ['electron'], outfile: join(out, 'main/index.cjs') });
 await build({ ...common, entryPoints: ['src/preload/index.ts'], external: ['electron'], outfile: join(out, 'preload/index.cjs') });
 await build({ ...common, entryPoints: ['../../packages/pa-key/src/main.ts'], external: ['@napi-rs/keyring'], outfile: join(out, 'key-helper/pa-key.cjs') });
+// Window/taskbar icon for Windows/Linux (macOS uses the bundle's .icns); ships inside app.asar via dist/**.
+mkdirSync(out, { recursive: true });
+copyFileSync(join(app, 'build/icon-window.png'), join(out, 'icon.png'));
 if (prod) {
   const bad = ['main/index.cjs', 'preload/index.cjs', 'key-helper/pa-key.cjs']
     .filter((f) => /PA_SMOKE|runLoginSmoke|runUiSmokeStep|runKeysSmokeStep|smoke/i.test(readFileSync(join(out, f), 'utf8')));

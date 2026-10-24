@@ -72,6 +72,8 @@ function createWindow(): BrowserWindow {
     width: 1280,
     height: 820,
     title: PRODUCT.productName,
+    // macOS takes the icon from the app bundle (.icns); Windows/Linux use this PNG (copied to dist/ by build-main).
+    ...(process.platform === 'darwin' ? {} : { icon: join(__dirname, '../icon.png') }),
     webPreferences: windowWebPreferences({ preload: join(__dirname, '../preload/index.cjs'), isPackaged: app.isPackaged }),
   });
   // Navigation only within app://; http(s) goes to the OS browser after confirmation; all else denied.

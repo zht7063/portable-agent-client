@@ -21,7 +21,9 @@ module.exports = {
   appId: product.appId,
   productName: product.productName,
   executableName: product.executableName,
-  directories: { app: 'stage', output: 'release' },
+  directories: { app: 'stage', output: 'release', buildResources: 'build' },
+  // App icon (generated from build/icon-source.jpeg by scripts/gen-icons.py): mac .icns (also the dmg volume icon),
+  // Windows .ico (exe + NSIS installer/uninstaller), Linux PNG set.
   publish: null,
   npmRebuild: false,
   asar: true,
@@ -52,7 +54,7 @@ module.exports = {
     { from: 'dist/renderer/NOTICE.new-api.txt', to: 'licenses/NOTICE.new-api.txt' },
   ],
   // Default target is an unpacked dir; `bun run pack:linux` builds AppImage + deb locally (never published).
-  linux: { target: 'dir', category: 'Development', maintainer: `${product.productName} (placeholder) <noreply@example.invalid>`, synopsis: `${product.productName} desktop client (based on new-api)` },
+  linux: { target: 'dir', icon: 'build/icons', category: 'Development', maintainer: `${product.productName} (placeholder) <noreply@example.invalid>`, synopsis: `${product.productName} desktop client (based on new-api)` },
   deb: { packageCategory: 'devel' },
   // LOCAL builds (pack:dir, pack:*:local) are marked in the file name; official ones are not.
   artifactName: `\${name}-\${version}-\${os}-\${arch}${LOCAL ? '-LOCAL' : ''}.\${ext}`,
@@ -61,11 +63,13 @@ module.exports = {
   // builds (LOCAL and official) are ad-hoc signed in afterPack (codesign --sign -; electron-builder 25 has no
   // identity '-' support) so the arm64 app is not reported as "damaged". No Developer ID / notarization yet.
   afterPack: adHocSignMac,
-  mac: { target: 'dir', identity: null, category: 'public.app-category.developer-tools' },
-  dmg: { writeUpdateInfo: false },
-  win: { target: 'dir', signAndEditExecutable: true, verifyUpdateCodeSignature: false },
+  mac: { target: 'dir', icon: 'build/icon.icns', identity: null, category: 'public.app-category.developer-tools' },
+  dmg: { icon: 'build/icon.icns', writeUpdateInfo: false },
+  win: { target: 'dir', icon: 'build/icon.ico', signAndEditExecutable: true, verifyUpdateCodeSignature: false },
   nsis: {
     oneClick: false,
+    installerIcon: 'build/icon.ico',
+    uninstallerIcon: 'build/icon.ico',
     perMachine: false,
     allowElevation: true,
     allowToChangeInstallationDirectory: true,
