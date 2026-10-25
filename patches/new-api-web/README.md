@@ -10,7 +10,7 @@ relative to the upstream `web/` directory (`git apply -p1`).
 ## Modification notice (AGPL-3.0 §5(a), §7(c))
 
 The bundled frontend is a **modified version** of new-api's web frontend. Every patch below is a change made by
-the portable-agent-client contributors; each touched file additionally carries a "Modified by
+the swift-client contributors; each touched file additionally carries a "Modified by
 portable-agent-client" note where the file format allows comments. The upstream attribution required under §7(b)
 ("Frontend design and development by New API contributors." + link to https://github.com/QuantumNous/new-api) is
 preserved (upstream UI footer/about untouched; also in our NOTICE).
