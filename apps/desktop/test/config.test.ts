@@ -27,9 +27,20 @@ describe('S16 fixed desktop origin', () => {
     await writeFile(p, JSON.stringify({ version: 2, serverUrl: 'https://old.invalid', clipboardClearSeconds: 12 }));
     const store = new ConfigStore(p);
     expect((await store.load()).serverUrl).toBe('https://api.swift-client.invalid');
-    expect(JSON.parse(await readFile(p, 'utf8'))).toEqual({ version: 2, clipboardClearSeconds: 12 });
+    expect(JSON.parse(await readFile(p, 'utf8'))).toEqual({ version: 2, lastServerOrigin: 'https://api.swift-client.invalid', clipboardClearSeconds: 12 });
     expect(() => store.apply(store.defaults(), { serverUrl: 'https://evil.invalid' } as never)).toThrow();
     expect(toClientConfig(store.apply(store.defaults(), { clipboardClearSeconds: 0 })).clipboardClearSeconds).toBe(0);
+  });
+  it('detects a changed build origin even after the legacy serverUrl was removed', async () => {
+    const path = await tmp();
+    const first = new ConfigStore(path, 'https://first.invalid');
+    await first.load();
+    const second = new ConfigStore(path, 'https://second.invalid');
+    await second.load();
+    expect(second.originChanged).toBe(true);
+    expect(toClientConfig(second.defaults())).not.toHaveProperty('lastServerOrigin');
+    const again = new ConfigStore(path, 'https://second.invalid');
+    await again.load(); expect(again.originChanged).toBe(false);
   });
   it('rejects renderer address fields before invoking any config writer', async () => {
     const t = tmpHarnessHost();

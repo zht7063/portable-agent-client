@@ -15,8 +15,10 @@ export interface AdapterOptions {
   state: StateStore;
   env: HarnessEnv;
   exec: ExecFn;
-  /** Absolute path of the pa-key wrapper (D4). */
+  /** Legacy adapter option retained for test compatibility; no helper is executed. */
   helperPath: string;
+  /** Separate ownership namespace for the development CLI. */
+  owner?: 'swift-cli';
   /** Main-only credential resolver; never persisted in profile/state. */
   getKey?: (profile: HarnessProfile) => Promise<string>;
   /** Working directory for project-level hints (read-only checks). */
@@ -24,7 +26,7 @@ export interface AdapterOptions {
   /** Host hook run right before writing (e.g. provision the keychain entry in command mode). Abort by throwing. */
   beforeWrite?: (profile: HarnessProfile) => Promise<void>;
   /** Host hook after detach (e.g. revoke the keychain entry). */
-  afterDetach?: (profileIds: string[]) => Promise<void>;
+  afterDetach?: (profileIds: string[], harness: HarnessId) => Promise<void>;
   now?: () => Date;
 }
 
@@ -35,15 +37,6 @@ export const PROVIDER_RE = /^[a-z0-9-]{1,32}$/;
 export const ENV_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 export const ownedValues = (root: unknown, settings: string[]): Record<string, unknown> =>
   Object.fromEntries(settings.map((s) => [s, getPath(root, undot(s)) ?? null]));
-
-export const posixQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
-export const winQuote = (s: string) => (/["%]/.test(s) ? bad('Helper path contains unsupported characters') : `"${s}"`);
-export const isAbsPath = (p: string) => p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p);
-/** Shell-quoted helper invocation: `<helper> <profileId> <harness>` (profile ids are [A-Za-z0-9_-]). */
-export function helperCommand(helperPath: string, profileId: string, harness: HarnessId, platform: NodeJS.Platform): string {
-  if (!isAbsPath(helperPath)) bad('Helper path must be absolute');
-  return `${platform === 'win32' ? winQuote(helperPath) : posixQuote(helperPath)} ${profileId} ${harness}`;
-}
 
 export type Desired = Map<string, unknown>; // dotted setting -> value (undefined = remove)
 export interface FilePlan {
@@ -61,7 +54,7 @@ export abstract class JsonHarnessAdapter implements HarnessAdapter {
   protected abstract desiredFor(p: HarnessProfile): Map<string, Desired> | Promise<Map<string, Desired>>;
   /** Settings that, if already set (by someone else) to a different value on a file we never wrote, are a collision. */
   protected abstract collisionSettings(path: string, desired: Desired): string[];
-  /** Whether the user's previous value may be remembered in state (never for settings that can hold a credential). */
+  /** Whether the previous value is remembered in private main-only state (0600). */
   protected abstract rememberOriginal(path: string, setting: string): boolean;
   protected abstract planWarnings(p: HarnessProfile, files: FilePlan[]): Promise<string[]>;
   abstract detect(): Promise<Detection>;
@@ -356,7 +349,14 @@ export abstract class JsonHarnessAdapter implements HarnessAdapter {
     const written: string[] = [];
     for (const l of loaded) {
       const edits = l.e.ownedSettings.map((s) => ({ path: undot(s), value: l.e.original?.[s] ?? undefined }));
-      const out = this.mergeText(l.text, edits);
+      let out = this.mergeText(l.text, edits);
+      // Preserve original formatting exactly when no unrelated settings changed since first apply.
+      const first = await this.o.fs.loadBackup(this.id, 'first-write').catch(() => []);
+      const original = first.find((e) => e.path === l.path);
+      if (original?.data) {
+        const text = new TextDecoder().decode(original.data);
+        if (canonicalJson(this.parseText(text)) === canonicalJson(this.parseText(out))) out = text;
+      }
       if (out !== l.text) {
         if (l.path.endsWith('swift.config.toml') && !out.trim()) await this.o.fs.remove(l.path, { expect: l.fp });
         else await this.o.fs.atomicWrite(l.path, out, { expect: l.fp });
@@ -365,7 +365,7 @@ export abstract class JsonHarnessAdapter implements HarnessAdapter {
     }
     await this.o.state.update((s) => { for (const p of mine) delete s.files[p]; s.history.push(hist); });
     const profiles = [...new Set(loaded.map((l) => l.e.profileId).filter((id): id is string => !!id))];
-    await this.o.afterDetach?.(profiles);
+    await this.o.afterDetach?.(profiles, this.id);
     return { id: this.id, written, snapshotId: hist.snapshotId, warnings: [] };
   }
 }

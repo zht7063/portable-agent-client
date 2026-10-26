@@ -7,7 +7,7 @@ import { findCredentialLeaks, type HarnessProfile } from '@pac/core';
 
 const SECRET = 'sk-' + 'P'.repeat(40);
 const exec: ExecFn = async (cmd) => (cmd === 'pi' ? { code: 0, stdout: '0.70.2\n', stderr: '' } : { code: null, stdout: '', stderr: '' });
-const profile = (o: Partial<HarnessProfile> = {}): HarnessProfile => ({ id: 'default', serverUrl: 'http://new-api.test:3000', keyId: 7, keyMode: 'command', models: { main: 'deepseek-flash', small: 'deepseek-v4-pro' }, ...o });
+const profile = (o: Partial<HarnessProfile> = {}): HarnessProfile => ({ id: 'default', serverUrl: 'http://new-api.test:3000', keyId: 7, keyMode: 'env', models: { main: 'deepseek-flash', small: 'deepseek-v4-pro' }, ...o });
 
 async function setup(o: { piSub?: string; env?: Record<string, string>; beforeWrite?: (p: HarnessProfile) => Promise<void>; afterDetach?: (ids: string[]) => Promise<void> } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'pa-pi-'));
@@ -25,13 +25,11 @@ async function setup(o: { piSub?: string; env?: Record<string, string>; beforeWr
 const json = async (p: string) => JSON.parse(await readFile(p, 'utf8'));
 
 describe('pi adapter: values', () => {
-  it('command apiKey quotes the helper path; env references a var; plaintext refused', () => {
-    expect(piApiKeyValue(profile(), "/x/it's/pa-key", 'linux')).toBe(`!'/x/it'\\''s/pa-key' default pi`);
-    expect(piApiKeyValue(profile(), 'C:\\Users\\a b\\pa-key.cmd', 'win32')).toBe('!"C:\\Users\\a b\\pa-key.cmd" default pi');
-    expect(piApiKeyValue(profile({ keyMode: 'env' }), '/x', 'linux')).toBe('$PA_API_KEY');
-    expect(piApiKeyValue(profile({ keyMode: 'env', envVar: 'RAIN_KEY' }), '/x', 'linux')).toBe('$RAIN_KEY');
-    expect(() => piApiKeyValue(profile({ keyMode: 'plaintext' }), '/x', 'linux')).toThrow(/Plaintext/);
-    expect(() => piApiKeyValue(profile(), 'rel/pa-key', 'linux')).toThrow(/absolute/);
+  it('env references a variable; removed command and plaintext modes are refused', () => {
+    expect(piApiKeyValue(profile(), '', 'linux')).toBe('$PA_API_KEY');
+    expect(piApiKeyValue(profile({ envVar: 'RAIN_KEY' }), '', 'linux')).toBe('$RAIN_KEY');
+    expect(() => piApiKeyValue(profile({ keyMode: 'plaintext' }), '', 'linux')).toThrow(/Plaintext/);
+    expect(() => piApiKeyValue(profile({ keyMode: 'command' }), '', 'linux')).toThrow(/removed/);
   });
   it('base URL: /v1 for openai-completions; rejects creds/query; anthropic-messages is hidden', () => {
     expect(piBaseUrl('http://h:3000')).toBe('http://h:3000/v1');
@@ -63,7 +61,7 @@ describe('pi adapter: plan/apply/rollback on a temp HOME', () => {
     expect(seen).toEqual(['default']);
     expect(r.written).toEqual([s.models, s.settings]);
     expect(await json(s.models)).toEqual({ providers: { pa: {
-      baseUrl: 'http://new-api.test:3000/v1', api: 'openai-completions', apiKey: `!'${s.helper}' default pi`,
+      baseUrl: 'http://new-api.test:3000/v1', api: 'openai-completions', apiKey: '$PA_API_KEY',
       models: [{ id: 'deepseek-flash' }, { id: 'deepseek-v4-pro' }],
     } } });
     expect(await json(s.settings)).toEqual({ defaultProvider: 'pa', defaultModel: 'deepseek-flash' });

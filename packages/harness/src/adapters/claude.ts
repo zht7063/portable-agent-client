@@ -49,9 +49,9 @@ export class ClaudeAdapter extends JsonHarnessAdapter {
 
   protected recoveredOwnership(_path: string, _text: string, root: Record<string, unknown>) {
     const env = root.env as Record<string, unknown> | undefined;
-    const id = env?.SWIFT_CLIENT_MANAGED;
+    const id = env?.[this.o.owner ? 'SWIFT_CLI_MANAGED' : this.o.owner ? 'SWIFT_CLI_MANAGED' : 'SWIFT_CLIENT_MANAGED'];
     if (typeof id !== 'string' || !/^[a-z0-9-]{1,32}$/.test(id)) return undefined;
-    const keys = ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'ANTHROPIC_CUSTOM_MODEL_OPTION', 'SWIFT_CLIENT_MANAGED'];
+    const keys = ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'ANTHROPIC_CUSTOM_MODEL_OPTION', this.o.owner ? 'SWIFT_CLI_MANAGED' : 'SWIFT_CLIENT_MANAGED'];
     return { settings: keys.map((key) => `env.${key}`), profileId: id };
   }
 
@@ -74,15 +74,19 @@ export class ClaudeAdapter extends JsonHarnessAdapter {
   protected async desiredFor(p: HarnessProfile): Promise<Map<string, Desired>> {
     if (!PROFILE_ID_RE.test(p.id)) bad('Invalid profile id');
     if (p.envVar !== undefined && !ENV_RE.test(p.envVar)) bad('Invalid env var name');
+    const existing = await this.load(this.settingsPath);
+    if (getPath(existing.root, ['env', this.o.owner ? 'SWIFT_CLIENT_MANAGED' : 'SWIFT_CLI_MANAGED']) !== undefined) bad('This config is managed by the other client; detach there first');
     const d: Desired = new Map<string, unknown>([['apiKeyHelper', undefined], ['env.ANTHROPIC_AUTH_TOKEN', await this.o.getKey?.(p) ?? bad('Select a token again before applying')]]);
-    for (const [k, v] of Object.entries(claudeEnv(p))) d.set(`env.${k}`, v);
+    const desiredEnv = claudeEnv(p);
+    if (this.o.owner) { delete desiredEnv.SWIFT_CLIENT_MANAGED; desiredEnv.SWIFT_CLI_MANAGED = p.id; }
+    for (const [k, v] of Object.entries(desiredEnv)) d.set(`env.${k}`, v);
     return new Map([[this.settingsPath, d]]);
   }
 
   protected collisionSettings(): string[] { return ['apiKeyHelper', 'env.ANTHROPIC_BASE_URL']; }
 
-  /** apiKeyHelper may embed a credential, so the previous value is never stored (detach removes it). */
-  protected rememberOriginal(_path: string, setting: string): boolean { return setting !== 'apiKeyHelper' && setting !== 'env.ANTHROPIC_AUTH_TOKEN'; }
+  /** Original token stays in private main-only state so detach can restore it. Helpers are removed. */
+  protected rememberOriginal(_path: string, setting: string): boolean { return setting !== 'apiKeyHelper'; }
 
   protected async planWarnings(p: HarnessProfile, files: FilePlan[]): Promise<string[]> {
     const w: string[] = ['Keys are plaintext; Claude commands, hooks and MCP children inherit the token. Exclude configs from sync and dotfiles; set a server quota limit.'];
@@ -93,7 +97,7 @@ export class ClaudeAdapter extends JsonHarnessAdapter {
     }, { loginShell: false, rcFiles: false });
     w.push(...scan.findings.map((f) => f.message));
     const root = files[0]?.root;
-    for (const v of CRED_ENV) if (getPath(root, ['env', v]) !== undefined) w.push(`settings.json env.${v} is set (value not shown); remove it to avoid credential conflicts`);
+    for (const v of CRED_ENV) if (getPath(root, ['env', v]) !== undefined) w.push(v === 'ANTHROPIC_AUTH_TOKEN' ? 'settings.json env.ANTHROPIC_AUTH_TOKEN is set (value not shown); it will be replaced; detach restores the original value' : 'settings.json env.ANTHROPIC_API_KEY is set (value not shown); remove it to avoid credential conflicts');
     for (const mp of claudeManagedPaths(this.o.env.platform)) if (await this.statAny(mp)) w.push(`Managed settings present (${mp}); they take precedence over these user settings`);
     if (this.o.cwd) {
       for (const f of ['settings.json', 'settings.local.json']) {

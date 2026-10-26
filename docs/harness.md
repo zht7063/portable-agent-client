@@ -24,7 +24,7 @@ Keys are resolved only in main. IPC returns masks, fingerprints and status; prev
 | Codex profile | `<CODEX_HOME>/swift.config.toml`: only `model` and `model_provider="swift"` | Default provider stays unchanged unless “Set as Codex default” is selected |
 | Claude | `<CLAUDE_CONFIG_DIR>/settings.json`: `env.ANTHROPIC_AUTH_TOKEN`, origin without `/v1`, model aliases, custom option and `SWIFT_CLIENT_MANAGED` | Normal Claude startup |
 
-Default directories are `~/.codex` and `~/.claude`. `auth.json` is checked for existence only, never read or written. No `ANTHROPIC_API_KEY` is written. Legacy `pa` provider/helper references are removed by an explicitly reviewed apply. No helper is installed; `packages/pa-key` is removed and RunAsNode is disabled.
+Default directories are `~/.codex` and `~/.claude`. `auth.json` is checked for existence only, never read or written. No `ANTHROPIC_API_KEY` is written. Startup checks beta.1 helper references, `model_providers.pa` (including `.auth`), old provider selections and legacy profiles. A native migration plan lists affected paths and requires confirmation before writing. Migration strips references, removes obsolete `userData/bin/pa-key` (and `.cmd`), and discards legacy profile and ownership records so tokens must be selected again. Legacy originals cannot be inherited by a new attachment. Cancellation leaves files untouched. Private snapshots are retained for recovery. No helper is installed; `packages/pa-key` is removed and RunAsNode is disabled.
 
 Claude main/small models start as configurable placeholders. Preview is allowed, apply and paid checks refuse placeholders. Claude's model selector supports the opus/sonnet/haiku aliases and one custom option, not an arbitrary catalog.
 
@@ -40,8 +40,19 @@ All connectivity HTTP uses core's HTTP client, manual redirects and omitted brow
 
 ## Cleanup and release checks
 
-Detach removes both desktop-managed projections, the provider key entry and key-containing backups. A second detach is a no-op. Deleting an unused provider must not detach another provider. Windows uninstall invokes guarded cleanup using a one-use nonce; ordinary and second-instance invocations do not trigger cleanup. Per-user installation means another process as the same user can forge this guard and cause denial of service.
+Detach removes the selected harness’s managed projection and its key-containing backups. The provider key is removed once no harness still uses it. A second detach is a no-op. Deleting an unused provider must not detach another provider. Windows uninstall invokes guarded cleanup using a one-use nonce; ordinary and second-instance invocations do not trigger cleanup. Per-user installation means another process as the same user can forge this guard and cause denial of service.
 
 Before deleting the macOS app, detach from the Harness page. Otherwise manually remove `[model_providers.swift]`, `swift.config.toml`, and Claude's managed `env` fields, then revoke the token server-side. Removing the app alone leaves plaintext credentials usable.
 
 Release CI extracts each installer’s `app.asar` with `@electron/asar` and checks committed origin, strict IPC field snapshot, own-module URL/environment policy using esbuild metafiles, and absence of smoke hooks. Third-party dependencies are excluded from the own-module scan.
+
+
+## Migration limitations and manual keychain cleanup
+
+Old OS keychain credentials are never read or automatically imported. This release does not expose a settings cleanup action; delete beta.1 entries manually using macOS Keychain Access, Windows Credential Manager, or your Linux Secret Service manager. Match the service **portable-agent** and accounts `<profileId>/claude`, `<profileId>/codex`, or `<profileId>/pi` (often `default/<harness>`); delete only entries you recognize. Revoke obsolete tokens on the old server too. Migration removes the local helper after confirmation, but does not revoke server tokens. Agent `auth.json` files remain untouched.
+
+Apply tightens directory permissions to 0700 and configuration files to 0600 (or protected Windows ACLs). Detach restores managed values and, where possible, original bytes, but **does not restore previous permissions**. Private state and backups may contain the original Claude token for restoration and must be excluded from sync too.
+
+H4 residual risk: project-level Claude checks inspect only `.claude/settings*.json` under the process working directory. A desktop app’s cwd is usually not the user’s project, so absence of a warning does not establish that project overrides are absent. Inspect project and managed settings before running Claude; the app does not scan arbitrary project trees.
+
+The dev CLI uses provider `swift-cli`, `swift-cli.config.toml`, Codex marker `managed by swift-cli`, and Claude marker `SWIFT_CLI_MANAGED`. It refuses to apply over desktop-owned configuration and vice versa. Each client only recovers ownership from its own marker. Detach in the owning client before switching.

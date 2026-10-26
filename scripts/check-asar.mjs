@@ -14,6 +14,16 @@ const libReq = createRequire(builderReq.resolve('app-builder-lib/package.json'))
 const asar = libReq('@electron/asar');
 const origin = JSON.parse(readFileSync(join(root, 'apps/desktop/build/server-origin.json'), 'utf8')).origin;
 const snapshot = JSON.parse(readFileSync(join(root, 'apps/desktop/build/ipc-surface.prod.json'), 'utf8'));
+const urlLiterals = new Map([
+  ['../../packages/core/src/http/client.ts', new Set(['https://'])],
+  ['../../packages/core/src/config.ts', new Set(['https://'])],
+  ['src/main/proxy/api-proxy.ts', new Set(['https://'])],
+  ['src/main/proxy/server-session.ts', new Set(['https://'])],
+  ['src/main/proxy/server-status.ts', new Set(['https://'])],
+]);
+const environmentLiterals = new Map([
+  ['src/main/index.ts', new Set(['env: process.env'])],
+]);
 const own = /^(?:src\/|\.\.\/\.\.\/packages\/(?:core|harness|keychain)\/src\/)/;
 const fail = (m) => { throw new Error(`asar policy: ${m}`); };
 function strings(node) {
@@ -34,10 +44,11 @@ export function inspect(dir) {
     // esbuild's non-minified module boundary comments map emitted code to metafile inputs;
     // third-party code is excluded. Fail closed if our entry was not located.
     const segments = [...code.matchAll(/^\/\/ ([^\n]+)\n([\s\S]*?)(?=^\/\/ [^\n]+\n|$(?![\s\S]))/gm)];
-    let scanned = 0;
+    const scanned = new Set();
     for (const [, path, source] of segments) {
-      if (!own.test(path) || !included.has(path)) continue;
-      scanned++;
+      if (!own.test(path)) continue;
+      if (!included.has(path) || !Object.hasOwn(meta[kind].inputs, path)) fail(`own module missing from metafile: ${path}`);
+      scanned.add(path);
       const ast = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
       const visit = (n) => {
         if (ts.isVariableDeclaration(n) && n.name.getText(ast) === 'IPC_FIELDS' && n.initializer && ts.isObjectLiteralExpression(n.initializer)) {
@@ -48,21 +59,24 @@ export function inspect(dir) {
         }
         if (ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) {
           const base = n.expression.getText(ast);
-          if (base === 'process.env' && !path.endsWith('/env-scan.ts')) {
+          const envRoot = (ts.isPropertyAccessExpression(n.expression) && n.expression.expression.getText(ast) === 'process' && n.expression.name.text === 'env') || (ts.isElementAccessExpression(n.expression) && n.expression.expression.getText(ast) === 'process' && ts.isStringLiteral(n.expression.argumentExpression) && n.expression.argumentExpression.text === 'env');
+          if (envRoot && path !== '../../packages/harness/src/env-scan.ts') {
             const key = ts.isPropertyAccessExpression(n) ? n.name.text : ts.isStringLiteral(n.argumentExpression) ? n.argumentExpression.text : null;
             if (!key || /URL|HOST|ORIGIN|ENDPOINT|SERVER/i.test(key)) fail(`URL/dynamic environment access in ${path}`);
           }
           // Forbid aliasing/destructuring process.env (env-scan explicitly allowlisted).
-          if (base === 'process' && (n.name?.text === 'env' || n.argumentExpression?.text === 'env') && !path.endsWith('/env-scan.ts')) {
-            if (!(ts.isPropertyAccessExpression(n.parent) || ts.isElementAccessExpression(n.parent)) && !path.endsWith('/index.ts') && !path.endsWith('/harness-host.ts')) fail(`environment alias in ${path}`);
+          if (base === 'process' && (n.name?.text === 'env' || n.argumentExpression?.text === 'env') && path !== '../../packages/harness/src/env-scan.ts') {
+            if (!(ts.isPropertyAccessExpression(n.parent) || ts.isElementAccessExpression(n.parent)) && !environmentLiterals.get(path)?.has(n.parent.getText(ast))) fail(`environment alias in ${path}`);
           }
         }
-        if (ts.isStringLiteral(n) && /^https?:\/\/[^/]/.test(n.text) && n.text !== origin && !snapshot.documentUrls.includes(n.text)) fail(`foreign URL literal in ${path}`);
+        if ((ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateHead(n) || ts.isTemplateMiddle(n) || ts.isTemplateTail(n)) && /^https?:\/\//.test(n.text) && n.text !== origin && !snapshot.documentUrls.includes(n.text) && !(ts.isStringLiteral(n) && urlLiterals.get(path)?.has(n.text))) fail(`foreign URL literal in ${path}`);
         ts.forEachChild(n, visit);
       };
       visit(ast);
     }
-    if (!scanned) fail(`no own modules scanned for ${kind}`);
+    const expected = [...new Set([...included, ...Object.keys(meta[kind].inputs)])].filter((path) => own.test(path));
+    const missing = expected.filter((path) => !scanned.has(path));
+    if (!expected.length || missing.length) fail(`own module coverage missing for ${kind}: ${missing.join(', ') || 'no own inputs'}`);
   }
   bridge = [...preload.matchAll(/call\(["']([^"']+)["']\)/g)].map((m) => m[1]).sort();
   if (JSON.stringify(bridge) !== JSON.stringify(Object.keys(snapshot.fields).sort())) fail('preload channels changed');

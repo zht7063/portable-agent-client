@@ -11,7 +11,7 @@ export interface ManagedFileState {
   /** sha256 over the canonical JSON of the owned values we wrote. */
   ownedValuesHash: string;
   ownedSettings: string[];
-  /** Values the owned settings had before our first write (restored by detach). Never secrets in command/env mode. */
+  /** Main-only values before our first write, restored by detach. May contain an original Claude token; private 0600 state, never sent over IPC. */
   original?: Record<string, unknown>;
   updatedAt: string;
 }

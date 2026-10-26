@@ -30,11 +30,13 @@ export class ConfigStore {
   /** Loads config; missing or invalid fields fall back to defaults (file is never trusted blindly). */
   async load(): Promise<PersistedConfig> {
     const d = this.defaults();
-    let raw: { serverUrl?: unknown; clipboardClearSeconds?: unknown };
-    try { raw = JSON.parse(await readFile(this.path, 'utf8')) as typeof raw; } catch { return d; }
+    let raw: { lastServerOrigin?: unknown; serverUrl?: unknown; clipboardClearSeconds?: unknown };
+    try { raw = JSON.parse(await readFile(this.path, 'utf8')) as typeof raw; } catch { await this.save(d); return d; }
     // Old serverUrl is deliberately ignored and removed from disk.
     const next: PersistedConfig = { ...d, ...(validClear(raw?.clipboardClearSeconds) ? { clipboardClearSeconds: raw.clipboardClearSeconds } : {}) };
-    if ('serverUrl' in raw) { this.originChanged = typeof raw.serverUrl === 'string' && raw.serverUrl !== d.serverUrl; await this.save(next); }
+    const previous = raw.lastServerOrigin ?? raw.serverUrl;
+    this.originChanged = typeof previous === 'string' && previous !== d.serverUrl;
+    if ('serverUrl' in raw || raw.lastServerOrigin !== d.serverUrl) await this.save(next);
     return next;
   }
 
@@ -52,7 +54,7 @@ export class ConfigStore {
   async save(c: PersistedConfig): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true });
     const tmp = `${this.path}.tmp`;
-    await writeFile(tmp, JSON.stringify({ version: 2, clipboardClearSeconds: c.clipboardClearSeconds }, null, 2), { mode: 0o600 });
+    await writeFile(tmp, JSON.stringify({ version: 2, lastServerOrigin: c.serverUrl, clipboardClearSeconds: c.clipboardClearSeconds }, null, 2), { mode: 0o600 });
     await rename(tmp, this.path);
   }
 }

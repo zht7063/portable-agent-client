@@ -3,8 +3,8 @@
  * Owned settings (verified against pi docs, 2026-10):
  *   models.json   providers.<providerId>            (whole object)
  *   settings.json defaultProvider, defaultModel      (only when profile.pi.setDefault !== false)
- * Never reads auth.json (presence only). Never writes a key: apiKey is "!<pa-key> <profile> pi" (command)
- * or "$<ENV>" (env). plaintext is refused (D2 open).
+ * Never reads auth.json (presence only). Dev CLI only: apiKey references "$<ENV>".
+ * Command helpers and plaintext mode are refused.
  * Only api "openai-completions" is offered; "anthropic-messages" stays hidden until verified against real Pi.
  */
 import { join } from 'node:path';
@@ -12,12 +12,12 @@ import type { Detection, HarnessProfile } from '@pac/core/contract';
 import { configDir } from '../paths.js';
 import { PROFILE_ID_RE } from '@pac/core/fs';
 import { detectBasic } from '../detect.js';
-import { bad, dotted, ENV_RE, helperCommand, JsonHarnessAdapter, PROVIDER_RE, type AdapterOptions, type Desired } from './base.js';
+import { bad, dotted, ENV_RE, JsonHarnessAdapter, PROVIDER_RE, type AdapterOptions, type Desired } from './base.js';
 
 export type PiAdapterOptions = AdapterOptions;
 
-export function piApiKeyValue(p: HarnessProfile, helperPath: string, platform: NodeJS.Platform): string {
-  if (p.keyMode === 'command') return `!${helperCommand(helperPath, p.id, 'pi', platform)}`;
+export function piApiKeyValue(p: HarnessProfile, _helperPath: string, _platform: NodeJS.Platform): string {
+  if (p.keyMode === 'command') return bad('Command helper mode has been removed; use env mode for Pi');
   if (p.keyMode === 'env') return `$${p.envVar ?? 'PA_API_KEY'}`;
   return bad('Plaintext key mode is not supported for Pi (keys are never written to config files)');
 }

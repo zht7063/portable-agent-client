@@ -10,6 +10,7 @@ import { SectionPageLayout } from '@/components/layout'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Label } from '@/components/ui/label'
 import type { HarnessProfile } from '../lib/pa-types'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -23,6 +24,7 @@ export function HarnessPage() {
   const { t } = useTranslation()
   const [serverUrl, setServerUrl] = useState<string | null>(null)
   const [tokens, setTokens] = useState<TokenOption[]>([])
+  const [tokenId, setTokenId] = useState<number | null>(null)
   const [models, setModels] = useState<string[]>([])
   const [providers, setProviders] = useState<HarnessProfile[]>([])
   const [label, setLabel] = useState('Swift provider')
@@ -61,7 +63,12 @@ export function HarnessPage() {
           <div className='space-y-3 rounded-md border p-4' aria-label={t('Providers')}>
             <Label htmlFor='provider-label'>{t('Provider name')}</Label>
             <Input id='provider-label' value={label} onChange={(e) => setLabel(e.target.value)} />
-            <Button disabled={busy || !tokens[0] || !label.trim()} onClick={() => { setBusy(true); setErr(null); void unwrap(pa().harness.saveProvider({ label: label.trim(), keyId: tokens[0]?.id ?? 0, models: { main: 'claude-main-placeholder', small: 'claude-small-placeholder' } })).then(() => setRevision((v) => v + 1)).catch((e) => setErr(errText(e))).finally(() => setBusy(false)) }}>{t('Add provider')}</Button>
+            <Label htmlFor='provider-token'>{t('API key')}</Label>
+            <NativeSelect id='provider-token' value={tokenId ?? ''} onChange={(e) => setTokenId(e.target.value ? Number(e.target.value) : null)}>
+              <NativeSelectOption value=''>{t('Select an API key')}</NativeSelectOption>
+              {tokens.map((token) => <NativeSelectOption key={token.id} value={token.id}>{token.name} ({token.maskedKey})</NativeSelectOption>)}
+            </NativeSelect>
+            <Button disabled={busy || tokenId === null || !label.trim()} onClick={() => { setBusy(true); setErr(null); void unwrap(pa().harness.saveProvider({ label: label.trim(), keyId: tokenId ?? 0, models: { main: 'claude-main-placeholder', small: 'claude-small-placeholder' } })).then(() => setRevision((v) => v + 1)).catch((e) => setErr(errText(e))).finally(() => setBusy(false)) }}>{t('Add provider')}</Button>
             {providers.map((p) => <div key={p.id} className='flex flex-wrap items-center gap-2 text-sm'>
               <span>{p.label ?? p.id} · {t('Key')}: *** · #{p.keyId}</span>
               <Button variant='outline' disabled={busy} onClick={() => { setBusy(true); void unwrap(pa().harness.activateProvider({ profileId: p.id })).then(() => setRevision((v) => v + 1)).catch((e) => setErr(errText(e))).finally(() => setBusy(false)) }}>{t('Select for preview')}</Button>

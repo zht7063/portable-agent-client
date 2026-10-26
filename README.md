@@ -1,6 +1,6 @@
 # swift-client
 
-A desktop client for [new-api](https://github.com/QuantumNous/new-api) servers. It configures local coding agents (Pi, Claude Code, Codex) against your relay, and keeps keys in the OS keychain. Status: **M0–M3** of plan v2. The UI is the upstream new-api web frontend (vendored, patched, built with bun + Rsbuild via `scripts/build-new-api-web.sh`); renderer `/api/*` requests are forwarded by the main process to the configured server with a main-only session (M3, see `docs/proxy.md`).
+A desktop client for [new-api](https://github.com/QuantumNous/new-api) servers. It configures Claude Code and Codex against your relay, storing harness keys in private plaintext files (0600/0700 on POSIX, protected ACLs on Windows). The UI is the upstream new-api web frontend (vendored, patched, built with bun + Rsbuild via `scripts/build-new-api-web.sh`); renderer `/api/*` requests are forwarded by the main process to the configured server with a main-only session (M3, see `docs/proxy.md`).
 
 Licensed **AGPL-3.0-only** (see `LICENSE`, `NOTICE`). Based on new-api: *Frontend design and development by New API contributors.* https://github.com/QuantumNous/new-api
 
@@ -8,9 +8,8 @@ Licensed **AGPL-3.0-only** (see `LICENSE`, `NOTICE`). Based on new-api: *Fronten
 | Package | What it is |
 |---|---|
 | `packages/core` (`@pac/core`) | Contract/IPC, origin-pinned HTTP, session base, `keys.secret`, fs layer, **product config** (`src/product.config.json`, the only place for name/app ID). |
-| `packages/harness` (`@pac/harness`) | Pi / Claude Code / Codex adapters (plan → apply → rollback). |
+| `packages/harness` (`@pac/harness`) | Claude Code / Codex adapters; Pi env mode for the dev CLI (plan → apply → rollback). |
 | `packages/keychain` (`@pac/keychain`) | OS keychain backends. |
-| `packages/pa-key` (`@pac/pa-key`) | Credential helper the harnesses call; reads only the keychain. |
 | `packages/cli` (`@pac/cli`, `pac`) | Dev/test CLI. **Not shipped.** |
 | `apps/desktop` (`@pac/desktop`) | Electron main + preload; loads the new-api web build on `pac://app/`. |
 

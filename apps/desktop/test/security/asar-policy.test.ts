@@ -21,6 +21,35 @@ describe('S15 final own-module artifact policy', () => {
       expect(() => inspect(temp)).toThrow(/origin/);
       writeFileSync(path, good + '\n// src/main/index.ts\nconst leakedOrigin = process.env.EVIL_URL;\n');
       expect(() => inspect(temp)).toThrow(/environment/);
+      for (const access of ["process['env'].EVIL_URL", "process['env']['EVIL_URL']"]) {
+        writeFileSync(path, good + `\n// src/main/index.ts\nconst leaked = ${access};\n`);
+        expect(() => inspect(temp)).toThrow(/environment/);
+      }
+      // File+literal allowlist: another index module and aliases in our entry must be rejected.
+      const metaPath = join(out, 'metafile.json');
+      const metaText = readFileSync(metaPath, 'utf8');
+      const meta = JSON.parse(metaText);
+      const output = Object.values(meta.main.outputs).find((x) => (x as { entryPoint?: string }).entryPoint) as { inputs: Record<string, { bytesInOutput: number }> };
+      output.inputs['src/untrusted/index.ts'] = { bytesInOutput: 50 };
+      meta.main.inputs['src/untrusted/index.ts'] = { imports: [] };
+      writeFileSync(metaPath, JSON.stringify(meta));
+      writeFileSync(path, good + '\n// src/untrusted/index.ts\nconst alias = process.env;\n');
+      expect(() => inspect(temp)).toThrow(/environment alias/);
+      writeFileSync(path, good);
+      expect(() => inspect(temp)).toThrow(/coverage.*src\/untrusted\/index.ts/);
+      writeFileSync(metaPath, metaText);
+      const missingMeta = JSON.parse(metaText);
+      const ownModule = Object.keys(missingMeta.main.inputs).find((p) => p.startsWith('src/main/'))!;
+      delete missingMeta.main.inputs[ownModule];
+      writeFileSync(metaPath, JSON.stringify(missingMeta));
+      expect(() => inspect(temp)).toThrow(/missing from metafile/);
+      writeFileSync(metaPath, metaText);
+      writeFileSync(path, good + '\n// src/main/index.ts\nconst alias = process.env;\n');
+      expect(() => inspect(temp)).toThrow(/environment alias/);
+      writeFileSync(path, good + '\n// src/main/index.ts\nconst url = `https://foreign.invalid`;\n');
+      expect(() => inspect(temp)).toThrow(/foreign URL/);
+      writeFileSync(path, good + '\n// src/main/index.ts\nconst url = `https://${host}/path`;\n');
+      expect(() => inspect(temp)).toThrow(/foreign URL/);
       writeFileSync(path, good + '\n/* PA_SMOKE */'); expect(() => inspect(temp)).toThrow(/smoke/);
       writeFileSync(path, good);
       // Validate strict config:set field snapshot against a deliberately compromised artifact.

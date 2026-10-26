@@ -36,24 +36,31 @@ export class CodexAdapter extends JsonHarnessAdapter {
   constructor(o: CodexAdapterOptions) { super(o); }
 
   get dir() { return configDir(this.id, this.o.env); }
+  private get owner() { return this.o.owner ?? 'swift-client'; }
+  private get provider() { return this.o.owner ?? 'swift'; }
+  private get selectionPath() { return join(this.dir, `${this.provider}.config.toml`); }
   get configPath() { return join(this.dir, 'config.toml'); }
   get authPath() { return join(this.dir, 'auth.json'); }
-  protected configPaths() { return [this.configPath, join(this.dir, 'swift.config.toml')]; }
+  protected configPaths() { return [this.configPath, this.selectionPath]; }
   protected parseText(text: string) { return parseToml(text); }
   protected mergeText(text: string, edits: JsonEdit[]): string {
-    let out = mergeOwnedToml(text.replace(/^# managed by swift-client provider=.* v=2\r?\n/gm, ''), edits.map((e) => ({ path: e.path.map(String), value: e.value })));
-    if (edits.some((e) => e.path.join('.') === 'model_providers.swift' && e.value !== undefined)) {
-      const marker = `# managed by swift-client provider=${this.currentProfileId ?? 'swift'} v=2${out.includes('\r\n') ? '\r\n' : '\n'}`;
-      out = out.replace(/^(\[model_providers\.swift\])/m, marker + '$1');
+    const markerPattern = new RegExp(`^# managed by ${this.owner} provider=.* v=2\\r?\\n`, 'gm');
+    let out = mergeOwnedToml(text.replace(markerPattern, ''), edits.map((e) => ({ path: e.path.map(String), value: e.value })));
+    const table = edits.some((e) => e.path.join('.') === `model_providers.${this.provider}` && e.value !== undefined);
+    const selection = edits.some((e) => e.path.join('.') === 'model_provider' && e.value === this.provider);
+    if (table || selection) {
+      const marker = `# managed by ${this.owner} provider=${this.currentProfileId ?? this.provider} v=2${out.includes('\r\n') ? '\r\n' : '\n'}`;
+      if (table) out = out.replace(new RegExp(`^(\\[model_providers\\.${this.provider}\\])`, 'm'), marker + '$1');
+      else out = marker + out;
     }
     return out;
   }
 
   protected recoveredOwnership(path: string, text: string, root: Record<string, unknown>) {
-    const marker = text.match(/^# managed by swift-client provider=([a-z0-9-]{1,32}) v=2\r?$/m)?.[1];
-    if (path.endsWith('swift.config.toml') && root.model_provider === 'swift') return { settings: ['model', 'model_provider'], profileId: 'swift' };
+    const marker = text.match(new RegExp(`^# managed by ${this.owner} provider=([a-z0-9-]{1,32}) v=2\\r?$`, 'm'))?.[1];
     if (!marker) return undefined;
-    return { settings: ['model_providers.swift', ...(root.model_provider === 'swift' ? ['model', 'model_provider'] : [])], profileId: marker };
+    if (path === this.selectionPath && root.model_provider === this.provider) return { settings: ['model', 'model_provider'], profileId: marker };
+    return { settings: [`model_providers.${this.provider}`, ...(root.model_provider === this.provider ? ['model', 'model_provider'] : [])], profileId: marker };
   }
 
   private async statAny(p: string) { return (await this.o.fs.ops.stat(p).catch(() => null)) !== null; }
@@ -66,10 +73,12 @@ export class CodexAdapter extends JsonHarnessAdapter {
     return d;
   }
 
-  private pid(_p: HarnessProfile) { return 'swift'; }
+  private pid(_p: HarnessProfile) { return this.provider; }
 
   protected async desiredFor(p: HarnessProfile): Promise<Map<string, Desired>> {
     if (!PROFILE_ID_RE.test(p.id)) bad('Invalid profile id');
+    const foreign = this.o.owner ? 'swift-client' : 'swift-cli';
+    if ((await this.o.fs.readText(this.configPath))?.text.includes(`# managed by ${foreign} provider=`)) bad('This config is managed by the other client; detach there first');
     const pid = this.pid(p);
     if (!PROVIDER_RE.test(pid)) bad('Invalid provider id');
     if (['openai', 'amazon-bedrock', 'amazon-bedrock-runtime', 'gcp', 'ollama', 'ollama-chat', 'lmstudio', 'oss'].includes(pid)) bad('Provider id clashes with a Codex built-in provider');
@@ -78,9 +87,10 @@ export class CodexAdapter extends JsonHarnessAdapter {
     const d: Desired = new Map();
     if (p.codex?.setDefault === true) { d.set('model', codexModel(p)); d.set('model_provider', pid); }
     d.set(`model_providers.${pid}`, table);
-    d.set('model_providers.pa', undefined);
-    const selection: Desired = new Map([['model', codexModel(p)], ['model_provider', 'swift']]);
-    return new Map([[this.configPath, d], [join(this.dir, 'swift.config.toml'), selection]]);
+    if (!this.o.owner) d.set('model_providers.pa', undefined);
+
+    const selection: Desired = new Map([['model', codexModel(p)], ['model_provider', pid]]);
+    return new Map([[this.configPath, d], [this.selectionPath, selection]]);
   }
 
   protected collisionSettings(_path: string, desired: Desired): string[] {
@@ -97,7 +107,7 @@ export class CodexAdapter extends JsonHarnessAdapter {
     const prof = getPath(root, ['profile']);
     if (typeof prof === 'string') w.push(`config.toml selects profile "${prof}"; its model / model_provider may override ours`);
 
-    if (p.codex?.setDefault !== true) w.push(`Default not changed; run codex --profile swift`);
+    if (p.codex?.setDefault !== true) w.push(`Default not changed; run codex --profile ${this.provider}`);
     if (this.o.cwd && (await this.statAny(join(this.o.cwd, '.codex', 'config.toml')))) w.push('Project .codex/config.toml may override these user settings');
     w.push('Requires the server Responses channel (configured on the server, not by this app); check the channel status before use');
     return w;

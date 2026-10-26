@@ -89,7 +89,8 @@ export function HarnessCard({ harness, serverUrl, tokens, models: initialModels 
     setKr(k)
     const p = (await unwrap(pa().harness.listProfiles())).profiles[0]
     if (p) {
-      setTokenId(p.keyId)
+      setTokenId(p.serverUrl === serverUrl ? p.keyId : null)
+      if (p.serverUrl !== serverUrl) setMsg(t('Server changed; select a token again'))
       setMain(isCodex ? (p.models.codex ?? p.models.main) : p.models.main)
       setSmall(p.models.small ?? '')
       setOpus(p.models.opus ?? ''); setSonnet(p.models.sonnet ?? ''); setCustom(p.models.custom ?? '')
@@ -99,11 +100,10 @@ export function HarnessCard({ harness, serverUrl, tokens, models: initialModels 
       setCxDefault(p.codex?.setDefault === true)
     }
     setHist(await unwrap(pa().harness.history({ id: harness })).catch(() => null))
-  }, [harness, isCodex])
+  }, [harness, isCodex, serverUrl, t])
 
   useEffect(() => { void run(loadData) }, [run, loadData])
   useEffect(() => { if (!main && models[0]) setMain(models[0]) }, [models, main])
-  useEffect(() => { if (tokenId === null && tokens[0]) setTokenId(tokens[0].id) }, [tokens, tokenId])
 
   const doPlan = () => run(async () => {
     if (tokenId === null || !serverUrl) { setMsg(t('Select an API key first (create one on the API Keys page).')); return }
@@ -189,7 +189,7 @@ export function HarnessCard({ harness, serverUrl, tokens, models: initialModels 
           <div className='space-y-1.5'>
             <Label htmlFor={`${harness}-token`}>{t('API key')}</Label>
             <NativeSelect id={`${harness}-token`} aria-label={t('API key')} className='w-full' value={tokenId ?? ''} onChange={(e) => setTokenId(e.target.value ? Number(e.target.value) : null)}>
-              {!tokens.length && <NativeSelectOption value=''>{t('No API keys')}</NativeSelectOption>}
+              <NativeSelectOption value=''>{t(tokens.length ? 'Select an API key' : 'No API keys')}</NativeSelectOption>
               {tokens.map((k) => <NativeSelectOption key={k.id} value={k.id}>{k.name} ({k.maskedKey})</NativeSelectOption>)}
             </NativeSelect>
           </div>

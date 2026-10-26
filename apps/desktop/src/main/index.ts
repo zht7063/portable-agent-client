@@ -171,8 +171,9 @@ if (primaryInstance) app.whenReady().then(async () => {
   app.on('web-contents-created', (_e, wc) => { hardenWebContents(wc as unknown as WebContentsLike); });
 
   const userData = app.getPath('userData');
+  const configStore = new ConfigStore(join(userData, 'config.json'), __PA_SMOKE__ && !app.isPackaged && process.env.PA_SMOKE === '1' ? process.env.PAC_SERVER_URL : SERVER_ORIGIN);
   const host = await CoreHost.start({
-    configStore: new ConfigStore(join(userData, 'config.json'), __PA_SMOKE__ && !app.isPackaged && process.env.PA_SMOKE === '1' ? process.env.PAC_SERVER_URL : SERVER_ORIGIN),
+    configStore,
     tokenStore: createTokenStore(join(userData, 'session.bin')),
     onSessionChange: (v) => win?.webContents.send('session:changed', v),
   });
@@ -269,6 +270,18 @@ if (primaryInstance) app.whenReady().then(async () => {
   // Handlers are registered before the renderer loads, so its first invoke never races.
   win = createWindow();
   installMenu();
+  if (configStore.originChanged || (await harnessHost.harness.listProfiles()).some((p) => p.serverUrl !== host.config().serverUrl)) {
+    await dialog.showMessageBox(win, { type: 'warning', title: 'Server changed', message: 'Select a token again', detail: 'The server origin changed. Sign in to this server and reselect a token on the Harness page before applying configurations.', buttons: ['OK'] });
+  }
+  try {
+    const plan = await harnessHost.migration.plan();
+    if (plan.needsMigration) {
+      const choice = await dialog.showMessageBox(win, { type: 'warning', title: 'beta.1 migration', message: 'Review legacy harness cleanup', detail: `Remove legacy apiKeyHelper / pa-key references and provider pa from:\n${plan.files.join('\n')}\nRemove obsolete helper files:\n${plan.helpers.join('\n')}\nReset legacy ownership records: ${plan.ownership.map((o) => o.path).join('\n')}. Prior values remain in private backups.\nDiscard legacy profiles: ${plan.profiles.join(', ')}. Reselect a token on the Harness page. Private backups are retained. OS keychain entries are untouched; see docs/harness.md for manual deletion.`, buttons: ['Cancel', 'Migrate'], defaultId: 0, cancelId: 0, noLink: true });
+      if (choice.response === 1) await harnessHost.migration.apply(plan);
+    }
+  } catch {
+    await dialog.showMessageBox(win, { type: 'warning', title: 'Harness migration', message: 'Legacy self-check could not complete', detail: 'Self-check or migration could not complete. Review your agent configuration, private backups and docs/harness.md before retrying.', buttons: ['OK'] });
+  }
 });
 
 /** M6: standard menus (no View menu / reload / DevTools when packaged, see window-policy.ts) plus Help -> "About & licenses" (AGPL notice, new-api attribution, source offer). */

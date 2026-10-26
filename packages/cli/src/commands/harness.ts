@@ -10,7 +10,6 @@ import { type Keyring } from '@pac/keychain';
 export const HARNESS_HELP = `pa harness detect | plan <id> --profile <pid> | apply <id> --profile <pid> --yes
           | rollback <id> [--first-write | --detach | --snapshot <sid>] [--overwrite-external] --yes | status | env-scan [--no-login-shell]
           | key-check <profileId> [<harness>] | profile list | profile set <profile.json>
-  --helper <abs> pa-key path written into configs (default $PA_KEY_HELPER or <dataDir>/bin/pa-key)
   --home <dir>   use <dir> as HOME (tests: point at a temp dir); data dir defaults to <home>/.config/<cliConfigDir>/harness`;
 
 export interface HarnessCliDeps {
@@ -43,13 +42,11 @@ export async function runHarness(argv: string[], d: HarnessCliDeps): Promise<num
   const state = new StateStore(fs);
   const vault = new FileKeyVault(join(dataDir, 'keys.json'));
   const platform = d.platform ?? process.platform;
-  const helperArg = take(args, '--helper') ?? env.PA_KEY_HELPER;
-  if (helperArg !== undefined && !isAbsolute(helperArg)) { d.err('--helper must be an absolute path'); return 1; }
-  const helperPath = helperArg ?? join(dataDir, 'bin', platform === 'win32' ? 'pa-key.cmd' : 'pa-key');
+  const helperPath = '';
   const henv = { home, env: { ...env, HOME: home }, platform };
   const exec = d.exec ?? nodeExec;
   const common = (_h: HarnessId) => ({
-    fs, state, env: henv, exec, helperPath, cwd: process.cwd(),
+    fs, state, env: henv, exec, helperPath, owner: 'swift-cli' as const, cwd: process.cwd(),
     getKey: async (p: HarnessProfile) => { const key = await vault.get(p.keyId); if (!key) throw new Error('No key in dev CLI FileKeyVault'); return key; },
   });
   const pi = new PiAdapter(common('pi'));
@@ -105,7 +102,7 @@ export async function runHarness(argv: string[], d: HarnessCliDeps): Promise<num
         const f = args.shift();
         if (!f) { d.err('profile set needs a JSON file'); return 1; }
         // Profiles hold a keyId, never a key; validateProfile drops unknown fields.
-        d.out(await harness.upsertProfile(JSON.parse(await readFile(f, 'utf8')) as HarnessProfile));
+        d.out(await harness.upsertProfile({ ...JSON.parse(await readFile(f, 'utf8')) as HarnessProfile, providerId: 'swift-cli' }));
         return 0;
       }
       d.err(HARNESS_HELP); return 1;

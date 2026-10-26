@@ -7,7 +7,7 @@ import { createHandlers, dispatch } from '../src/main/ipc/handlers';
 import { fixture, CANARY } from '../../../packages/harness/test/v6-fixture';
 
 describe('desktop v6 IPC', () => {
-  it('S20 detach removes both projected keys, key file, key-containing snapshots; S19 responses never contain CANARY', async () => {
+  it('scoped detach preserves the other harness and its backups until its own detach; S19 responses never contain CANARY', async () => {
     const s = await fixture();
     const host = new HarnessHost({ home: s.home, dataDir: s.data, env: s.env.env, platform: 'linux', exec: s.exec, keyFile: s.keys });
     const cfg = { serverUrl: s.profile.serverUrl, insecureTransport: false, clipboardClearSeconds: 30 };
@@ -17,9 +17,18 @@ describe('desktop v6 IPC', () => {
       const p = await host.harness.plan(id, s.profile.id);
       responses.push(p, await dispatch(h, 'harness:apply', { id, plan: p, confirm: true }));
     }
+    await host.harness.upsertProfile({ ...s.profile, models: { ...s.profile.models, custom: 'second-model' } });
+    responses.push(await host.harness.apply('claude', await host.harness.plan('claude', s.profile.id)));
+    const claudeHistory = await host.harness.history('claude');
+    const prior = claudeHistory.snapshots.find((entry) => entry.action === 'apply')!;
+    expect((await s.fs.loadBackup('claude', { snapshotId: prior.snapshotId })).some((entry) => entry.data && new TextDecoder().decode(entry.data).includes(CANARY))).toBe(true);
     responses.push(await dispatch(h, 'harness:rollback', { id: 'codex', target: 'detach', confirm: true }));
     expect(JSON.stringify(responses)).not.toContain(CANARY);
     expect(await readFile(s.codex.configPath, 'utf8')).not.toContain(CANARY);
+    expect(await readFile(s.claude.settingsPath, 'utf8')).toContain(CANARY);
+    expect(await host.harness.history('claude')).toEqual(claudeHistory);
+    expect(await s.keys.get(s.profile.id)).toBe(CANARY);
+    expect(await dispatch(h, 'harness:rollback', { id: 'claude', target: 'detach', confirm: true })).toMatchObject({ ok: true });
     expect(await readFile(s.claude.settingsPath, 'utf8')).not.toContain(CANARY);
     await expect(stat(s.keys.path)).rejects.toThrow(); expect((await s.fs.loadBackup('codex', 'first-write')).every((e) => e.data === null || !new TextDecoder().decode(e.data).includes(CANARY))).toBe(true);
     expect(await dispatch(h, 'harness:rollback', { id: 'claude', target: 'detach', confirm: true })).toMatchObject({ ok: true, data: { written: [] } });

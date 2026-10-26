@@ -132,11 +132,6 @@ export function createHandlers({ getCore, getConfig, setConfig, harness, harness
       return harness.apply(r.id, r.plan, r.acknowledge ?? []);
     },
     'harness:rollback': async (r) => {
-      if (r.target === 'detach' && harnessHost) {
-        const written: string[] = [];
-        for (const id of ['codex', 'claude'] as const) written.push(...(await harness.rollback(id, 'detach')).written);
-        return { id: r.id, written, warnings: [] };
-      }
       return harness.rollback(r.id, r.target, { overwriteExternal: r.overwriteExternal === true });
     },
     'harness:history': (r) => harness.history(r.id),

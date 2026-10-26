@@ -1,7 +1,8 @@
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { type Core, type HarnessId, type HarnessProfile } from '@pac/core';
 import { ClaudeAdapter, CodexAdapter, ControlledFs, createHarness, nodeExec, nodeFsOps, StateStore, KeyFile, Providers, createConnectivity, type Harness } from '@pac/harness';
 import type { Keyring } from '@pac/keychain';
+import { HarnessMigration } from './harness-migration';
 import { SERVER_ORIGIN } from './server-origin';
 
 export interface HarnessHostOptions {
@@ -18,6 +19,7 @@ export interface HarnessHostOptions {
 export class HarnessHost {
   readonly harness: Harness;
   readonly state: StateStore;
+  readonly migration: HarnessMigration;
   readonly helperPath = '';
   readonly keyFile: KeyFile;
   readonly providers: Providers;
@@ -29,6 +31,7 @@ export class HarnessHost {
     this.keyFile = o.keyFile ?? new KeyFile(o.dataDir);
     const origin = o.serverOrigin ?? SERVER_ORIGIN;
     const env = { home: o.home, env: o.env, platform: o.platform };
+    this.migration = new HarnessMigration(fs, this.state, env);
     const exec = o.exec ?? nodeExec;
     const common = {
       fs, state: this.state, env, exec, helperPath: '', ...(o.cwd ? { cwd: o.cwd } : {}),
@@ -36,7 +39,7 @@ export class HarnessHost {
         if (p.serverUrl !== origin) throw new Error('Server changed; select token again');
         return this.keyFile.get(p.id);
       },
-      afterDetach: async (ids: string[]) => {
+      afterDetach: async (ids: string[], harness: HarnessId) => {
         const st = await this.state.load();
         for (const id of ids) {
           const key = (await this.keyFile.load())[id]?.key;
@@ -46,7 +49,7 @@ export class HarnessHost {
               const path = await fs.assertAllowed(join(dir, name));
               const stat = await fs.ops.stat(path);
               if (stat?.isDirectory) await purge(path);
-              else if (stat?.isFile && path.endsWith('.bak')) {
+              else if (stat?.isFile && basename(dir) === harness && path.endsWith('.bak')) {
                 const text = new TextDecoder().decode(await fs.ops.readFile(path));
                 const ownedMarker = text.includes(`# managed by swift-client provider=${id} v=2`) || new RegExp(`"SWIFT_CLIENT_MANAGED"\\s*:\\s*"${id}"`).test(text);
                 if ((key && text.includes(key)) || ownedMarker) {
