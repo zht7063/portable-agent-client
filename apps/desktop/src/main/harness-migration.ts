@@ -12,8 +12,11 @@ export class HarnessMigration {
     const c = await this.fs.readText(claude);
     if (c) {
       const root = JSON.parse(c.text) as { apiKeyHelper?: unknown; env?: Record<string, unknown> };
-      const edits: { path: string[]; value: undefined }[] = [];
-      if (typeof root.apiKeyHelper === 'string' && /pa-key/i.test(root.apiKeyHelper)) edits.push({ path: ['apiKeyHelper'], value: undefined });
+      const edits: { path: string[]; value: unknown }[] = [];
+      if (typeof root.apiKeyHelper === 'string' && (/pa-key/i.test(root.apiKeyHelper) || root.apiKeyHelper === `printf '%s' "$PA_API_KEY"`)) {
+        edits.push({ path: ['apiKeyHelper'], value: undefined });
+        for (const key of Object.keys(root.env ?? {})) if (key === 'ANTHROPIC_BASE_URL' || /^ANTHROPIC_.*MODEL/.test(key)) edits.push({ path: ['env', key], value: undefined });
+      }
       for (const [key, value] of Object.entries(root.env ?? {})) if (typeof value === 'string' && /pa-key/i.test(value)) edits.push({ path: ['env', key], value: undefined });
       if (edits.length) changes.push({ path: claude, after: mergeOwnedJson(c.text, edits), fingerprint: c.fingerprint, harness: 'claude' });
     }
@@ -21,9 +24,9 @@ export class HarnessMigration {
     const cdx = await this.fs.readText(codex);
     if (cdx) {
       const root = parseToml(cdx.text);
-      const edits: { path: string[]; value: undefined }[] = [];
+      const edits: { path: string[]; value: unknown }[] = [];
       if ((root.model_providers as Record<string, unknown> | undefined)?.pa !== undefined) edits.push({ path: ['model_providers', 'pa'], value: undefined });
-      if (root.model_provider === 'pa') edits.push({ path: ['model_provider'], value: undefined });
+      if (root.model_provider === 'pa') edits.push({ path: ['model_provider'], value: undefined }, { path: ['model'], value: undefined });
       if (edits.length) changes.push({ path: codex, after: mergeOwnedToml(cdx.text, edits), fingerprint: cdx.fingerprint, harness: 'codex' });
     }
     const helperPaths = ['pa-key', 'pa-key.cmd'].map((name) => join(this.fs.dataDir, 'bin', name));
@@ -38,6 +41,21 @@ export class HarnessMigration {
         entry.ownedSettings.some((s) => s === 'apiKeyHelper' || s.startsWith('model_providers.pa')) ||
         Object.entries(entry.original ?? {}).some(([key, value]) => typeof value === 'string' && (/pa-key/i.test(value) || (key === 'model_provider' && value === 'pa')))
       )));
+    // Restore beta-owned settings before dropping their ownership records.
+    for (const [path, entry] of ownership) {
+      const file = await this.fs.readText(path);
+      if (!file) continue;
+      const edits = entry.ownedSettings.map((key) => {
+        let value = entry.original?.[key];
+        if ((key === 'apiKeyHelper' && typeof value === 'string' && (/pa-key/i.test(value) || value === `printf '%s' "$PA_API_KEY"`)) || (key === 'model_provider' && value === 'pa') || key.startsWith('model_providers.pa')) value = undefined;
+        return { path: key.split('.'), value };
+      });
+      const existing = changes.find((c) => c.path === path);
+      const merge = entry.harness === 'codex' ? mergeOwnedToml : mergeOwnedJson;
+      const after = merge(existing?.after ?? file.text, edits);
+      if (existing) existing.after = after;
+      else if (after !== file.text && (entry.harness === 'claude' || entry.harness === 'codex')) changes.push({ path, after, fingerprint: file.fingerprint, harness: entry.harness });
+    }
     return { changes, helpers, profiles, ownership };
   }
 

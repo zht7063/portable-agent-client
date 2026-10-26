@@ -31,7 +31,7 @@ export class ConfigStore {
   async load(): Promise<PersistedConfig> {
     const d = this.defaults();
     let raw: { lastServerOrigin?: unknown; serverUrl?: unknown; clipboardClearSeconds?: unknown };
-    try { raw = JSON.parse(await readFile(this.path, 'utf8')) as typeof raw; } catch { await this.save(d); return d; }
+    try { raw = JSON.parse(await readFile(this.path, 'utf8')) as typeof raw; } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; await this.save(d); return d; }
     // Old serverUrl is deliberately ignored and removed from disk.
     const next: PersistedConfig = { ...d, ...(validClear(raw?.clipboardClearSeconds) ? { clipboardClearSeconds: raw.clipboardClearSeconds } : {}) };
     const previous = raw.lastServerOrigin ?? raw.serverUrl;

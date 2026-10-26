@@ -20,8 +20,11 @@ describe('r36 ownership and restore regressions', () => {
       expect((await stat(s.state.path)).mode & 0o777).toBe(0o600);
       expect(JSON.stringify(await s.harness.previewRollback('claude', 'detach'))).not.toContain(old);
       expect(JSON.stringify(await s.harness.history('claude'))).not.toContain(old);
+      // A second apply copies the saved original into apply history.
+      await s.harness.apply('claude', await s.harness.plan('claude', s.profile.id));
       await s.harness.rollback('claude', 'detach');
       expect(await readFile(s.claude.settingsPath, 'utf8')).toBe(original);
+      expect(await readFile(s.state.path, 'utf8')).not.toContain(old);
     } finally { await rm(s.root, { recursive: true, force: true }); }
   });
 

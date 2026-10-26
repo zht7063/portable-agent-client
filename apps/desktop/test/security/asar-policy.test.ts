@@ -21,8 +21,16 @@ describe('S15 final own-module artifact policy', () => {
       expect(() => inspect(temp)).toThrow(/origin/);
       writeFileSync(path, good + '\n// src/main/index.ts\nconst leakedOrigin = process.env.EVIL_URL;\n');
       expect(() => inspect(temp)).toThrow(/environment/);
-      for (const access of ["process['env'].EVIL_URL", "process['env']['EVIL_URL']"]) {
+      for (const access of ["process['env'].EVIL_URL", "process['env']['EVIL_URL']", "globalThis.process.env.X"]) {
         writeFileSync(path, good + `\n// src/main/index.ts\nconst leaked = ${access};\n`);
+        expect(() => inspect(temp)).toThrow(/environment/);
+      }
+      for (const value of ["'ht'+'tps://foreign.invalid'", "'//foreign.invalid'", "'wss://foreign.invalid'", "'ws://foreign.invalid'"]) {
+        writeFileSync(path, good + `\n// src/main/index.ts\nconst url = ${value};\n`);
+        expect(() => inspect(temp)).toThrow(/foreign URL/);
+      }
+      for (const code of ['const p = process; p.env.X;', 'const {env} = process; env.X;', 'const e = process.env; e.X;', 'const {EVIL_URL} = process.env;']) {
+        writeFileSync(path, good + `\n// src/main/index.ts\n${code}\n`);
         expect(() => inspect(temp)).toThrow(/environment/);
       }
       // File+literal allowlist: another index module and aliases in our entry must be rejected.

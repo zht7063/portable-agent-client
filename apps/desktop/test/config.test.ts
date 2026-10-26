@@ -22,6 +22,12 @@ describe('normalizeServerUrl', () => {
 
 
 describe('S16 fixed desktop origin', () => {
+  it('refuses malformed existing config without overwriting it', async () => {
+    const path = await tmp();
+    await writeFile(path, '{broken');
+    await expect(new ConfigStore(path).load()).rejects.toThrow();
+    expect(await readFile(path, 'utf8')).toBe('{broken');
+  });
   it('ignores and removes old serverUrl and preserves clipboard settings', async () => {
     const p = await tmp();
     await writeFile(p, JSON.stringify({ version: 2, serverUrl: 'https://old.invalid', clipboardClearSeconds: 12 }));

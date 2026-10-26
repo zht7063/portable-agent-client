@@ -49,7 +49,7 @@ export class ClaudeAdapter extends JsonHarnessAdapter {
 
   protected recoveredOwnership(_path: string, _text: string, root: Record<string, unknown>) {
     const env = root.env as Record<string, unknown> | undefined;
-    const id = env?.[this.o.owner ? 'SWIFT_CLI_MANAGED' : this.o.owner ? 'SWIFT_CLI_MANAGED' : 'SWIFT_CLIENT_MANAGED'];
+    const id = env?.[this.o.owner ? 'SWIFT_CLI_MANAGED' : 'SWIFT_CLIENT_MANAGED'];
     if (typeof id !== 'string' || !/^[a-z0-9-]{1,32}$/.test(id)) return undefined;
     const keys = ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'ANTHROPIC_CUSTOM_MODEL_OPTION', this.o.owner ? 'SWIFT_CLI_MANAGED' : 'SWIFT_CLIENT_MANAGED'];
     return { settings: keys.map((key) => `env.${key}`), profileId: id };

@@ -50,7 +50,19 @@ export function inspect(dir) {
       if (!included.has(path) || !Object.hasOwn(meta[kind].inputs, path)) fail(`own module missing from metafile: ${path}`);
       scanned.add(path);
       const ast = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+      const property = (n, name) => (ts.isPropertyAccessExpression(n) && n.name.text === name) || (ts.isElementAccessExpression(n) && ts.isStringLiteral(n.argumentExpression) && n.argumentExpression.text === name);
+      const processRoot = (n) => n.getText(ast) === 'process' || (property(n, 'process') && n.expression.getText(ast) === 'globalThis');
+      const staticString = (n) => {
+        if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) return n.text;
+        if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+          const left = staticString(n.left), right = staticString(n.right);
+          if (left !== undefined && right !== undefined) return left + right;
+        }
+      };
       const visit = (n) => {
+        if (property(n, 'process') && n.expression.getText(ast) === 'globalThis') fail(`environment access in ${path}`);
+        if (ts.isVariableDeclaration(n) && n.initializer && processRoot(n.initializer)) fail(`environment alias in ${path}`);
+        if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken && processRoot(n.right)) fail(`environment alias in ${path}`);
         if (ts.isVariableDeclaration(n) && n.name.getText(ast) === 'IPC_FIELDS' && n.initializer && ts.isObjectLiteralExpression(n.initializer)) {
           for (const prop of n.initializer.properties) {
             if (!ts.isPropertyAssignment(prop)) fail('nonliteral IPC surface');
@@ -59,17 +71,18 @@ export function inspect(dir) {
         }
         if (ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) {
           const base = n.expression.getText(ast);
-          const envRoot = (ts.isPropertyAccessExpression(n.expression) && n.expression.expression.getText(ast) === 'process' && n.expression.name.text === 'env') || (ts.isElementAccessExpression(n.expression) && n.expression.expression.getText(ast) === 'process' && ts.isStringLiteral(n.expression.argumentExpression) && n.expression.argumentExpression.text === 'env');
+          const envRoot = (ts.isPropertyAccessExpression(n.expression) && processRoot(n.expression.expression) && n.expression.name.text === 'env') || (ts.isElementAccessExpression(n.expression) && processRoot(n.expression.expression) && ts.isStringLiteral(n.expression.argumentExpression) && n.expression.argumentExpression.text === 'env');
           if (envRoot && path !== '../../packages/harness/src/env-scan.ts') {
             const key = ts.isPropertyAccessExpression(n) ? n.name.text : ts.isStringLiteral(n.argumentExpression) ? n.argumentExpression.text : null;
             if (!key || /URL|HOST|ORIGIN|ENDPOINT|SERVER/i.test(key)) fail(`URL/dynamic environment access in ${path}`);
           }
           // Forbid aliasing/destructuring process.env (env-scan explicitly allowlisted).
-          if (base === 'process' && (n.name?.text === 'env' || n.argumentExpression?.text === 'env') && path !== '../../packages/harness/src/env-scan.ts') {
+          if ((base === 'process' || processRoot(n.expression)) && (n.name?.text === 'env' || n.argumentExpression?.text === 'env') && path !== '../../packages/harness/src/env-scan.ts') {
             if (!(ts.isPropertyAccessExpression(n.parent) || ts.isElementAccessExpression(n.parent)) && !environmentLiterals.get(path)?.has(n.parent.getText(ast))) fail(`environment alias in ${path}`);
           }
         }
-        if ((ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateHead(n) || ts.isTemplateMiddle(n) || ts.isTemplateTail(n)) && /^https?:\/\//.test(n.text) && n.text !== origin && !snapshot.documentUrls.includes(n.text) && !(ts.isStringLiteral(n) && urlLiterals.get(path)?.has(n.text))) fail(`foreign URL literal in ${path}`);
+        const literal = staticString(n) ?? ((ts.isTemplateHead(n) || ts.isTemplateMiddle(n) || ts.isTemplateTail(n)) ? n.text : undefined);
+        if (literal !== undefined && /^(?:(?:https?|wss?):\/\/|\/\/[^/\s])/.test(literal) && literal !== origin && !snapshot.documentUrls.includes(literal) && !(ts.isStringLiteral(n) && urlLiterals.get(path)?.has(literal))) fail(`foreign URL literal in ${path}`);
         ts.forEachChild(n, visit);
       };
       visit(ast);

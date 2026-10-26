@@ -363,7 +363,16 @@ export abstract class JsonHarnessAdapter implements HarnessAdapter {
         written.push(l.path);
       }
     }
-    await this.o.state.update((s) => { for (const p of mine) delete s.files[p]; s.history.push(hist); });
+    await this.o.state.update((s) => {
+      for (const p of mine) delete s.files[p];
+      s.history.push(hist);
+      if (this.id === 'claude') for (const h of s.history) {
+        for (const p of mine) {
+          const original = h.files?.[p]?.original;
+          if (original) delete original['env.ANTHROPIC_AUTH_TOKEN'];
+        }
+      }
+    });
     const profiles = [...new Set(loaded.map((l) => l.e.profileId).filter((id): id is string => !!id))];
     await this.o.afterDetach?.(profiles, this.id);
     return { id: this.id, written, snapshotId: hist.snapshotId, warnings: [] };
