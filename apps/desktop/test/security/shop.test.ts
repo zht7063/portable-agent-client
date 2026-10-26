@@ -1,9 +1,24 @@
 import { describe, it, expect, vi } from 'vitest';
-import { SHOP_WEB_PREFERENCES, shopUrlDecision, shopWindowOpen, isShopRequest } from '../../src/main/shop-policy';
+import { SHOP_WEB_PREFERENCES, shopUrlDecision, shopWindowOpen, isShopRequest, nextShopConfirm, shopCanPrompt } from '../../src/main/shop-policy';
 import { applySessionPolicy } from '../../src/main/security-policy';
 import { isTrustedSender } from '../../src/main/ipc/sender';
 
 describe('isolated shop', () => {
+  it('only automatically prompts for non-allowlisted HTTPS', () => {
+    expect(shopCanPrompt('https://evil.com/')).toBe(true);
+    for (const url of ['https://wzyp.cn/', 'weixin://pay/', 'alipays://pay/', 'http://evil.com/', 'invalid']) expect(shopCanPrompt(url)).toBe(false);
+  });
+  it('keeps confirmation timing transitions pure and canonicalizes identical URLs', () => {
+    const initial = { urls: new Map<string, number>() };
+    const first = nextShopConfirm(initial, 'https://EVIL.com:443', 0, false)!;
+    expect(initial.urls.size).toBe(0);
+    expect(nextShopConfirm(first, 'https://other.com/', 2999, false)).toBeUndefined();
+    expect(nextShopConfirm(first, 'https://other.com/', 3000, true)).toBeUndefined();
+    expect(nextShopConfirm(first, 'https://evil.com/', 29_999, false)).toBeUndefined();
+    expect(nextShopConfirm(first, 'https://other.com/', 3000, false)).toBeDefined();
+    const expired = nextShopConfirm(first, 'https://other.com/', 30_000, false)!;
+    expect(expired.urls.has('https://evil.com/')).toBe(false);
+  });
   it('only permits explicit HTTPS hosts in view', () => {
     for (const u of ['https://wzyp.cn/shop/x', 'https://a.wzyp.cn/', 'https://captcha.aliyun.com/', 'https://cashier.alipay.com/', 'https://wx.tenpay.com/']) expect(shopUrlDecision(u)).toBe('view');
     for (const u of ['https://wzyp.cn.evil.com/', 'https://evilwzyp.cn/', 'https://evil.com/', 'https://wzyp.cn:8443/']) expect(shopUrlDecision(u)).toBe('external');

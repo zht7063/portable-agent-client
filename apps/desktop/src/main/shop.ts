@@ -1,12 +1,14 @@
 import { WebContentsView, session, dialog, shell, type BrowserWindow } from 'electron';
+import { SHOP_LINK_GESTURE_SETUP, shopTakeLinkGesture } from './shop-gesture';
 import { applySessionPolicy, type SessionLike } from './security-policy';
-import { SHOP_PARTITION, SHOP_URL, SHOP_WEB_PREFERENCES, shopUrlDecision, shopWindowOpen, type ShopAction } from './shop-policy';
+import { SHOP_PARTITION, SHOP_URL, SHOP_WEB_PREFERENCES, shopUrlDecision, shopWindowOpen, shopCanPrompt, nextShopConfirm, type ShopConfirmState, type ShopAction } from './shop-policy';
 
 /** Remote content never receives a preload or an IPC bridge. Only the app window controls this view. */
 export class Shop {
   private view?: WebContentsView;
   private visible = false;
   private prompting = false;
+  private confirms: ShopConfirmState = { urls: new Map() };
   constructor(private win: BrowserWindow) {
     win.on('resize', () => this.bounds());
     win.webContents.on('zoom-changed', () => this.bounds());
@@ -21,7 +23,10 @@ export class Shop {
   }
   private hide() { this.visible = false; this.view?.setVisible(false); }
   private async external(url: string) {
-    if (this.prompting || this.win.isDestroyed() || shopUrlDecision(url) === 'deny') return;
+    if (this.win.isDestroyed() || shopUrlDecision(url) === 'deny') return;
+    const next = nextShopConfirm(this.confirms, url, Date.now(), this.prompting);
+    if (!next) return;
+    this.confirms = next;
     this.prompting = true;
     // Hide the native view so it cannot obscure app or native confirmation UI.
     this.view?.setVisible(false);
@@ -39,15 +44,30 @@ export class Shop {
     view.setVisible(false);
     this.win.contentView.addChildView(view);
     const wc = view.webContents;
-    const navigate = (e: Electron.Event, url: string) => {
-      if (shopUrlDecision(url) === 'view') return;
-      e.preventDefault();
-      if (shopUrlDecision(url) === 'external') void this.external(url).catch(() => {});
+    // Frame events and redirects enforce policy only; they never prompt.
+    const block = (e: Electron.Event, url: string) => {
+      if (shopUrlDecision(url) !== 'view') e.preventDefault();
     };
-    wc.on('will-navigate', navigate);
-    wc.on('will-redirect', navigate);
-    wc.on('will-frame-navigate', (e) => navigate(e, e.url));
-    wc.setWindowOpenHandler(shopWindowOpen(url => { void wc.loadURL(url).catch(() => {}); }, url => { void this.external(url).catch(() => {}); }));
+    wc.on('will-navigate', (e, url) => {
+      block(e, url);
+      if (e.isMainFrame && (!e.initiator || e.initiator === wc.mainFrame) && shopCanPrompt(url)) void this.external(url).catch(() => {});
+    });
+    wc.on('will-redirect', block);
+    wc.on('will-frame-navigate', e => { if (!e.isMainFrame) block(e, e.url); });
+    let documentGeneration = 0;
+    wc.on('did-start-navigation', (_e, _url, _inPlace, mainFrame) => { if (mainFrame) documentGeneration++; });
+    wc.on('dom-ready', () => {
+      void wc.executeJavaScriptInIsolatedWorld(999, [{ code: SHOP_LINK_GESTURE_SETUP }]).catch(() => {});
+    });
+    wc.setWindowOpenHandler(shopWindowOpen(url => { void wc.loadURL(url).catch(() => {}); }, url => {
+      if (this.prompting || !shopCanPrompt(url)) return;
+      const generation = documentGeneration;
+      // HandlerDetails exposes neither opener frame nor gesture. Fail closed
+      // unless this URL matches a trusted link clicked in the main document.
+      void wc.executeJavaScriptInIsolatedWorld(999, [{ code: shopTakeLinkGesture(url) }])
+        .then(active => { if (active === true && this.view === view && generation === documentGeneration) return this.external(url); })
+        .catch(() => {});
+    }));
     const host = () => { if (!this.win.isDestroyed()) this.win.webContents.send('shop:host', this.host()); };
     wc.on('did-navigate', host);
     wc.on('did-navigate-in-page', host);

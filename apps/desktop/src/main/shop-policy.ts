@@ -28,3 +28,20 @@ export type ShopAction = typeof SHOP_ACTIONS[number];
 export function isShopRequest(r: unknown): r is { action: ShopAction } {
   return !!r && typeof r === 'object' && !Array.isArray(r) && Object.keys(r).length === 1 && SHOP_ACTIONS.includes((r as { action: ShopAction }).action);
 }
+
+/** Immutable transition: retain only recent prompts, without recording dropped attempts. */
+export interface ShopConfirmState { lastPrompt?: number; urls: ReadonlyMap<string, number> }
+export function nextShopConfirm(state: ShopConfirmState, url: string, now: number, prompting: boolean): ShopConfirmState | undefined {
+  if (prompting || (state.lastPrompt !== undefined && now - state.lastPrompt < 3000)) return;
+  const key = new URL(url).href;
+  const previous = state.urls.get(key);
+  if (previous !== undefined && now - previous < 30_000) return;
+  const urls = new Map([...state.urls].filter(([, time]) => now - time < 30_000));
+  urls.set(key, now);
+  return { lastPrompt: now, urls };
+}
+
+/** Only HTTPS may trigger an automatic external-link confirmation. */
+export function shopCanPrompt(url: string): boolean {
+  return shopUrlDecision(url) === 'external' && new URL(url).protocol === 'https:';
+}
