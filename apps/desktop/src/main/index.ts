@@ -174,11 +174,19 @@ if (primaryInstance) app.whenReady().then(async () => {
 
   const userData = app.getPath('userData');
   const configStore = new ConfigStore(join(userData, 'config.json'), __PA_SMOKE__ && !app.isPackaged && process.env.PA_SMOKE === '1' ? process.env.PAC_SERVER_URL : SERVER_ORIGIN);
-  const host = await CoreHost.start({
-    configStore,
-    tokenStore: createTokenStore(join(userData, 'session.bin')),
-    onSessionChange: (v) => win?.webContents.send('session:changed', v),
-  });
+  let host: CoreHost;
+  try {
+    host = await CoreHost.start({
+      configStore,
+      tokenStore: createTokenStore(join(userData, 'session.bin')),
+      onSessionChange: (v) => win?.webContents.send('session:changed', v),
+    });
+  } catch {
+    // Aegis r39 N6: an unreadable config.json must not leave the app running with no window.
+    dialog.showErrorBox('swift-client cannot start', `Could not read ${join(userData, 'config.json')}. The file was left unchanged. Fix or move it aside, then restart.`);
+    app.quit();
+    return;
+  }
   const helperPath = ''; // Dev smoke compatibility only; never written into configs.
   const keyFile = new KeyFile(userData);
   const keyring = __PA_SMOKE__ && !app.isPackaged && process.env.PA_SMOKE === '1' ? createKeyring() : new MemoryKeyring();
@@ -280,7 +288,7 @@ if (primaryInstance) app.whenReady().then(async () => {
   try {
     const plan = await harnessHost.migration.plan();
     if (plan.needsMigration) {
-      const choice = await dialog.showMessageBox(win, { type: 'warning', title: 'beta.1 migration', message: 'Review legacy harness cleanup', detail: `Remove legacy apiKeyHelper / pa-key references and provider pa from:\n${plan.files.join('\n')}\nRemove obsolete helper files:\n${plan.helpers.join('\n')}\nReset legacy ownership records: ${plan.ownership.map((o) => o.path).join('\n')}. Prior values remain in private backups.\nDiscard legacy profiles: ${plan.profiles.join(', ')}. Reselect a token on the Harness page. Private backups are retained. OS keychain entries are untouched; see docs/harness.md for manual deletion.`, buttons: ['Cancel', 'Migrate'], defaultId: 0, cancelId: 0, noLink: true });
+      const choice = await dialog.showMessageBox(win, { type: 'warning', title: 'beta.1 migration', message: 'Review legacy harness cleanup', detail: `Remove legacy apiKeyHelper / pa-key references and provider pa, and restore your previous ANTHROPIC_BASE_URL, ANTHROPIC_*MODEL and Codex model settings (removed if they did not exist before) in:\n${plan.files.join('\n')}\nRemove obsolete helper files:\n${plan.helpers.join('\n')}\nReset legacy ownership records: ${plan.ownership.map((o) => o.path).join('\n')}. Prior values remain in private backups.\nDiscard legacy profiles: ${plan.profiles.join(', ')}. Reselect a token on the Harness page. Private backups are retained. OS keychain entries are untouched; see docs/harness.md for manual deletion.`, buttons: ['Cancel', 'Migrate'], defaultId: 0, cancelId: 0, noLink: true });
       if (choice.response === 1) await harnessHost.migration.apply(plan);
     }
   } catch {

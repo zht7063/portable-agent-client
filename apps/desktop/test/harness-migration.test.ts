@@ -55,6 +55,32 @@ describe('beta.1 startup self-check', () => {
     } finally { await rm(s.root, { recursive: true, force: true }); }
   });
 
+  it.each([['command', '/data/bin/pa-key'], ['env', `printf '%s' "$PA_API_KEY"`]])('beta.1 %s-mode null originals restore to absent keys (r39 N5)', async (_mode, helper) => {
+    const s = await fixture();
+    try {
+      await mkdir(s.claude.dir, { recursive: true });
+      await mkdir(s.codex.dir, { recursive: true });
+      // Shape written by beta.1 (d0af9fd) apply: originals are null for keys that did not exist before.
+      await writeFile(s.claude.settingsPath, JSON.stringify({ apiKeyHelper: helper, env: { KEEP: '1', ANTHROPIC_BASE_URL: 'https://old.invalid', ANTHROPIC_MODEL: 'pa-model', ANTHROPIC_DEFAULT_OPUS_MODEL: 'pa-model', ANTHROPIC_DEFAULT_SONNET_MODEL: 'pa-model', ANTHROPIC_DEFAULT_HAIKU_MODEL: 'pa-model' } }));
+      await writeFile(s.codex.configPath, 'model="pa-model"\nmodel_provider="pa"\n[model_providers.pa]\nname="old"\n');
+      const claudeFile = (await s.fs.readText(s.claude.settingsPath))!;
+      const codexFile = (await s.fs.readText(s.codex.configPath))!;
+      const claudeKeys = ['apiKeyHelper', 'env.ANTHROPIC_BASE_URL', 'env.ANTHROPIC_MODEL', 'env.ANTHROPIC_DEFAULT_OPUS_MODEL', 'env.ANTHROPIC_DEFAULT_SONNET_MODEL', 'env.ANTHROPIC_DEFAULT_HAIKU_MODEL'];
+      await s.state.update((st) => {
+        st.profiles[s.profile.id] = { ...s.profile, providerId: 'pa' };
+        st.files[s.claude.settingsPath] = { harness: 'claude', profileId: s.profile.id, ownedSettings: claudeKeys, original: { ...Object.fromEntries(claudeKeys.map((k) => [k, null])), 'env.ANTHROPIC_MODEL': 'user-own' } as never, ownedValuesHash: 'old', lastWritten: claudeFile.fingerprint, updatedAt: '' };
+        st.files[s.codex.configPath] = { harness: 'codex', profileId: s.profile.id, ownedSettings: ['model', 'model_provider', 'model_providers.pa'], original: { model: 'user-own', model_provider: null, 'model_providers.pa': null } as never, ownedValuesHash: 'old', lastWritten: codexFile.fingerprint, updatedAt: '' };
+      });
+      const migration = new HarnessMigration(s.fs, s.state, s.env);
+      await migration.apply(await migration.plan());
+      const text = await readFile(s.claude.settingsPath, 'utf8');
+      expect(text).not.toContain('null');
+      expect(JSON.parse(text)).toEqual({ env: { KEEP: '1', ANTHROPIC_MODEL: 'user-own' } });
+      expect(await readFile(s.codex.configPath, 'utf8')).not.toContain('null');
+      expect((await migration.plan()).needsMigration).toBe(false);
+    } finally { await rm(s.root, { recursive: true, force: true }); }
+  });
+
   it('refuses a stale confirmed plan', async () => {
     const s = await fixture();
     try {

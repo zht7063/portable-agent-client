@@ -46,7 +46,8 @@ export class HarnessMigration {
       const file = await this.fs.readText(path);
       if (!file) continue;
       const edits = entry.ownedSettings.map((key) => {
-        let value = entry.original?.[key];
+        // beta.1 records null for "field did not exist"; treat it as absent like base.ts (Aegis r39 N5).
+        let value = entry.original?.[key] ?? undefined;
         if ((key === 'apiKeyHelper' && typeof value === 'string' && (/pa-key/i.test(value) || value === `printf '%s' "$PA_API_KEY"`)) || (key === 'model_provider' && value === 'pa') || key.startsWith('model_providers.pa')) value = undefined;
         return { path: key.split('.'), value };
       });
