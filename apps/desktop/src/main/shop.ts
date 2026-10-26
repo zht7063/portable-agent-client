@@ -48,10 +48,10 @@ export class Shop {
     const block = (e: Electron.Event, url: string) => {
       if (shopUrlDecision(url) !== 'view') e.preventDefault();
     };
-    wc.on('will-navigate', (e, url) => {
-      block(e, url);
-      if (e.isMainFrame && (!e.initiator || e.initiator === wc.mainFrame) && shopCanPrompt(url)) void this.external(url).catch(() => {});
-    });
+    // Top-level navigations cannot distinguish a script redirect from a real click
+    // (Aegis r37 7-1), so non-allowlisted targets are blocked without any dialog.
+    // Users can still leave via the click-verified window.open path or "Open in browser".
+    wc.on('will-navigate', block);
     wc.on('will-redirect', block);
     wc.on('will-frame-navigate', e => { if (!e.isMainFrame) block(e, e.url); });
     let documentGeneration = 0;

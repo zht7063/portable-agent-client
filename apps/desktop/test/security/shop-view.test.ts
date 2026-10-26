@@ -66,18 +66,30 @@ describe('Shop Electron wiring', () => {
     wc.emit('will-frame-navigate', allowed); expect(allowed.preventDefault).not.toHaveBeenCalled();
     await tick(); expect(mocks.dialog).not.toHaveBeenCalled();
   });
+  it('silently blocks every non-allowlisted top-level navigation, even ones that look user-initiated (r37 7-1)', async () => {
+    const { shop } = setup(); await shop.control('show'); const wc = mocks.views[0]!.webContents;
+    for (let i = 0; i < 5; i++) {
+      const e = { preventDefault: vi.fn(), isMainFrame: true, initiator: undefined };
+      wc.emit('will-navigate', e, `https://evil${i}.com/`); expect(e.preventDefault).toHaveBeenCalledOnce();
+    }
+    const ok = { preventDefault: vi.fn(), isMainFrame: true };
+    wc.emit('will-navigate', ok, 'https://wzyp.cn/shop/x'); expect(ok.preventDefault).not.toHaveBeenCalled();
+    await tick(); expect(mocks.dialog).not.toHaveBeenCalled(); expect(mocks.openExternal).not.toHaveBeenCalled();
+  });
   it('drops overlapping confirms, throttles all URLs and deduplicates for 30 seconds', async () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(100_000);
     try {
       const { shop } = setup(); await shop.control('show'); const wc = mocks.views[0]!.webContents;
-      const nav = (url: string) => wc.emit('will-navigate', { preventDefault: vi.fn(), isMainFrame: true }, url);
+      wc.executeJavaScriptInIsolatedWorld.mockResolvedValue(true);
+      const handler = wc.setWindowOpenHandler.mock.calls[0]![0];
+      const nav = (url: string) => { handler({ url }); };
       let finish!: (value: { response: number }) => void;
       mocks.dialog.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-      nav('https://one.com/'); now.mockReturnValue(105_000); nav('https://two.com/');
+      nav('https://one.com/'); await tick(); now.mockReturnValue(105_000); nav('https://two.com/'); await tick();
       expect(mocks.dialog).toHaveBeenCalledTimes(1); finish({ response: 0 }); await tick();
-      now.mockReturnValue(106_000); nav('https://one.com/'); expect(mocks.dialog).toHaveBeenCalledTimes(1);
+      now.mockReturnValue(106_000); nav('https://one.com/'); await tick(); expect(mocks.dialog).toHaveBeenCalledTimes(1);
       nav('https://two.com/'); await tick(); expect(mocks.dialog).toHaveBeenCalledTimes(2);
-      now.mockReturnValue(107_000); nav('https://three.com/'); expect(mocks.dialog).toHaveBeenCalledTimes(2);
+      now.mockReturnValue(107_000); nav('https://three.com/'); await tick(); expect(mocks.dialog).toHaveBeenCalledTimes(2);
       now.mockReturnValue(130_000); nav('https://one.com/'); await tick(); expect(mocks.dialog).toHaveBeenCalledTimes(3);
     } finally { now.mockRestore(); }
   });
@@ -106,7 +118,8 @@ describe('Shop Electron wiring', () => {
     resolveGesture(true); await tick(); expect(mocks.dialog).not.toHaveBeenCalled();
     let closeDialog!: (result: { response: number }) => void;
     mocks.dialog.mockImplementationOnce(() => new Promise(resolve => { closeDialog = resolve; }));
-    wc.emit('will-navigate', { preventDefault: vi.fn(), isMainFrame: true }, 'https://one.com/');
+    wc.executeJavaScriptInIsolatedWorld.mockResolvedValueOnce(true);
+    handler({ url: 'https://one.com/' }); await tick();
     const calls = wc.executeJavaScriptInIsolatedWorld.mock.calls.length;
     handler({ url: 'https://two.com/' });
     expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(calls);
