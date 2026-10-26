@@ -1,0 +1,4 @@
+{
+  "origin": "https://api.swift-client.invalid",
+  "TODO": "D-17: replace through reviewed change once production HTTPS is ready; release remains blocked."
+}

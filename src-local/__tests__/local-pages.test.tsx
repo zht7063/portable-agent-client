@@ -1,10 +1,11 @@
 /* portable-agent-client local pages (AGPL-3.0-only). */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiKeyCell } from '@/features/keys/components/api-keys-cells'
 
 import { AboutCard } from '../about/about-page'
+import { HarnessPage } from '../harness/harness-page'
 import { HarnessCard } from '../harness/harness-card'
 import { KeychainSection } from '../keychain/keychain-section'
 import { isPaDesktop } from '../lib/pa'
@@ -14,6 +15,9 @@ import { PaApiKeyCell } from '../tokens/pa-token-actions'
 import { fail, installFakePa, removeFakePa } from './fake-pa'
 
 import { toast } from 'sonner'
+
+vi.mock('@/features/keys/api', () => ({ getApiKeys: vi.fn(async () => ({ data: { items: [{ id: 7, name: 'first', key: 'masked-first' }, { id: 9, name: 'second', key: 'masked-second' }] } })) }))
+vi.mock('@/lib/api', () => ({ getUserModels: vi.fn(async () => ({ data: [] })) }))
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }))
 
@@ -74,23 +78,11 @@ describe('server settings', () => {
     expect(container.textContent).toContain('v0.12.0-rc.46 · New API')
   })
 
-  it('URL change goes to main (which confirms natively); cancel saves nothing', async () => {
+  it('server origin is read-only and has no change action', async () => {
     render(<ServerSettingsCard />)
-    const input = await screen.findByLabelText('Server URL')
-    fake.config.set.mockImplementationOnce(() => fail('CANCELLED', 'Server change not confirmed; not saved') as never)
-    fireEvent.change(input, { target: { value: 'https://other.example' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Change server' }))
-    expect(await screen.findByText('Server change cancelled; nothing saved.')).toBeInTheDocument()
-    expect(fake.config.set).toHaveBeenCalledWith({ serverUrl: 'https://other.example' })
-      })
-
-  it('accepted URL change reloads status and notifies', async () => {
-    const onChanged = vi.fn()
-    render(<ServerSettingsCard onChanged={onChanged} />)
-    fireEvent.change(await screen.findByLabelText('Server URL'), { target: { value: 'https://other.example' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Change server' }))
-    await waitFor(() => expect(onChanged).toHaveBeenCalled())
-    expect(fake.server.status).toHaveBeenLastCalledWith({ recheck: true })
+    expect(await screen.findByLabelText('Server URL')).toHaveAttribute('readonly')
+    expect(screen.queryByRole('button', { name: 'Change server' })).not.toBeInTheDocument()
+    expect(fake.config.set).not.toHaveBeenCalled()
   })
 
   it('saves the clipboard auto-clear duration', async () => {
@@ -128,9 +120,10 @@ describe('harness card', () => {
   it('previews a masked diff and applies only after confirmation', async () => {
     render(<HarnessCard harness='claude' serverUrl='http://127.0.0.1:3000' tokens={[{ id: 7, name: 'dev', maskedKey: 'sk-ab**********yz' }]} models={['gpt-x']} />)
     await waitFor(() => expect(fake.harness.detect).toHaveBeenCalled())
+    fireEvent.change(screen.getByLabelText('API key'), { target: { value: '7' } })
     fireEvent.click(await screen.findByRole('button', { name: 'Preview changes' }))
-    await waitFor(() => expect(fake.harness.plan).toHaveBeenCalledWith({ id: 'claude', profileId: 'default' }))
-    expect(fake.harness.upsertProfile).toHaveBeenCalledWith(expect.objectContaining({ id: 'default', keyId: 7, models: expect.objectContaining({ main: 'gpt-x' }) }))
+    await waitFor(() => expect(fake.harness.plan).toHaveBeenCalledWith({ id: 'claude', profileId: 'swift-test' }))
+    expect(fake.harness.upsertProfile).toHaveBeenCalledWith(expect.objectContaining({ label: 'Swift provider', keyId: 7, models: expect.objectContaining({ main: 'claude-main-placeholder' }) }))
     expect(await screen.findByText('env.ANTHROPIC_BASE_URL')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
     expect(fake.harness.apply).not.toHaveBeenCalled()
@@ -161,5 +154,18 @@ describe('about & licenses (M6)', () => {
     expect(await screen.findByTestId('pa-license-text')).toHaveTextContent('GNU AFFERO GENERAL PUBLIC LICENSE')
     expect(f).toHaveBeenCalledWith('/licenses/LICENSE.txt')
     vi.unstubAllGlobals()
+  })
+})
+
+
+describe('provider token selection', () => {
+  it('uses the explicitly selected second token when adding a provider', async () => {
+    render(<HarnessPage />)
+    const select = await screen.findByLabelText('API key', { selector: '#provider-token' })
+    await within(select).findByRole('option', { name: /second/ })
+    expect(screen.getByRole('button', { name: 'Add provider' })).toBeDisabled()
+    fireEvent.change(select, { target: { value: '9' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add provider' }))
+    await waitFor(() => expect(fake.harness.saveProvider).toHaveBeenCalledWith(expect.objectContaining({ keyId: 9 })))
   })
 })

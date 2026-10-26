@@ -142,24 +142,19 @@ describe('M4 token -> keychain (main only)', () => {
     for (const k of ["sk-abc'def" + 'x'.repeat(20), 'sk-' + 'a'.repeat(20) + '$(id)', 'sk-' + 'a'.repeat(20) + ' b', 'nosk' + 'a'.repeat(30), 'sk-short', 'sk-' + 'a'.repeat(20) + '\n'])
       expect(() => buildCurl(ORIGIN, '/v1/chat/completions', 'm', k)).toThrow(/unexpected characters/);
   });
-  it('harness apply (command mode) provisions the keychain via the main session (ensure), once per token', async () => {
+  it('v6 harness writes main-session token to private key file and config without a helper', async () => {
     const t = setup(); await t.ready;
-    const root = mkdtempSync(join(tmpdir(), 'pa-keys-h-'));
+    const root = mkdtempSync(join(tmpdir(), 'swift-keyfile-'));
     const home = join(root, 'home'); const dataDir = join(root, 'userData');
-    const host = new HarnessHost({
-      home, dataDir, env: { HOME: home }, platform: 'linux', keyring: t.keyring, helperPath: join(dataDir, 'bin', 'pa-key'),
-      exec: async () => ({ code: null, stdout: '', stderr: 'not found' }), ensureKey: (p, h, id) => t.keys.ensure(p, h, id),
-    });
-    await host.harness.upsertProfile({ id: 'default', serverUrl: ORIGIN, keyId: 7, models: { main: 'm' }, keyMode: 'command' });
+    const host = new HarnessHost({ home, dataDir, env: { HOME: home }, platform: 'linux', serverOrigin: ORIGIN, exec: async () => ({ code: null, stdout: '', stderr: '' }) });
+    await host.keyFile.set('default', await t.keys.fetchKey(7), 'token:7');
+    await host.harness.upsertProfile({ id: 'default', serverUrl: ORIGIN, keyId: 7, models: { main: 'm' }, keyMode: 'plaintext' });
     const plan = await host.harness.plan('claude', 'default');
-    const r = await host.harness.apply('claude', plan, []);
-    expect(r.written).toEqual([join(home, '.claude', 'settings.json')]);
-    expect(await t.keyring.get('default/claude')).toBe(FULL);
+    expect(JSON.stringify(plan)).not.toContain(FULL);
+    await host.harness.apply('claude', plan);
     const settings = readFileSync(join(home, '.claude', 'settings.json'), 'utf8');
-    expect(settings).toContain('apiKeyHelper'); expect(settings).not.toContain(RAW);
-    const fetched = t.srv.calls.filter((c) => c.url.endsWith('/key')).length;
-    await t.keys.ensure('default', 'claude', 7);
-    expect(t.srv.calls.filter((c) => c.url.endsWith('/key')).length).toBe(fetched); // already stored: no refetch
+    expect(settings).not.toContain('apiKeyHelper'); expect(settings).toContain(FULL);
+    expect(await t.keyring.get('default/claude')).toBeNull();
   });
 });
 

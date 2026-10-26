@@ -1,3 +1,4 @@
+import { consumeUninstallNonce } from './detach-all';
 import { Shop } from './shop';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -5,8 +6,9 @@ import { homedir } from 'node:os';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, protocol, safeStorage, session as electronSession, shell } from 'electron';
 import { menuTemplate, windowWebPreferences } from './window-policy';
 import { INVOKE_CHANNELS, PRODUCT, type InvokeChannel } from '@pac/core';
-import { createKeyring } from '@pac/keychain';
-import { installWrapper } from '@pac/pa-key';
+import { createKeyring, MemoryKeyring } from '@pac/keychain';
+import { KeyFile } from '@pac/harness';
+import { SERVER_ORIGIN } from './server-origin';
 import { isTrustedSender, untrustedSender } from './ipc/sender';
 import { createTokenStore } from './safe-storage-store';
 import { createHandlers, dispatch } from './ipc/handlers';
@@ -21,7 +23,6 @@ import { runLoginSmoke, type SmokeExtra } from './smoke-login';
 import { runUiSmokeStep } from './smoke-ui';
 import { runKeysSmokeStep } from './smoke-keys';
 import { KeyService } from './key-service';
-import { serverChangeDialog } from './dialogs';
 import { buildAbout } from './about';
 import { smokeAutoConfirmReveal } from './smoke-gate';
 import { applySessionPolicy, hardenWebContents, type SessionLike, type WebContentsLike } from './security-policy';
@@ -140,7 +141,19 @@ function runSmoke(w: BrowserWindow) {
 
 if ((__PA_SMOKE__ && process.env.PA_SMOKE === '1') && process.env.PA_USER_DATA) app.setPath('userData', process.env.PA_USER_DATA);
 
-app.whenReady().then(async () => {
+const primaryInstance = app.requestSingleInstanceLock();
+if (!primaryInstance) app.quit();
+app.on('second-instance', (_event, argv) => {
+  if (argv.includes('--harness-detach-all')) return;
+  win?.show(); win?.focus();
+});
+if (primaryInstance) app.whenReady().then(async () => {
+  if (await consumeUninstallNonce(app.isPackaged, process.argv, app.getPath('userData'))) {
+    const cleanup = new HarnessHost({ home: homedir(), dataDir: app.getPath('userData'), env: process.env, platform: process.platform });
+    try { for (const id of ['codex', 'claude'] as const) await cleanup.harness.rollback(id, 'detach'); }
+    finally { app.quit(); }
+    return;
+  }
   // Deny all permission requests/checks; cancel downloads; no webviews.
   const ses = electronSession.defaultSession;
   applySessionPolicy(ses as unknown as SessionLike);
@@ -160,22 +173,26 @@ app.whenReady().then(async () => {
   app.on('web-contents-created', (_e, wc) => { hardenWebContents(wc as unknown as WebContentsLike); });
 
   const userData = app.getPath('userData');
-  const host = await CoreHost.start({
-    // PAC_SERVER_URL only seeds an unconfigured client (dev); a saved config.json wins. No built-in default server.
-    configStore: new ConfigStore(join(userData, 'config.json'), process.env.PAC_SERVER_URL),
-    tokenStore: createTokenStore(join(userData, 'session.bin')),
-    onSessionChange: (v) => win?.webContents.send('session:changed', v),
-  });
-  // D4: pa-key wrapper lives in the client's own directory; harness configs reference its absolute path.
-  // Packaged: the script is asarUnpack'ed so ELECTRON_RUN_AS_NODE can load it (and resolve @napi-rs/keyring) from disk.
-  const helperScript = join(__dirname, '../key-helper/pa-key.cjs').replace(/app\.asar([\\/])/, 'app.asar.unpacked$1');
-  let helperPath = join(userData, 'bin', process.platform === 'win32' ? 'pa-key.cmd' : 'pa-key');
-  try { helperPath = await installWrapper({ dir: join(userData, 'bin'), execPath: process.execPath, scriptPath: helperScript }); }
-  catch { /* harness page reports the helper as missing */ }
-  const keyring = createKeyring();
+  const configStore = new ConfigStore(join(userData, 'config.json'), __PA_SMOKE__ && !app.isPackaged && process.env.PA_SMOKE === '1' ? process.env.PAC_SERVER_URL : SERVER_ORIGIN);
+  let host: CoreHost;
+  try {
+    host = await CoreHost.start({
+      configStore,
+      tokenStore: createTokenStore(join(userData, 'session.bin')),
+      onSessionChange: (v) => win?.webContents.send('session:changed', v),
+    });
+  } catch {
+    // Aegis r39 N6: an unreadable config.json must not leave the app running with no window.
+    dialog.showErrorBox('swift-client cannot start', `Could not read ${join(userData, 'config.json')}. The file was left unchanged. Fix or move it aside, then restart.`);
+    app.quit();
+    return;
+  }
+  const helperPath = ''; // Dev smoke compatibility only; never written into configs.
+  const keyFile = new KeyFile(userData);
+  const keyring = __PA_SMOKE__ && !app.isPackaged && process.env.PA_SMOKE === '1' ? createKeyring() : new MemoryKeyring();
   // M4: token -> keychain/clipboard through the main-only server session; the renderer only sends token ids.
   const keys = new KeyService({
-    keyring, api: (m, p) => srv.mainApi(m, p), clipboard: { writeText: (t) => clipboard.writeText(t), readText: () => clipboard.readText(), clear: () => clipboard.clear() },
+    keyring, keyFile, api: (m, p) => srv.mainApi(m, p), clipboard: { writeText: (t) => clipboard.writeText(t), readText: () => clipboard.readText(), clear: () => clipboard.clear() },
     clipboardClearSeconds: () => host.config().clipboardClearSeconds,
     metaFile: join(userData, 'keychain-entries.json'),
     serverOrigin: () => srv.serverOrigin,
@@ -185,7 +202,7 @@ app.whenReady().then(async () => {
   app.on('will-quit', () => { keys.clearClipboardIfOurs(); });
   const harnessHost = new HarnessHost({
     home: homedir(), dataDir: userData, env: process.env, platform: process.platform, keyring, helperPath, getCore: () => host.core,
-    ensureKey: (profileId, h, tokenId) => keys.ensure(profileId, h, tokenId),
+    keyFile, fetchKey: (id) => keys.fetchKey(id), serverOrigin: host.config().serverUrl ?? SERVER_ORIGIN,
   });
   if ((__PA_SMOKE__ && process.env.PA_SMOKE === '1') && process.env.PA_SMOKE_UI === '1') {
     smokeExtra = (js, secret) => runUiSmokeStep(js, secret, {
@@ -209,6 +226,7 @@ app.whenReady().then(async () => {
   const handlers = createHandlers({
     shop: (action) => { if (!shop) throw new Error('Shop unavailable'); return shop.control(action); },
     harness: harnessHost.harness,
+    harnessHost,
     keys,
     getCore: () => host.core,
     getConfig: () => host.config(),
@@ -251,20 +269,7 @@ app.whenReady().then(async () => {
       const r = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
       return r.response === 1;
     },
-    confirmServerChange: async (nextUrl, currentUrl) => {
-      const opts = { ...serverChangeDialog(nextUrl, currentUrl), title: PRODUCT.productName };
-      const r = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
-      return r.response === 1;
-    },
-    confirmForeignServer: async (profileOrigin, clientOrigin) => {
-      const opts = {
-        type: 'warning' as const, buttons: ['取消', '仍然使用该服务器'], defaultId: 0, cancelId: 0, noLink: true,
-        title: PRODUCT.productName, message: 'Harness 配置指向另一个服务器',
-        detail: `配置中的服务器：${profileOrigin}\n客户端当前服务器：${clientOrigin || '(未配置)'}\n\n只有你信任该服务器时才继续：你的 API key 会被发送到那里。`,
-      };
-      const r = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
-      return r.response === 1;
-    },
+
   });
   for (const ch of INVOKE_CHANNELS) {
     ipcMain.handle(ch, (e, req) => (isTrustedSender(e, win, isRendererUrl) ? dispatch(handlers, ch as InvokeChannel, req) : untrustedSender()));
@@ -277,6 +282,18 @@ app.whenReady().then(async () => {
   win = createWindow();
   shop = new Shop(win);
   installMenu();
+  if (configStore.originChanged || (await harnessHost.harness.listProfiles()).some((p) => p.serverUrl !== host.config().serverUrl)) {
+    await dialog.showMessageBox(win, { type: 'warning', title: 'Server changed', message: 'Select a token again', detail: 'The server origin changed. Sign in to this server and reselect a token on the Harness page before applying configurations.', buttons: ['OK'] });
+  }
+  try {
+    const plan = await harnessHost.migration.plan();
+    if (plan.needsMigration) {
+      const choice = await dialog.showMessageBox(win, { type: 'warning', title: 'beta.1 migration', message: 'Review legacy harness cleanup', detail: `Remove legacy apiKeyHelper / pa-key references and provider pa, and restore your previous ANTHROPIC_BASE_URL, ANTHROPIC_*MODEL and Codex model settings (removed if they did not exist before) in:\n${plan.files.join('\n')}\nRemove obsolete helper files:\n${plan.helpers.join('\n')}\nReset legacy ownership records: ${plan.ownership.map((o) => o.path).join('\n')}. Prior values remain in private backups.\nDiscard legacy profiles: ${plan.profiles.join(', ')}. Reselect a token on the Harness page. Private backups are retained. OS keychain entries are untouched; see docs/harness.md for manual deletion.`, buttons: ['Cancel', 'Migrate'], defaultId: 0, cancelId: 0, noLink: true });
+      if (choice.response === 1) await harnessHost.migration.apply(plan);
+    }
+  } catch {
+    await dialog.showMessageBox(win, { type: 'warning', title: 'Harness migration', message: 'Legacy self-check could not complete', detail: 'Self-check or migration could not complete. Review your agent configuration, private backups and docs/harness.md before retrying.', buttons: ['OK'] });
+  }
 });
 
 /** M6: standard menus (no View menu / reload / DevTools when packaged, see window-policy.ts) plus Help -> "About & licenses" (AGPL notice, new-api attribution, source offer). */

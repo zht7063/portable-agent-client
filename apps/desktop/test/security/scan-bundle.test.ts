@@ -1,5 +1,5 @@
 // M7: scripts/scan-bundle.mjs flags secret shapes and weakened main/preload settings, never prints the match.
-import { spawnSync } from 'node:child_process';
+import { spawnSync } from '../../../../test/helpers/subprocess';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

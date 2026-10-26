@@ -1,5 +1,5 @@
 // Aegis M6 item 3: missing web deps -> clear skip (exit 0); PA_REQUIRE_WEB_DEPS=1 -> failure.
-import { spawnSync } from 'node:child_process';
+import { spawnSync } from '../../../../test/helpers/subprocess';
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';

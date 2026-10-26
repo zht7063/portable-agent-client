@@ -1,0 +1,102 @@
+{
+  "fields": {
+    "config:get": [],
+    "config:set": [
+      "clipboardClearSeconds"
+    ],
+    "harness:detect": [],
+    "harness:plan": [
+      "id",
+      "profileId"
+    ],
+    "harness:apply": [
+      "id",
+      "plan",
+      "acknowledge",
+      "confirm"
+    ],
+    "harness:rollback": [
+      "id",
+      "target",
+      "confirm",
+      "overwriteExternal"
+    ],
+    "harness:history": [
+      "id"
+    ],
+    "harness:rollback:preview": [
+      "id",
+      "target"
+    ],
+    "harness:keyring:status": [
+      "profileId"
+    ],
+    "harness:profile:list": [],
+    "harness:profile:upsert": [
+      "id",
+      "label",
+      "keyId",
+      "models",
+      "codex",
+      "claude"
+    ],
+    "harness:provider:list": [],
+    "harness:provider:upsert": [
+      "id",
+      "label",
+      "keyId",
+      "models",
+      "codex",
+      "claude"
+    ],
+    "harness:provider:delete": [
+      "profileId",
+      "confirm"
+    ],
+    "harness:provider:activate": [
+      "profileId"
+    ],
+    "harness:test": [
+      "profileId",
+      "id",
+      "level",
+      "confirm",
+      "quoteId",
+      "confirmUnknownCost"
+    ],
+    "harness:models": [
+      "profileId"
+    ],
+    "harness:channel:probe": [
+      "profileId"
+    ],
+    "keys:list": [],
+    "keys:store": [
+      "tokenId",
+      "harness",
+      "profileId"
+    ],
+    "keys:copy": [
+      "tokenId",
+      "curl"
+    ],
+    "keys:delete": [
+      "harness",
+      "profileId"
+    ],
+    "keys:show": [
+      "tokenId"
+    ],
+    "server:status": [
+      "recheck"
+    ],
+    "app:about": [],
+    "shop:control": [
+      "action"
+    ]
+  },
+  "documentUrls": [
+    "https://github.com/QuantumNous/new-api",
+    "https://github.com/zht7063/portable-agent-client"
+  ]
+}

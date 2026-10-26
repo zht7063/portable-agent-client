@@ -15,7 +15,7 @@ async function setup() {
   const fs = new ControlledFs({ ops: nodeFsOps, roots: [home, data], dataDir: data });
   const state = new StateStore(fs);
   const env = { home, env: { CODEX_HOME: dir }, platform: 'linux' as const };
-  const h = createHarness({ fs, state, env, exec, adapters: { codex: new CodexAdapter({ fs, state, env, exec, helperPath: join(data, 'bin', 'pa-key') }) } });
+  const h = createHarness({ fs, state, env, exec, adapters: { codex: new CodexAdapter({ fs, state, env, exec, getKey: async () => 'sk-TEST-CANARY-rollback', helperPath: join(data, 'bin', 'pa-key') }) } });
   return { h, config: join(dir, 'config.toml') };
 }
 
@@ -38,17 +38,17 @@ describe('rollback history + preview (H4)', () => {
     const last = await s.h.previewRollback('codex', 'last');
     expect(await readFile(s.config, 'utf8')).toBe(before); // dry run
     expect(last.blocked).toBeUndefined();
-    expect(last.files).toEqual([{ path: s.config, kind: 'modify' }]);
+    expect(last.files).toEqual([{ path: s.config, kind: 'modify' }, { path: join(s.config, '..', 'swift.config.toml'), kind: 'modify' }]);
     expect(last.changes).toContainEqual({ file: s.config, setting: 'model', kind: 'modify', before: 'm2', after: 'm1' });
 
     const first = await s.h.previewRollback('codex', 'first-write');
     expect(first.changes).toContainEqual(expect.objectContaining({ setting: 'model', before: 'm2', after: 'gpt-5' }));
-    expect(first.changes).toContainEqual(expect.objectContaining({ setting: 'model_providers.pa', kind: 'remove', after: null }));
+    expect(first.changes).toContainEqual(expect.objectContaining({ setting: 'model_providers.swift', kind: 'remove', after: null }));
     expect(findCredentialLeaks(first)).toEqual([]);
     expect(JSON.stringify(first)).not.toContain('YYYY');
 
     const det = await s.h.previewRollback('codex', 'detach');
-    expect(det.changes.map((c) => c.setting).sort()).toEqual(['model', 'model_provider', 'model_providers.pa']);
+    expect(det.changes.map((c) => c.setting).sort()).toEqual(['model', 'model', 'model_provider', 'model_provider', 'model_providers.swift']);
 
     // preview of a specific snapshot == what rollback does
     const snap = hist.snapshots[0]!.snapshotId;

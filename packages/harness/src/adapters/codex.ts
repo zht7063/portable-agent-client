@@ -1,17 +1,6 @@
-/**
- * Codex adapter, H3 (direct to <serverUrl>/v1, wire_api "responses").
- * Field names verified against openai/codex source (codex-rs model-provider-info + protocol config_types, 2026-10):
- *   model, model_provider                      top-level (only when codex.setDefault === true (opt-in))
- *   [model_providers.<id>] name, base_url, wire_api = "responses"
- *   [model_providers.<id>.auth] command, args  bearer token from a command (timeout_ms 5000 / refresh_interval_ms
- *                                              300000 defaults; cannot be combined with env_key,
- *                                              experimental_bearer_token or requires_openai_auth)
- *   env mode: env_key = "<ENV>" instead of [auth]
- * Never reads auth.json (presence only), never touches the user's login, never writes a key.
- */
+/** Codex v6 projection: a plaintext bearer provider in user config, selection in swift.config.toml. auth.json is existence-only. */
 import { join } from 'node:path';
 import type { Detection, HarnessProfile } from '@pac/core/contract';
-import { PRODUCT } from '@pac/core/product';
 import { configDir } from '../paths.js';
 import { PROFILE_ID_RE } from '@pac/core/fs';
 import { detectBasic } from '../detect.js';
@@ -19,7 +8,7 @@ import type { JsonEdit } from '../merge/json.js';
 import { getPath } from '../merge/json.js';
 import { mergeOwnedToml, parseToml } from '../merge/toml.js';
 import { serverBase } from './pi.js';
-import { bad, ENV_RE, isAbsPath, JsonHarnessAdapter, PROVIDER_RE, type AdapterOptions, type Desired, type FilePlan } from './base.js';
+import { bad, JsonHarnessAdapter, PROVIDER_RE, type AdapterOptions, type Desired, type FilePlan } from './base.js';
 
 export type CodexAdapterOptions = AdapterOptions;
 
@@ -30,30 +19,16 @@ export function codexBaseUrl(serverUrl: string): string {
 
 export function codexModel(p: HarnessProfile): string { return p.models.codex ?? p.models.main; }
 
-export function codexProvider(p: HarnessProfile, helperPath: string): Record<string, unknown> {
-  const base = { name: PRODUCT.productName, base_url: codexBaseUrl(p.serverUrl), wire_api: 'responses' };
-  if (p.keyMode === 'command') {
-    if (!isAbsPath(helperPath)) bad('Helper path must be absolute');
-    // Codex executes the command directly (no shell), so no quoting is involved.
-    return { ...base, auth: { command: helperPath, args: [p.id, 'codex'] } };
-  }
-  if (p.keyMode === 'env') {
-    const v = p.envVar ?? 'PA_API_KEY';
-    if (!ENV_RE.test(v)) bad('Invalid env var name');
-    return { ...base, env_key: v };
-  }
-  return bad('Plaintext key mode is not supported for Codex (keys are never written to config files)');
+export function codexProvider(p: HarnessProfile, key: string): Record<string, unknown> {
+  if (!key) bad('Select a token again before applying');
+  return { name: 'swift-client', base_url: codexBaseUrl(p.serverUrl), wire_api: 'responses', experimental_bearer_token: key };
 }
 
 /** Static check of our provider table (mirrors codex ModelProviderInfo::validate for the auth part). */
 export function validateCodexProvider(t: Record<string, unknown>): void {
-  const auth = t.auth as { command?: unknown } | undefined;
   if (t.wire_api !== 'responses') bad('wire_api must be "responses"');
-  if (auth) {
-    if (typeof auth.command !== 'string' || auth.command.trim() === '') bad('auth.command must not be empty');
-    const clash = ['env_key', 'experimental_bearer_token', 'requires_openai_auth'].filter((k) => t[k] !== undefined && t[k] !== false);
-    if (clash.length) bad(`provider auth cannot be combined with ${clash.join(', ')}`);
-  }
+  if (t.auth || t.env_key || t.requires_openai_auth) bad('Helper and env authentication are not supported');
+  if (typeof t.experimental_bearer_token !== 'string' || !t.experimental_bearer_token) bad('Bearer token missing');
 }
 
 export class CodexAdapter extends JsonHarnessAdapter {
@@ -61,35 +36,61 @@ export class CodexAdapter extends JsonHarnessAdapter {
   constructor(o: CodexAdapterOptions) { super(o); }
 
   get dir() { return configDir(this.id, this.o.env); }
+  private get owner() { return this.o.owner ?? 'swift-client'; }
+  private get provider() { return this.o.owner ?? 'swift'; }
+  private get selectionPath() { return join(this.dir, `${this.provider}.config.toml`); }
   get configPath() { return join(this.dir, 'config.toml'); }
   get authPath() { return join(this.dir, 'auth.json'); }
-  protected configPaths() { return [this.configPath]; }
+  protected configPaths() { return [this.configPath, this.selectionPath]; }
   protected parseText(text: string) { return parseToml(text); }
-  protected mergeText(text: string, edits: JsonEdit[]) { return mergeOwnedToml(text, edits.map((e) => ({ path: e.path.map(String), value: e.value }))); }
+  protected mergeText(text: string, edits: JsonEdit[]): string {
+    const markerPattern = new RegExp(`^# managed by ${this.owner} provider=.* v=2\\r?\\n`, 'gm');
+    let out = mergeOwnedToml(text.replace(markerPattern, ''), edits.map((e) => ({ path: e.path.map(String), value: e.value })));
+    const table = edits.some((e) => e.path.join('.') === `model_providers.${this.provider}` && e.value !== undefined);
+    const selection = edits.some((e) => e.path.join('.') === 'model_provider' && e.value === this.provider);
+    if (table || selection) {
+      const marker = `# managed by ${this.owner} provider=${this.currentProfileId ?? this.provider} v=2${out.includes('\r\n') ? '\r\n' : '\n'}`;
+      if (table) out = out.replace(new RegExp(`^(\\[model_providers\\.${this.provider}\\])`, 'm'), marker + '$1');
+      else out = marker + out;
+    }
+    return out;
+  }
+
+  protected recoveredOwnership(path: string, text: string, root: Record<string, unknown>) {
+    const marker = text.match(new RegExp(`^# managed by ${this.owner} provider=([a-z0-9-]{1,32}) v=2\\r?$`, 'm'))?.[1];
+    if (!marker) return undefined;
+    if (path === this.selectionPath && root.model_provider === this.provider) return { settings: ['model', 'model_provider'], profileId: marker };
+    return { settings: [`model_providers.${this.provider}`, ...(root.model_provider === this.provider ? ['model', 'model_provider'] : [])], profileId: marker };
+  }
 
   private async statAny(p: string) { return (await this.o.fs.ops.stat(p).catch(() => null)) !== null; }
 
   async detect(): Promise<Detection> {
     const d = await detectBasic(this.id, this.o);
     if (this.o.env.env.CODEX_HOME) d.notes.push('Using CODEX_HOME');
-    if (await this.exists(this.authPath)) d.notes.push('auth.json exists (not read); switching model_provider to pa does not log you out');
+    if (await this.exists(this.authPath)) d.notes.push('auth.json exists (not read); swift profile does not change your login');
     if (this.o.cwd && (await this.statAny(join(this.o.cwd, '.codex', 'config.toml')))) d.notes.push('Project .codex/config.toml found in the current directory; it may override user settings (not modified)');
     return d;
   }
 
-  private pid(p: HarnessProfile) { return p.providerId ?? 'pa'; }
+  private pid(_p: HarnessProfile) { return this.provider; }
 
-  protected desiredFor(p: HarnessProfile): Map<string, Desired> {
+  protected async desiredFor(p: HarnessProfile): Promise<Map<string, Desired>> {
     if (!PROFILE_ID_RE.test(p.id)) bad('Invalid profile id');
+    const foreign = this.o.owner ? 'swift-client' : 'swift-cli';
+    if ((await this.o.fs.readText(this.configPath))?.text.includes(`# managed by ${foreign} provider=`)) bad('This config is managed by the other client; detach there first');
     const pid = this.pid(p);
     if (!PROVIDER_RE.test(pid)) bad('Invalid provider id');
     if (['openai', 'amazon-bedrock', 'amazon-bedrock-runtime', 'gcp', 'ollama', 'ollama-chat', 'lmstudio', 'oss'].includes(pid)) bad('Provider id clashes with a Codex built-in provider');
-    const table = codexProvider(p, this.o.helperPath);
+    const table = codexProvider(p, await this.o.getKey?.(p) ?? bad('Select a token again before applying'));
     validateCodexProvider(table);
     const d: Desired = new Map();
     if (p.codex?.setDefault === true) { d.set('model', codexModel(p)); d.set('model_provider', pid); }
     d.set(`model_providers.${pid}`, table);
-    return new Map([[this.configPath, d]]);
+    if (!this.o.owner) d.set('model_providers.pa', undefined);
+
+    const selection: Desired = new Map([['model', codexModel(p)], ['model_provider', pid]]);
+    return new Map([[this.configPath, d], [this.selectionPath, selection]]);
   }
 
   protected collisionSettings(_path: string, desired: Desired): string[] {
@@ -105,8 +106,8 @@ export class CodexAdapter extends JsonHarnessAdapter {
     if (await this.exists(this.authPath)) w.push('Codex auth.json exists (not read); your ChatGPT/API login stays as is, only model_provider changes');
     const prof = getPath(root, ['profile']);
     if (typeof prof === 'string') w.push(`config.toml selects profile "${prof}"; its model / model_provider may override ours`);
-    if (p.keyMode === 'env' && !this.o.env.env[p.envVar ?? 'PA_API_KEY']) w.push(`Env key mode: export ${p.envVar ?? 'PA_API_KEY'} in the shell that starts codex`);
-    if (p.codex?.setDefault !== true) w.push(`Default not changed; run codex -c model_provider=${this.pid(p)} -m ${codexModel(p)}`);
+
+    if (p.codex?.setDefault !== true) w.push(`Default not changed; run codex --profile ${this.provider}`);
     if (this.o.cwd && (await this.statAny(join(this.o.cwd, '.codex', 'config.toml')))) w.push('Project .codex/config.toml may override these user settings');
     w.push('Requires the server Responses channel (configured on the server, not by this app); check the channel status before use');
     return w;

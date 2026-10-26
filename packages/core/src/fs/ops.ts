@@ -1,6 +1,7 @@
 /** Low-level file operations injected into the controlled fs layer (node impl in ./node.ts, fakes in tests). */
 export interface FsStat { mtimeMs: number; size: number; mode: number; isFile: boolean; isDirectory: boolean }
 export interface FsOps {
+  acquireLock?(path: string): Promise<() => Promise<void>>;
   readFile(path: string): Promise<Uint8Array>;
   /** Writes and fsyncs. */
   writeFile(path: string, data: Uint8Array, mode: number): Promise<void>;

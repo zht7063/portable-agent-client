@@ -1,7 +1,5 @@
-/**
- * Shared plan/apply/rollback/detach engine for adapters whose managed files are JSON/JSONC (Pi, Claude Code).
- * Never writes a key; never reads auth files. See docs/harness.md.
- */
+/** Controlled plan/apply/rollback engine. Credentials are resolved in main and masked in every preview; auth files are never read. */
+import { join } from 'node:path';
 import { PaException } from '@pac/core/contract';
 import { PRODUCT } from '@pac/core/product';
 import type { ApplyResult, ConflictAck, Conflict, Detection, FileFingerprint, HarnessAdapter, HarnessId, HarnessProfile, HarnessHistory, LiveSnapshot, Plan, RollbackPreview, ChangeKind, PlannedKeyChange, RollbackTarget } from '@pac/core/contract';
@@ -17,33 +15,28 @@ export interface AdapterOptions {
   state: StateStore;
   env: HarnessEnv;
   exec: ExecFn;
-  /** Absolute path of the pa-key wrapper (D4). */
+  /** Legacy adapter option retained for test compatibility; no helper is executed. */
   helperPath: string;
+  /** Separate ownership namespace for the development CLI. */
+  owner?: 'swift-cli';
+  /** Main-only credential resolver; never persisted in profile/state. */
+  getKey?: (profile: HarnessProfile) => Promise<string>;
   /** Working directory for project-level hints (read-only checks). */
   cwd?: string;
   /** Host hook run right before writing (e.g. provision the keychain entry in command mode). Abort by throwing. */
   beforeWrite?: (profile: HarnessProfile) => Promise<void>;
   /** Host hook after detach (e.g. revoke the keychain entry). */
-  afterDetach?: (profileIds: string[]) => Promise<void>;
+  afterDetach?: (profileIds: string[], harness: HarnessId) => Promise<void>;
   now?: () => Date;
 }
 
 export const bad = (message: string): never => { throw new PaException({ code: 'VALIDATION', message }); };
 export const dotted = (p: (string | number)[]) => p.join('.');
 export const undot = (s: string) => s.split('.');
-export const PROVIDER_RE = /^[A-Za-z0-9_-]{1,64}$/;
+export const PROVIDER_RE = /^[a-z0-9-]{1,32}$/;
 export const ENV_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 export const ownedValues = (root: unknown, settings: string[]): Record<string, unknown> =>
   Object.fromEntries(settings.map((s) => [s, getPath(root, undot(s)) ?? null]));
-
-export const posixQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
-export const winQuote = (s: string) => (/["%]/.test(s) ? bad('Helper path contains unsupported characters') : `"${s}"`);
-export const isAbsPath = (p: string) => p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p);
-/** Shell-quoted helper invocation: `<helper> <profileId> <harness>` (profile ids are [A-Za-z0-9_-]). */
-export function helperCommand(helperPath: string, profileId: string, harness: HarnessId, platform: NodeJS.Platform): string {
-  if (!isAbsPath(helperPath)) bad('Helper path must be absolute');
-  return `${platform === 'win32' ? winQuote(helperPath) : posixQuote(helperPath)} ${profileId} ${harness}`;
-}
 
 export type Desired = Map<string, unknown>; // dotted setting -> value (undefined = remove)
 export interface FilePlan {
@@ -58,13 +51,16 @@ export abstract class JsonHarnessAdapter implements HarnessAdapter {
   /** Managed config files (JSON/JSONC). */
   protected abstract configPaths(): string[];
   /** Per file: dotted owned setting -> desired value. Throws VALIDATION for unsupported profiles. */
-  protected abstract desiredFor(p: HarnessProfile): Map<string, Desired>;
+  protected abstract desiredFor(p: HarnessProfile): Map<string, Desired> | Promise<Map<string, Desired>>;
   /** Settings that, if already set (by someone else) to a different value on a file we never wrote, are a collision. */
   protected abstract collisionSettings(path: string, desired: Desired): string[];
-  /** Whether the user's previous value may be remembered in state (never for settings that can hold a credential). */
+  /** Whether the previous value is remembered in private main-only state (0600). */
   protected abstract rememberOriginal(path: string, setting: string): boolean;
   protected abstract planWarnings(p: HarnessProfile, files: FilePlan[]): Promise<string[]>;
   abstract detect(): Promise<Detection>;
+
+  protected recoveredOwnership(_path: string, _text: string, _root: Record<string, unknown>): { settings: string[]; profileId: string } | undefined { return undefined; }
+  protected currentProfileId?: string;
 
   protected now() { return (this.o.now ?? (() => new Date()))().toISOString(); }
   protected async exists(p: string): Promise<boolean> {
@@ -90,7 +86,7 @@ export abstract class JsonHarnessAdapter implements HarnessAdapter {
       const entry = st.files[path];
       const settings = entry?.ownedSettings ?? [];
       const vals = ownedValues(root, settings);
-      for (const [k, v] of Object.entries(vals)) owned[`${path}#${k}`] = maskValue(v);
+      for (const [k, v] of Object.entries(vals)) owned[`${path}#${k}`] = /token|api.?key|bearer|helper/i.test(k) && v ? '***' : maskValue(v);
       files.push({ path, fingerprint: fp, ownedValuesHash: entry ? hashOwnedValues(vals) : null });
     }
     return { id: this.id, files, owned };
@@ -98,7 +94,8 @@ export abstract class JsonHarnessAdapter implements HarnessAdapter {
 
   private async compute(profile: HarnessProfile): Promise<Computed> {
     const st = await this.o.state.load();
-    const desiredByFile = this.desiredFor(profile);
+    this.currentProfileId = profile.id;
+    const desiredByFile = await this.desiredFor(profile);
     const files: FilePlan[] = [];
     const changes: PlannedKeyChange[] = [];
     const conflicts: Conflict[] = [];
@@ -138,8 +135,9 @@ export abstract class JsonHarnessAdapter implements HarnessAdapter {
       if (fpl.conflict) conflicts.push(fpl.conflict);
       for (const [s, v] of desired) {
         const cur = getPath(root, undot(s));
-        const kind = cur === undefined ? (v === undefined ? 'unchanged' : 'create') : v === undefined ? 'remove' : canonicalJson(cur) === canonicalJson(v) ? 'unchanged' : 'modify';
-        changes.push({ file: path, setting: s, kind, before: maskValue(cur), after: maskValue(v) });
+        let kind: ChangeKind = cur === undefined ? (v === undefined ? 'unchanged' : 'create') : v === undefined ? 'remove' : canonicalJson(cur) === canonicalJson(v) ? 'unchanged' : 'modify';
+        if (kind === 'unchanged' && entry?.profileId && entry.profileId !== profile.id) kind = 'modify';
+        changes.push({ file: path, setting: s, kind, before: /token|api.?key|bearer|helper/i.test(s) && cur ? '***' : maskValue(cur), after: /token|api.?key|bearer|helper/i.test(s) && v ? '***' : maskValue(v) });
       }
       files.push(fpl);
     }
@@ -163,6 +161,7 @@ export abstract class JsonHarnessAdapter implements HarnessAdapter {
    */
   async apply(given: Plan, opts: { acknowledge: ConflictAck[] }): Promise<ApplyResult> {
     const profile = (await this.o.state.load()).profiles[given.profileId] ?? bad('Unknown harness profile');
+    if (this.id === 'claude' && Object.values(profile.models).some((m) => m?.includes('placeholder'))) bad('Claude models are pending: replace placeholders before applying');
     const c = await this.compute(profile);
     for (const path of this.configPaths()) {
       const a = given.baseFingerprints?.[path] ?? null; const b = c.plan.baseFingerprints[path] ?? null;
@@ -184,6 +183,9 @@ export abstract class JsonHarnessAdapter implements HarnessAdapter {
     // Aegis #2: record the snapshot before writing and each file's state right after it is written, so a failure
     // midway leaves state consistent with disk (written files tracked, rollback 'last' available).
     await this.o.state.update((s) => { s.history.push(hist); });
+    const journal = join(this.o.fs.dataDir, 'harness', 'journal.json');
+    const completed: string[] = [];
+    await this.o.fs.atomicWrite(journal, JSON.stringify({ snapshotId: hist.snapshotId, harness: this.id, action: 'apply', completed }));
     const written: string[] = [];
     for (const f of todo) {
       await this.o.fs.backupFirstWrite(this.id, f.path);
@@ -191,16 +193,19 @@ export abstract class JsonHarnessAdapter implements HarnessAdapter {
       const out = this.mergeText(f.text, edits);
       const fp = await this.o.fs.atomicWrite(f.path, out, { expect: f.fp });
       written.push(f.path);
+      completed.push(f.path);
+      await this.o.fs.atomicWrite(journal, JSON.stringify({ snapshotId: hist.snapshotId, harness: this.id, action: 'apply', completed }));
       const keep = [...f.desired].filter(([, v]) => v !== undefined).map(([s]) => s);
       // Remember the user's previous values once (settings.json defaults only; models.json provider may hold a key).
       const remember = keep.filter((s) => this.rememberOriginal(f.path, s));
       const original = f.entry?.original ?? (remember.length ? ownedValues(f.root, remember) : undefined);
       const entry: ManagedFileState = {
-        harness: this.id, lastWritten: fp, ownedValuesHash: hashOwnedValues(ownedValues(this.parseText(out), keep)),
+        harness: this.id, profileId: profile.id, lastWritten: fp, ownedValuesHash: hashOwnedValues(ownedValues(this.parseText(out), keep)),
         ownedSettings: keep, ...(original ? { original } : {}), updatedAt: this.now(),
       };
       await this.o.state.update((s) => { if (entry.ownedSettings.length) s.files[f.path] = entry; else delete s.files[f.path]; });
     }
+    await this.o.fs.remove(journal);
     return { id: this.id, written, snapshotId: hist.snapshotId, warnings };
   }
 
@@ -232,7 +237,8 @@ export abstract class JsonHarnessAdapter implements HarnessAdapter {
     let blocked: string | undefined;
     const diff = (file: string, settings: Iterable<string>, before: unknown, after: unknown) => {
       for (const s of [...new Set(settings)].sort()) {
-        const b = maskValue(getPath(before, undot(s))); const a = maskValue(getPath(after, undot(s)));
+        const hide = (v: unknown) => /token|api.?key|bearer|helper/i.test(s) && v ? '***' : maskValue(v);
+        const b = hide(getPath(before, undot(s))); const a = hide(getPath(after, undot(s)));
         const kind: ChangeKind = b === a ? 'unchanged' : b === null ? 'create' : a === null ? 'remove' : 'modify';
         if (kind !== 'unchanged') changes.push({ file, setting: s, kind, before: b, after: a });
       }
@@ -325,27 +331,50 @@ export abstract class JsonHarnessAdapter implements HarnessAdapter {
   /** Removes only our managed settings (restoring the user's previous defaults); refuses if they were edited externally. */
   private async detach(): Promise<ApplyResult> {
     const st = await this.o.state.load();
-    const mine = this.configPaths().filter((p) => st.files[p]?.harness === this.id);
-    if (!mine.length) return { id: this.id, written: [], warnings: ['Nothing to detach'] };
     const loaded = [];
-    for (const path of mine) {
+    for (const path of this.configPaths()) {
       const l = await this.load(path);
-      const e = st.files[path]!;
-      if (classifyChange(e, l.fp, hashOwnedValues(ownedValues(l.root, e.ownedSettings))) === 'conflict') {
-        bad(`Managed settings were changed outside ${PRODUCT.productName}; use rollback or edit the file manually`);
+      let e = st.files[path];
+      if (!e && l.fp) {
+        const recovered = this.recoveredOwnership(path, l.text, l.root);
+        if (recovered) e = { harness: this.id, profileId: recovered.profileId, lastWritten: l.fp, ownedSettings: recovered.settings, ownedValuesHash: hashOwnedValues(ownedValues(l.root, recovered.settings)), updatedAt: this.now() };
       }
+      if (!e || e.harness !== this.id) continue;
+      if (classifyChange(e, l.fp, hashOwnedValues(ownedValues(l.root, e.ownedSettings))) === 'conflict') bad(`Managed settings were changed outside ${PRODUCT.productName}; use rollback or edit the file manually`);
       loaded.push({ path, ...l, e });
     }
+    if (!loaded.length) return { id: this.id, written: [], warnings: ['Nothing to detach'] };
+    const mine = loaded.map((l) => l.path);
     const hist = await this.snapshotWithState('detach');
     const written: string[] = [];
     for (const l of loaded) {
       const edits = l.e.ownedSettings.map((s) => ({ path: undot(s), value: l.e.original?.[s] ?? undefined }));
-      const out = this.mergeText(l.text, edits);
-      if (out !== l.text) { await this.o.fs.atomicWrite(l.path, out, { expect: l.fp }); written.push(l.path); }
+      let out = this.mergeText(l.text, edits);
+      // Preserve original formatting exactly when no unrelated settings changed since first apply.
+      const first = await this.o.fs.loadBackup(this.id, 'first-write').catch(() => []);
+      const original = first.find((e) => e.path === l.path);
+      if (original?.data) {
+        const text = new TextDecoder().decode(original.data);
+        if (canonicalJson(this.parseText(text)) === canonicalJson(this.parseText(out))) out = text;
+      }
+      if (out !== l.text) {
+        if (l.path.endsWith('swift.config.toml') && !out.trim()) await this.o.fs.remove(l.path, { expect: l.fp });
+        else await this.o.fs.atomicWrite(l.path, out, { expect: l.fp });
+        written.push(l.path);
+      }
     }
-    await this.o.state.update((s) => { for (const p of mine) delete s.files[p]; s.history.push(hist); });
-    const profiles = Object.keys(st.profiles);
-    await this.o.afterDetach?.(profiles);
+    await this.o.state.update((s) => {
+      for (const p of mine) delete s.files[p];
+      s.history.push(hist);
+      if (this.id === 'claude') for (const h of s.history) {
+        for (const p of mine) {
+          const original = h.files?.[p]?.original;
+          if (original) delete original['env.ANTHROPIC_AUTH_TOKEN'];
+        }
+      }
+    });
+    const profiles = [...new Set(loaded.map((l) => l.e.profileId).filter((id): id is string => !!id))];
+    await this.o.afterDetach?.(profiles, this.id);
     return { id: this.id, written, snapshotId: hist.snapshotId, warnings: [] };
   }
 }

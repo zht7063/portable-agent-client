@@ -110,6 +110,7 @@ export class HttpClient {
           signal: signals.length ? AbortSignal.any(signals) : undefined,
           // Never follow redirects: a 3xx could carry the Authorization header to another origin.
           redirect: 'manual',
+          credentials: 'omit',
         });
       } catch (e) {
         // Caller-provided deadline (e.g. chat timeouts) aborts with a PaException reason.

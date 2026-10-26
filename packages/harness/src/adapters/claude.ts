@@ -1,16 +1,5 @@
-/**
- * Claude Code adapter, H2.
- * Owned settings in <CLAUDE_CONFIG_DIR|~/.claude>/settings.json (verified against code.claude.com/docs, 2026-10):
- *   apiKeyHelper                       shell command whose stdout is sent as X-Api-Key and Authorization: Bearer
- *   env.ANTHROPIC_BASE_URL             server origin (Claude Code appends /v1/messages)
- *   env.ANTHROPIC_MODEL                models.main (unless claude.setModel === false)
- *   env.ANTHROPIC_DEFAULT_OPUS_MODEL   models.opus   ?? models.main
- *   env.ANTHROPIC_DEFAULT_SONNET_MODEL models.sonnet ?? models.main
- *   env.ANTHROPIC_DEFAULT_HAIKU_MODEL  models.haiku  ?? models.small ?? models.main
- * Never writes ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN. Never touches ~/.claude.json.
- * command mode: apiKeyHelper = "<pa-key> <profile> claude"; env mode: apiKeyHelper prints $<ENV> at run time
- * (the key never lands in a file). plaintext is refused.
- */
+import { HARNESS_ENV_VARS, scanEnv } from '../env-scan.js';
+/** Claude v6 projection: strict settings JSON, AUTH_TOKEN, model aliases and an ownership marker. No API_KEY or helper is written. */
 import { join } from 'node:path';
 import type { Detection, HarnessProfile } from '@pac/core/contract';
 import { configDir } from '../paths.js';
@@ -18,7 +7,7 @@ import { PROFILE_ID_RE } from '@pac/core/fs';
 import { detectBasic } from '../detect.js';
 import { getPath } from '../merge/json.js';
 import { serverBase } from './pi.js';
-import { bad, ENV_RE, helperCommand, JsonHarnessAdapter, type AdapterOptions, type Desired, type FilePlan } from './base.js';
+import { bad, ENV_RE, JsonHarnessAdapter, type AdapterOptions, type Desired, type FilePlan } from './base.js';
 
 export type ClaudeAdapterOptions = AdapterOptions;
 
@@ -29,23 +18,13 @@ export function claudeManagedPaths(platform: NodeJS.Platform): string[] {
   return [`${dir}${sep}managed-settings.json`, `${dir}${sep}managed-settings.d`];
 }
 
-export function claudeApiKeyHelper(p: HarnessProfile, helperPath: string, platform: NodeJS.Platform): string {
-  if (p.keyMode === 'command') return helperCommand(helperPath, p.id, 'claude', platform);
-  if (p.keyMode === 'env') {
-    const v = p.envVar ?? 'PA_API_KEY';
-    if (!ENV_RE.test(v)) bad('Invalid env var name');
-    // Runs via /bin/sh (cmd on Windows); expands the variable at request time, so no key is stored.
-    return platform === 'win32' ? `echo %${v}%` : `printf '%s' "$${v}"`;
-  }
-  return bad('Plaintext key mode is not supported for Claude Code (keys are never written to config files)');
-}
-
 /** Claude Code appends /v1/messages itself, so a trailing /v1 is dropped. */
 export function claudeBaseUrl(serverUrl: string): string { return serverBase(serverUrl).replace(/\/v1$/, ''); }
 
 export function claudeEnv(p: HarnessProfile): Record<string, string> {
   const m = p.models;
-  const out: Record<string, string> = { ANTHROPIC_BASE_URL: claudeBaseUrl(p.serverUrl) };
+  const out: Record<string, string> = { ANTHROPIC_BASE_URL: claudeBaseUrl(p.serverUrl), SWIFT_CLIENT_MANAGED: p.id };
+  if (m.custom) out.ANTHROPIC_CUSTOM_MODEL_OPTION = m.custom;
   if (p.claude?.setModel !== false) out.ANTHROPIC_MODEL = m.main;
   out.ANTHROPIC_DEFAULT_OPUS_MODEL = m.opus ?? m.main;
   out.ANTHROPIC_DEFAULT_SONNET_MODEL = m.sonnet ?? m.main;
@@ -62,6 +41,19 @@ export class ClaudeAdapter extends JsonHarnessAdapter {
   get dir() { return configDir(this.id, this.o.env); }
   get settingsPath() { return join(this.dir, 'settings.json'); }
   protected configPaths() { return [this.settingsPath]; }
+  protected parseText(text: string): Record<string, unknown> {
+    try { const root: unknown = JSON.parse(text.trim() || '{}'); if (!root || typeof root !== 'object' || Array.isArray(root)) return bad('Settings must be a JSON object'); return root as Record<string, unknown>; }
+    catch { return bad('Claude settings must be strict JSON; not modified'); }
+  }
+
+
+  protected recoveredOwnership(_path: string, _text: string, root: Record<string, unknown>) {
+    const env = root.env as Record<string, unknown> | undefined;
+    const id = env?.[this.o.owner ? 'SWIFT_CLI_MANAGED' : 'SWIFT_CLIENT_MANAGED'];
+    if (typeof id !== 'string' || !/^[a-z0-9-]{1,32}$/.test(id)) return undefined;
+    const keys = ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'ANTHROPIC_CUSTOM_MODEL_OPTION', this.o.owner ? 'SWIFT_CLI_MANAGED' : 'SWIFT_CLIENT_MANAGED'];
+    return { settings: keys.map((key) => `env.${key}`), profileId: id };
+  }
 
   private async statAny(p: string) { return (await this.o.fs.ops.stat(p).catch(() => null)) !== null; }
 
@@ -79,31 +71,33 @@ export class ClaudeAdapter extends JsonHarnessAdapter {
     return d;
   }
 
-  protected desiredFor(p: HarnessProfile): Map<string, Desired> {
+  protected async desiredFor(p: HarnessProfile): Promise<Map<string, Desired>> {
     if (!PROFILE_ID_RE.test(p.id)) bad('Invalid profile id');
     if (p.envVar !== undefined && !ENV_RE.test(p.envVar)) bad('Invalid env var name');
-    const d: Desired = new Map<string, unknown>([['apiKeyHelper', claudeApiKeyHelper(p, this.o.helperPath, this.o.env.platform)]]);
-    for (const [k, v] of Object.entries(claudeEnv(p))) d.set(`env.${k}`, v);
+    const existing = await this.load(this.settingsPath);
+    if (getPath(existing.root, ['env', this.o.owner ? 'SWIFT_CLIENT_MANAGED' : 'SWIFT_CLI_MANAGED']) !== undefined) bad('This config is managed by the other client; detach there first');
+    const d: Desired = new Map<string, unknown>([['apiKeyHelper', undefined], ['env.ANTHROPIC_AUTH_TOKEN', await this.o.getKey?.(p) ?? bad('Select a token again before applying')]]);
+    const desiredEnv = claudeEnv(p);
+    if (this.o.owner) { delete desiredEnv.SWIFT_CLIENT_MANAGED; desiredEnv.SWIFT_CLI_MANAGED = p.id; }
+    for (const [k, v] of Object.entries(desiredEnv)) d.set(`env.${k}`, v);
     return new Map([[this.settingsPath, d]]);
   }
 
   protected collisionSettings(): string[] { return ['apiKeyHelper', 'env.ANTHROPIC_BASE_URL']; }
 
-  /** apiKeyHelper may embed a credential, so the previous value is never stored (detach removes it). */
+  /** Original token stays in private main-only state so detach can restore it. Helpers are removed. */
   protected rememberOriginal(_path: string, setting: string): boolean { return setting !== 'apiKeyHelper'; }
 
   protected async planWarnings(p: HarnessProfile, files: FilePlan[]): Promise<string[]> {
-    const w: string[] = [];
-    const e = this.o.env.env;
-    for (const v of CRED_ENV) if (e[v]) w.push(`${v} is set in the environment; unset it so Claude Code uses apiKeyHelper`);
-    const root = files[0]?.root;
-    for (const v of CRED_ENV) if (getPath(root, ['env', v]) !== undefined) w.push(`settings.json env.${v} is set (value not shown); remove it so Claude Code uses apiKeyHelper`);
+    const w: string[] = ['Keys are plaintext; Claude commands, hooks and MCP children inherit the token. Exclude configs from sync and dotfiles; set a server quota limit.'];
+    if (Object.values(p.models).some((m) => m?.includes('placeholder'))) w.push('Claude models pending: replace placeholders before apply or paid tests');
     const want = claudeEnv(p);
-    for (const v of ['ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL']) {
-      if (e[v] && want[v] && e[v] !== want[v]) w.push(`${v} is exported in the shell with a different value`);
-    }
-    if (p.keyMode === 'env' && !e[p.envVar ?? 'PA_API_KEY']) w.push(`Env key mode: export ${p.envVar ?? 'PA_API_KEY'} in the shell that starts claude`);
-    if (p.keyMode === 'env' && this.o.env.platform === 'win32') w.push('Env key mode on Windows uses "echo %VAR%" (not verified yet)');
+    const scan = await scanEnv(HARNESS_ENV_VARS.claude.map((v) => want[v.name] ? { ...v, expected: want[v.name] } : v), {
+      processEnv: this.o.env.env, platform: this.o.env.platform, home: this.o.env.home, exec: this.o.exec, readText: async () => null,
+    }, { loginShell: false, rcFiles: false });
+    w.push(...scan.findings.map((f) => f.message));
+    const root = files[0]?.root;
+    for (const v of CRED_ENV) if (getPath(root, ['env', v]) !== undefined) w.push(v === 'ANTHROPIC_AUTH_TOKEN' ? 'settings.json env.ANTHROPIC_AUTH_TOKEN is set (value not shown); it will be replaced; detach restores the original value' : 'settings.json env.ANTHROPIC_API_KEY is set (value not shown); remove it to avoid credential conflicts');
     for (const mp of claudeManagedPaths(this.o.env.platform)) if (await this.statAny(mp)) w.push(`Managed settings present (${mp}); they take precedence over these user settings`);
     if (this.o.cwd) {
       for (const f of ['settings.json', 'settings.local.json']) {

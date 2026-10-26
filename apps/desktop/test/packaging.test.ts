@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { describe, expect, it, vi } from 'vitest';
+import { spawnSync } from '../../../test/helpers/subprocess';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -17,7 +17,8 @@ describe('local packaging config (H4)', () => {
     const product = JSON.parse(readFileSync(join(app, '..', '..', 'packages', 'core', 'src', 'product.config.json'), 'utf8')) as { appId: string; productName: string };
     expect(cfg.publish).toBeNull();
     expect(cfg.files).toContain('!node_modules/@napi-rs/keyring-linux-*/**');
-    expect(cfg.asarUnpack).toContain('dist/key-helper/**');
+    expect(cfg.asarUnpack).not.toContain('dist/key-helper/**');
+    expect(cfg).not.toHaveProperty('electronFuses');
     expect(cfg.appId).toBe(product.appId);
     expect(cfg.productName).toBe(product.productName);
     const pkg = JSON.parse(readFileSync(join(app, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
@@ -33,8 +34,10 @@ describe('local packaging config (H4)', () => {
     const calls: unknown[][] = [];
     const ctx = (plat: string) => ({ electronPlatformName: plat, appOutDir: '/out/mac-arm64', packager: { appInfo: { productFilename: 'portable-agent' } } });
     const fake = (...a: unknown[]) => { calls.push(a); };
-    expect(await cfg.afterPack(ctx('darwin'), fake)).toBe(true);
-    expect(await cfg.afterPack(ctx('win32'), fake)).toBe(false);
+    const fuses = { FuseVersion: { V1: '1' }, FuseV1Options: { RunAsNode: 0 }, flipFuses: vi.fn(async () => { calls.push(['flip']); }) };
+    expect(await cfg.afterPack(ctx('darwin'), fuses, fake)).toBe(true);
+    expect(calls.map((c) => c[0])).toEqual(['flip', 'codesign']);
+    calls.shift();
     expect(calls).toEqual([['codesign', ['--force', '--deep', '--sign', '-', '--timestamp=none', '/out/mac-arm64/portable-agent.app'], { stdio: 'inherit' }]]);
     expect(cfg.nsis).toMatchObject({ oneClick: false, allowToChangeInstallationDirectory: true, createDesktopShortcut: true, createStartMenuShortcut: true });
     expect(cfg.win.certificateFile ?? cfg.win.signtoolOptions ?? cfg.win.azureSignOptions).toBeUndefined();
@@ -55,6 +58,29 @@ describe('local packaging config (H4)', () => {
     expect(cfg.electronDist({ platformName: 'darwin', arch: 'arm64' })).toBeNull();
   });
 
+  it('afterPack disables RunAsNode for each platform and propagates fuse failures before signing', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const cfg = require(join(app, 'electron-builder.config.cjs'));
+    const product = JSON.parse(readFileSync(join(app, '../../packages/core/src/product.config.json'), 'utf8'));
+    const flipFuses = vi.fn().mockResolvedValue(undefined);
+    const fuses = { FuseVersion: { V1: '1' }, FuseV1Options: { RunAsNode: 0 }, flipFuses };
+    const run = vi.fn();
+    const ctx = (platform: string) => ({ electronPlatformName: platform, appOutDir: '/out', packager: { appInfo: { productFilename: 'My App' } } });
+    for (const [platform, binary] of [
+      ['darwin', '/out/My App.app/Contents/MacOS/My App'],
+      ['win32', `/out/${product.executableName}.exe`],
+      ['linux', `/out/${product.executableName}`],
+    ] as const) {
+      await cfg.afterPack(ctx(platform), fuses, run);
+      expect(flipFuses).toHaveBeenLastCalledWith(binary, { version: '1', 0: false });
+    }
+    expect(run).toHaveBeenCalledTimes(1);
+    run.mockClear();
+    flipFuses.mockRejectedValueOnce(new Error('fuse failure'));
+    await expect(cfg.afterPack(ctx('darwin'), fuses, run)).rejects.toThrow('fuse failure');
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it('M6: license materials ship as plain files in resources/licenses (and inside the app)', () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const cfg = require(join(app, 'electron-builder.config.cjs')) as { files: string[]; extraResources: { from: string; to: string }[] };
@@ -64,31 +90,14 @@ describe('local packaging config (H4)', () => {
     for (const f of ['LICENSE.txt', 'NOTICE.txt', 'THIRD-PARTY-LICENSES.txt']) expect(build).toContain(`$OUT/licenses/${f}`);
   });
 
-  it.skipIf(!built)('stage: linux has no native modules; darwin stages only @napi-rs/keyring(+darwin binary)', () => {
-    const run = (platform: string, arch = 'arm64') => spawnSync(process.execPath, ['scripts/stage.mjs'], { cwd: app, env: { ...process.env, PA_TARGET_PLATFORM: platform, PA_TARGET_ARCH: arch }, encoding: 'utf8' });
-    const l = run('linux');
-    expect(l.status).toBe(0);
-    expect(existsSync(join(app, 'stage', 'node_modules'))).toBe(false);
-    const d = run('darwin');
-    expect(d.status).toBe(0);
-    const mods = readdirSync(join(app, 'stage', 'node_modules', '@napi-rs'));
-    expect(mods).toContain('keyring');
-    expect(mods.some((m) => m.startsWith('keyring-linux'))).toBe(false);
-    const sp = JSON.parse(readFileSync(join(app, 'stage', 'package.json'), 'utf8')) as Record<string, unknown>;
-    // Declared so electron-builder actually packs the staged native module (it drops undeclared node_modules).
-    expect(Object.keys(sp.dependencies as Record<string, string>).sort()).toEqual(mods.map((m) => `@napi-rs/${m}`).sort());
-    expect(sp.main).toBe('dist/main/index.cjs');
-    // Aegis round 3 item 5: one arch per stage, so the declared deps match the bundled arch exactly.
-    for (const a of ['arm64', 'x64']) {
-      expect(run('darwin', a).status).toBe(0);
-      const deps = Object.keys((JSON.parse(readFileSync(join(app, 'stage', 'package.json'), 'utf8')) as { dependencies: Record<string, string> }).dependencies);
-      expect(deps.filter((k) => /keyring-darwin-/.test(k) && k !== `@napi-rs/keyring-darwin-${a}`)).toEqual([]);
-      expect(readdirSync(join(app, 'stage', 'node_modules', '@napi-rs')).filter((m) => /^keyring-darwin-/.test(m) && m !== `keyring-darwin-${a}`)).toEqual([]);
+  it.skipIf(!built)('stage is dependency-free on all supported platforms', () => {
+    for (const platform of ['linux', 'darwin', 'win32']) {
+      const r = spawnSync(process.execPath, ['scripts/stage.mjs'], { cwd: app, env: { ...process.env, PA_TARGET_PLATFORM: platform, PA_TARGET_ARCH: 'x64' }, encoding: 'utf8' });
+      expect(r.status).toBe(0);
+      expect(existsSync(join(app, 'stage/node_modules'))).toBe(false);
+      const staged = JSON.parse(readFileSync(join(app, 'stage/package.json'), 'utf8')) as { main: string; dependencies?: object };
+      expect(staged.main).toBe('dist/main/index.cjs'); expect(staged.dependencies).toBeUndefined();
     }
-    const multi = run('darwin', 'arm64,x64');
-    expect(multi.status).not.toBe(0);
-    expect(multi.stderr).toContain('single arch');
-    run('linux');
   });
 
   it('build-main: PA_BUILD_COMMIT cannot hide a different HEAD (prod fails) or a dirty tree (-dirty suffix)', () => {

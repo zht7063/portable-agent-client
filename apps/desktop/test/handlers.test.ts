@@ -24,7 +24,7 @@ describe('desktop IPC handlers', () => {
   });
   it('module errors map to Result errors', async () => {
     const { handlers } = setup();
-    expect(await dispatch(handlers, 'harness:plan', { id: 'pi', profileId: 'nope' })).toMatchObject({ ok: false, error: { code: 'VALIDATION', message: 'Unknown harness profile' } });
+    expect(await dispatch(handlers, 'harness:plan', { id: 'claude', profileId: 'nope' })).toMatchObject({ ok: false, error: { code: 'VALIDATION', message: 'Unknown harness profile' } });
   });
   it('blocks responses containing credentials', async () => {
     const { handlers } = setup();

@@ -19,7 +19,7 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 
 import { errText, fileName, HARNESS_TITLE, pa, unwrap } from '../lib/pa'
 import type {
-  ConflictResolution, Detection, HarnessChannelStatus, HarnessHistory, HarnessId, HarnessProfile, KeyMode, KeyringStatus,
+  ConflictResolution, Detection, HarnessChannelStatus, HarnessHistory, HarnessId, ProviderInput, HarnessTestResult, KeyringStatus,
   Plan, RollbackPreview, RollbackTarget,
 } from '../lib/pa-types'
 import { DiffTable } from './diff-table'
@@ -47,17 +47,24 @@ type Pending =
   | { kind: 'rollback'; label: string; preview: RollbackPreview }
   | null
 
-export function HarnessCard({ harness, serverUrl, tokens, models }: { harness: HarnessId; serverUrl: string | null; tokens: TokenOption[]; models: string[] }) {
+export function HarnessCard({ harness, serverUrl, tokens, models: initialModels }: { harness: HarnessId; serverUrl: string | null; tokens: TokenOption[]; models: string[] }) {
   const { t } = useTranslation()
+  const [providerModels, setProviderModels] = useState<string[] | null>(null)
+  const models = providerModels ?? initialModels
   const meta = META[harness]
   const isCodex = harness === 'codex'
   const title = HARNESS_TITLE[harness]
   const [det, setDet] = useState<Detection | null>(null)
-  const [kr, setKr] = useState<KeyringStatus | null>(null)
+  const [, setKr] = useState<KeyringStatus | null>(null)
   const [tokenId, setTokenId] = useState<number | null>(null)
-  const [main, setMain] = useState('')
-  const [small, setSmall] = useState('')
-  const [mode, setMode] = useState<KeyMode>('command')
+  const [main, setMain] = useState(harness === 'claude' ? 'claude-main-placeholder' : '')
+  const [small, setSmall] = useState(harness === 'claude' ? 'claude-small-placeholder' : '')
+  const [profileId, setProfileId] = useState<string | undefined>()
+  const [paid, setPaid] = useState<HarnessTestResult | null>(null)
+  const [unknownOk, setUnknownOk] = useState(false)
+  const [opus, setOpus] = useState('')
+  const [sonnet, setSonnet] = useState('')
+  const [custom, setCustom] = useState('')
   const [cxDefault, setCxDefault] = useState(false)
   const [plan, setPlan] = useState<Plan | null>(null)
   const [acks, setAcks] = useState<Record<string, ConflictResolution>>({})
@@ -80,36 +87,39 @@ export function HarnessCard({ harness, serverUrl, tokens, models }: { harness: H
     setDet(d.harnesses.find((h) => h.id === harness) ?? null)
     const k = await unwrap(pa().harness.keyringStatus({ profileId: PROFILE }))
     setKr(k)
-    if (!k.available) setMode('env')
-    const p = (await unwrap(pa().harness.listProfiles())).profiles.find((x) => x.id === PROFILE)
+    const p = (await unwrap(pa().harness.listProfiles())).profiles[0]
     if (p) {
-      setTokenId(p.keyId)
+      setTokenId(p.serverUrl === serverUrl ? p.keyId : null)
+      if (p.serverUrl !== serverUrl) setMsg(t('Server changed; select a token again'))
       setMain(isCodex ? (p.models.codex ?? p.models.main) : p.models.main)
       setSmall(p.models.small ?? '')
-      setMode(p.keyMode === 'plaintext' ? 'command' : p.keyMode)
+      setOpus(p.models.opus ?? ''); setSonnet(p.models.sonnet ?? ''); setCustom(p.models.custom ?? '')
+      setProfileId(p.id)
+      const available = await unwrap(pa().harness.models({ profileId: p.id })).catch(() => null)
+      if (available) setProviderModels(available.models)
       setCxDefault(p.codex?.setDefault === true)
     }
     setHist(await unwrap(pa().harness.history({ id: harness })).catch(() => null))
-  }, [harness, isCodex])
+  }, [harness, isCodex, serverUrl, t])
 
   useEffect(() => { void run(loadData) }, [run, loadData])
   useEffect(() => { if (!main && models[0]) setMain(models[0]) }, [models, main])
-  useEffect(() => { if (tokenId === null && tokens[0]) setTokenId(tokens[0].id) }, [tokens, tokenId])
 
   const doPlan = () => run(async () => {
     if (tokenId === null || !serverUrl) { setMsg(t('Select an API key first (create one on the API Keys page).')); return }
-    const prev = (await unwrap(pa().harness.listProfiles())).profiles.find((x) => x.id === PROFILE)
+    const prev = (await unwrap(pa().harness.listProfiles())).profiles[0]
     // One shared profile: keep the other harnesses' options, replace only what this card edits.
-    const profile: HarnessProfile = {
-      ...prev, id: PROFILE, serverUrl, keyId: tokenId, keyMode: mode,
+    const profile: ProviderInput = {
+      ...(prev ? { id: prev.id } : {}), label: prev?.label ?? 'Swift provider', keyId: tokenId,
       models: isCodex
         ? { ...prev?.models, main: prev?.models.main ?? main, codex: main }
-        : { ...prev?.models, main, ...(small ? { small } : { small: undefined }) },
+        : { ...prev?.models, main, ...(small ? { small } : {}), ...(opus ? { opus } : {}), ...(sonnet ? { sonnet } : {}), ...(custom ? { custom } : {}) },
     }
     if (isCodex) profile.codex = { ...prev?.codex, setDefault: cxDefault }
-    await unwrap(pa().harness.upsertProfile(profile))
+    const saved = await unwrap(pa().harness.upsertProfile(profile))
+    setProfileId(saved.id)
     setAcks({}); setRb(null)
-    setPlan(await unwrap(pa().harness.plan({ id: harness, profileId: PROFILE })))
+    setPlan(await unwrap(pa().harness.plan({ id: harness, profileId: saved.id })))
   })
 
   const doApply = () => run(async () => {
@@ -120,6 +130,10 @@ export function HarnessCard({ harness, serverUrl, tokens, models }: { harness: H
     }))
     setPlan(null)
     await loadData()
+    if (profileId) {
+      await unwrap(pa().harness.test({ id: harness, profileId, level: 'L0' }))
+      await unwrap(pa().harness.test({ id: harness, profileId, level: 'L1' }))
+    }
     setNote(r.written.length ? `${t('Written')}: ${r.written.map(fileName).join(', ')}` : t('Nothing to write'))
   })
 
@@ -136,7 +150,7 @@ export function HarnessCard({ harness, serverUrl, tokens, models }: { harness: H
     setNote(`${label}: ${r.written.map(fileName).join(', ') || t('no changes')}`)
   })
 
-  const probe = () => run(async () => setChannel(await unwrap(pa().harness.probeChannel({ profileId: PROFILE }))))
+  const probe = () => run(async () => setChannel(await unwrap(pa().harness.probeChannel({ profileId: profileId ?? PROFILE }))))
   const unresolved = plan?.conflicts.some((c) => !acks[c.id] || acks[c.id] === 'cancel') ?? false
   const edited = pending?.kind === 'rollback' ? (pending.preview.externalEdits ?? []) : []
 
@@ -152,7 +166,7 @@ export function HarnessCard({ harness, serverUrl, tokens, models }: { harness: H
         </CardTitle>
         <CardDescription>
           {t('Config dir')} <code className='text-xs'>{det?.configDir ?? '…'}</code>
-          {' · '}{t('Keychain')}: {!kr && '…'}{kr?.available && kr.backend}{kr && !kr.available && t('unavailable (env mode)')}
+          {' · '}{t('Private plaintext key file')}
         </CardDescription>
         <CardAction>
           <Button variant='ghost' size='icon-sm' aria-label={t('Refresh')} disabled={busy} onClick={() => void run(loadData)}>
@@ -162,9 +176,6 @@ export function HarnessCard({ harness, serverUrl, tokens, models }: { harness: H
       </CardHeader>
       <CardContent className='space-y-4'>
         {det && !det.installed && <p className='text-muted-foreground text-sm'>{t('{{bin}} not detected: the config can still be written and will be used once installed.', { bin: meta.bin })}</p>}
-        {kr && !kr.available && (
-          <Alert><AlertDescription>{t('System keychain unavailable: export PA_API_KEY (the selected key) in your shell before starting {{bin}}.', { bin: meta.bin })}</AlertDescription></Alert>
-        )}
         {det?.notes.map((n) => <p key={n} className='text-muted-foreground text-xs'>{n}</p>)}
         {isCodex && (
           <div role='status' className='flex flex-wrap items-center gap-2 text-sm'>
@@ -178,7 +189,7 @@ export function HarnessCard({ harness, serverUrl, tokens, models }: { harness: H
           <div className='space-y-1.5'>
             <Label htmlFor={`${harness}-token`}>{t('API key')}</Label>
             <NativeSelect id={`${harness}-token`} aria-label={t('API key')} className='w-full' value={tokenId ?? ''} onChange={(e) => setTokenId(e.target.value ? Number(e.target.value) : null)}>
-              {!tokens.length && <NativeSelectOption value=''>{t('No API keys')}</NativeSelectOption>}
+              <NativeSelectOption value=''>{t(tokens.length ? 'Select an API key' : 'No API keys')}</NativeSelectOption>
               {tokens.map((k) => <NativeSelectOption key={k.id} value={k.id}>{k.name} ({k.maskedKey})</NativeSelectOption>)}
             </NativeSelect>
           </div>
@@ -187,7 +198,7 @@ export function HarnessCard({ harness, serverUrl, tokens, models }: { harness: H
             {models.length > 0 ? (
               <NativeSelect id={`${harness}-main`} aria-label={t('Main model')} className='w-full' value={main} onChange={(e) => setMain(e.target.value)}>
                 {models.map((m) => <NativeSelectOption key={m} value={m}>{m}</NativeSelectOption>)}
-                {main && !models.includes(main) && <NativeSelectOption value={main}>{main}</NativeSelectOption>}
+                {main && !models.includes(main) && <NativeSelectOption value={main}>{main.includes('placeholder') ? t('Pending — choose model') : main}</NativeSelectOption>}
               </NativeSelect>
             ) : (
               // No model listed for this account (e.g. no channel yet): allow typing the model name.
@@ -198,19 +209,19 @@ export function HarnessCard({ harness, serverUrl, tokens, models }: { harness: H
             <div className='space-y-1.5'>
               <Label htmlFor={`${harness}-small`}>{t(meta.small)}</Label>
               <NativeSelect id={`${harness}-small`} aria-label={t('Secondary model')} className='w-full' value={small} onChange={(e) => setSmall(e.target.value)}>
+                {small.includes('placeholder') && <NativeSelectOption value={small}>{t('Pending — choose model')}</NativeSelectOption>}
                 <NativeSelectOption value=''>{t('(none)')}</NativeSelectOption>
                 {models.map((m) => <NativeSelectOption key={m} value={m}>{m}</NativeSelectOption>)}
               </NativeSelect>
             </div>
           )}
-          <div className='space-y-1.5'>
-            <Label htmlFor={`${harness}-mode`}>{t('Key source')}</Label>
-            <NativeSelect id={`${harness}-mode`} aria-label={t('Key source')} className='w-full' value={mode} onChange={(e) => setMode(e.target.value as KeyMode)}>
-              <NativeSelectOption value='command' disabled={kr?.available === false}>{t('Keychain (pa-key)')}</NativeSelectOption>
-              <NativeSelectOption value='env'>{t('Environment variable PA_API_KEY')}</NativeSelectOption>
-            </NativeSelect>
-          </div>
+
         </div>
+        {harness === 'claude' && <div className='grid gap-3 sm:grid-cols-3'>
+          <Label>Opus<Input aria-label='Opus model' value={opus} onChange={(e) => setOpus(e.target.value)} /></Label>
+          <Label>Sonnet<Input aria-label='Sonnet model' value={sonnet} onChange={(e) => setSonnet(e.target.value)} /></Label>
+          <Label>{t('Custom model option')}<Input aria-label={t('Custom model option')} value={custom} onChange={(e) => setCustom(e.target.value)} /></Label>
+        </div>}
         {isCodex && (
           <Label className='text-sm font-normal'>
             <Checkbox aria-label={t('Set as Codex default')} checked={cxDefault} onCheckedChange={(v) => setCxDefault(v === true)} />
@@ -218,9 +229,14 @@ export function HarnessCard({ harness, serverUrl, tokens, models }: { harness: H
           </Label>
         )}
         <div className='flex gap-2'>
+          <Button variant='outline' disabled={busy || !profileId} onClick={() => void run(async () => { const result = await unwrap(pa().harness.test({ id: harness, profileId: profileId ?? '', level: 'L1' })); setNote(result.state) })}>{t('Test connection (free)')}</Button>
+          <Button variant='outline' disabled={busy || !profileId} onClick={() => void run(async () => { setUnknownOk(false); const quote = await unwrap(pa().harness.test({ id: harness, profileId: profileId ?? '', level: 'L2' })); if (quote.state === 'confirmation-required') setPaid(quote); else setNote(quote.state) })}>{t('Run paid test')}</Button>
           <Button disabled={!main || busy} onClick={() => void doPlan()}>{t('Preview changes')}</Button>
         </div>
 
+        <ConfirmDialog open={!!paid} onOpenChange={(v) => { if (!v) setPaid(null) }} title={t('Run paid test')} desc={`${paid?.requestCount ?? 0} requests · ${paid?.model ?? ''} · ${paid?.tokenCap ?? 0} tokens maximum · ${paid?.estimatedCost == null ? t('Cost unknown') : `USD ${paid.estimatedCost.toFixed(6)} (estimate)`}${paid?.priceTableDate ? ` · ${paid.priceTableDate} (may be outdated)` : ''}`} confirmText={t('Run paid test')} disabled={busy || (paid?.estimatedCost == null && !unknownOk)} handleConfirm={() => { const q = paid; setPaid(null); if (q && profileId) void run(async () => { const r = await unwrap(pa().harness.test({ id: harness, profileId, level: 'L2', confirm: true, quoteId: q.quoteId, confirmUnknownCost: unknownOk })); setNote(`${r.state} · ${r.requestCount} requests`) }) }}>
+          {paid?.estimatedCost == null && <Label><Checkbox checked={unknownOk} onCheckedChange={(v) => setUnknownOk(v === true)} />{t('I accept unknown cost within the displayed token cap')}</Label>}
+        </ConfirmDialog>
         {plan && (
           <div className='space-y-3 rounded-md border p-3' role='region' aria-label={t('Change preview')}>
             <DiffTable changes={plan.changes} label={t('Change preview')} />

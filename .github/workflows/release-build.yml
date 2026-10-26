@@ -34,6 +34,8 @@ jobs:
       - name: Pack NSIS x64 (OFFICIAL, unsigned, publish never; guard runs first)
         working-directory: apps/desktop
         run: bun run pack:win
+      - name: Verify final installer asar policy
+        run: node scripts/check-asar.mjs
       - name: Bundle scan
         run: node scripts/scan-bundle.mjs
       - name: Checksums
@@ -64,22 +66,6 @@ jobs:
           node-version: 22.19.0
       - run: bun install --frozen-lockfile
       - run: bun run install:web
-      - name: Fetch x64 keyring binary (host is arm64; same version as @napi-rs/keyring, integrity-checked)
-        run: |
-          v=$(ls node_modules/.bun | sed -n 's/^@napi-rs+keyring@\([0-9.]*\)$/\1/p' | head -1)
-          test -n "$v"
-          pkg="@napi-rs/keyring-darwin-x64@$v"
-          lock=$(grep -o "\"$pkg\", \"\", {[^}]*}, \"sha512-[A-Za-z0-9+/=]*\"" bun.lock | grep -o 'sha512-[A-Za-z0-9+/=]*')
-          reg=$(npm view "$pkg" dist.integrity)
-          echo "lockfile $lock"; echo "registry $reg"
-          test -n "$lock" && test "$lock" = "$reg"
-          d="$RUNNER_TEMP/prebuilt"; mkdir -p "$d/dl" "$d/node_modules/@napi-rs/keyring-darwin-x64"
-          tgz=$(cd "$d/dl" && npm pack "$pkg" --silent --ignore-scripts)
-          got="sha512-$(openssl dgst -sha512 -binary "$d/dl/$tgz" | base64 | tr -d '\n')"
-          echo "tarball  $got"
-          test "$got" = "$lock"
-          tar -xzf "$d/dl/$tgz" -C "$d/node_modules/@napi-rs/keyring-darwin-x64" --strip-components=1
-          echo "PA_NATIVE_PREBUILT_DIR=$d" >> "$GITHUB_ENV"
       - name: Pack dmg arm64 + x64 (OFFICIAL, ad-hoc signed, publish never; guard runs first)
         working-directory: apps/desktop
         run: bun run pack:mac
@@ -93,6 +79,8 @@ jobs:
             grep -q 'Signature=adhoc' sig.txt
           done
           rm -f sig.txt
+      - name: Verify final installer asar policy
+        run: node scripts/check-asar.mjs
       - name: Bundle scan
         run: node scripts/scan-bundle.mjs
       - name: Checksums

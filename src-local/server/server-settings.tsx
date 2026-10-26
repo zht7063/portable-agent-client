@@ -28,7 +28,7 @@ const VERDICT: Record<ServerVerdict, { label: string; variant: 'default' | 'seco
   unreachable: { label: 'Unreachable', variant: 'destructive' },
 }
 
-export function ServerSettingsCard({ onChanged }: { onChanged?: () => void }) {
+export function ServerSettingsCard({ onChanged: _onChanged }: { onChanged?: () => void }) {
   const { t } = useTranslation()
   const [st, setSt] = useState<ServerStatusRes | null>(null)
   const [cfg, setCfg] = useState<ClientConfig | null>(null)
@@ -51,12 +51,6 @@ export function ServerSettingsCard({ onChanged }: { onChanged?: () => void }) {
   }
   useEffect(() => { load().catch((e: unknown) => setErr(errText(e))) }, [load])
 
-  const saveUrl = () => run(async () => {
-    const before = cfg?.serverUrl ?? null
-    const c = await unwrap(pa().config.set({ serverUrl: url.trim() }))
-    await load(true)
-    if (c.serverUrl !== before) { setNote(t('Server changed. The previous session was cleared.')); onChanged?.() }
-  })
   const saveClear = () => run(async () => {
     const n = Number(clear)
     await unwrap(pa().config.set({ clipboardClearSeconds: n }))
@@ -107,10 +101,9 @@ export function ServerSettingsCard({ onChanged }: { onChanged?: () => void }) {
         <div className='space-y-1.5'>
           <Label htmlFor='pa-server-url'>{t('Server URL')}</Label>
           <div className='flex gap-2'>
-            <Input id='pa-server-url' placeholder='https://new-api.example.com' value={url} onChange={(e) => setUrl(e.target.value)} spellCheck={false} />
-            <Button disabled={busy || !url.trim() || url.trim() === (cfg?.serverUrl ?? '')} onClick={() => void saveUrl()}>{t('Change server')}</Button>
+            <Input id='pa-server-url' placeholder='https://new-api.example.com' value={url} readOnly spellCheck={false} />
           </div>
-          <p className='text-muted-foreground text-xs'>{t('You will be asked to confirm in a system dialog. Changing the server signs you out.')}</p>
+          <p className='text-muted-foreground text-xs'>{t('Server origin is fixed in this build.')}</p>
         </div>
 
         <div className='space-y-1.5'>

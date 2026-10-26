@@ -34,9 +34,11 @@ describe('CI workflow policy', () => {
       expect(code).not.toContain('test:live');
     });
     it(`${f}: asserts that --official refuses (placeholder fixture, wrong PA_BUILD_COMMIT, dirty tree)`, () => {
-      expect(code).toContain("refuse 'unreplaced placeholder' env PA_LOCAL_BUILD=1 node scripts/check-placeholders.cjs --official");
-      expect(code).toContain("refuse 'does not match git HEAD' env PA_BUILD_COMMIT=0000000000000000000000000000000000000000 node scripts/check-placeholders.cjs --official");
-      expect(code).toContain("refuse 'working tree is dirty' node scripts/check-placeholders.cjs --official");
+      expect(code).toContain('bash scripts/test-official-guard.sh');
+      const script = readFileSync(resolve(WF, '../../scripts/test-official-guard.sh'), 'utf8');
+      for (const reason of ['unreplaced placeholder', 'does not match git HEAD', 'working tree is dirty', 'D-17 production HTTPS origin is still a placeholder', 'cannot use build/server-origin.json']) expect(script).toContain(`refuse '${reason}' node scripts/check-placeholders.cjs --official`);
+      expect(script).toContain('cp "$ROOT/apps/desktop/build/server-origin.json"');
+
     });
   }
 

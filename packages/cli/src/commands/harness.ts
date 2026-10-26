@@ -1,15 +1,15 @@
+import { FileKeyVault } from '../stores/file.js';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { HARNESS_IDS, isHarnessId, PRODUCT, type HarnessId } from '@pac/core';
 import { readFile } from 'node:fs/promises';
 import { ClaudeAdapter, CodexAdapter, ControlledFs, createHarness, nodeExec, nodeFsOps, PiAdapter, StateStore, type ExecFn } from '@pac/harness';
 import type { HarnessProfile, RollbackTarget } from '@pac/core';
-import { accountFor, createKeyring, keyringStatus, type Keyring } from '@pac/keychain';
+import { type Keyring } from '@pac/keychain';
 
 export const HARNESS_HELP = `pa harness detect | plan <id> --profile <pid> | apply <id> --profile <pid> --yes
           | rollback <id> [--first-write | --detach | --snapshot <sid>] [--overwrite-external] --yes | status | env-scan [--no-login-shell]
           | key-check <profileId> [<harness>] | profile list | profile set <profile.json>
-  --helper <abs> pa-key path written into configs (default $PA_KEY_HELPER or <dataDir>/bin/pa-key)
   --home <dir>   use <dir> as HOME (tests: point at a temp dir); data dir defaults to <home>/.config/<cliConfigDir>/harness`;
 
 export interface HarnessCliDeps {
@@ -40,28 +40,21 @@ export async function runHarness(argv: string[], d: HarnessCliDeps): Promise<num
   const dataDir = resolve(env.PA_CLI_DIR ?? join(home, '.config', PRODUCT.cliConfigDir));
   const fs = new ControlledFs({ ops: nodeFsOps, roots: [home, dataDir], dataDir });
   const state = new StateStore(fs);
-  const keyring = d.keyring ?? createKeyring({ env });
+  const vault = new FileKeyVault(join(dataDir, 'keys.json'));
   const platform = d.platform ?? process.platform;
-  const helperArg = take(args, '--helper') ?? env.PA_KEY_HELPER;
-  if (helperArg !== undefined && !isAbsolute(helperArg)) { d.err('--helper must be an absolute path'); return 1; }
-  const helperPath = helperArg ?? join(dataDir, 'bin', platform === 'win32' ? 'pa-key.cmd' : 'pa-key');
+  const helperPath = '';
   const henv = { home, env: { ...env, HOME: home }, platform };
   const exec = d.exec ?? nodeExec;
-  const common = (h: HarnessId) => ({
-    fs, state, env: henv, exec, helperPath, cwd: process.cwd(),
-    // The CLI cannot provision keys (no desktop session); command mode needs the entry to exist already.
-    beforeWrite: async (p: { id: string; keyMode: string }) => {
-      if (p.keyMode !== 'command') return;
-      const ok = (await keyring.available()).ok && (await keyring.get(accountFor(p.id, h)).catch(() => null)) !== null;
-      if (!ok) throw new Error(`No keychain entry for this profile; enable it in ${PRODUCT.productName} first or use env key mode`);
-    },
+  const common = (_h: HarnessId) => ({
+    fs, state, env: henv, exec, helperPath, owner: 'swift-cli' as const, cwd: process.cwd(),
+    getKey: async (p: HarnessProfile) => { const key = await vault.get(p.keyId); if (!key) throw new Error('No key in dev CLI FileKeyVault'); return key; },
   });
   const pi = new PiAdapter(common('pi'));
   const claude = new ClaudeAdapter(common('claude'));
   const codex = new CodexAdapter(common('codex'));
   const harness = createHarness({
     fs, state, exec, env: henv, adapters: { pi, claude, codex },
-    keyringStatus: async (pid) => keyringStatus(keyring, pid !== undefined ? [pid] : Object.keys((await state.load()).profiles)),
+
   });
   const sub = args.shift();
   const id = (): HarnessId => { const v = args.shift(); if (!isHarnessId(v)) throw new Error(`harness must be one of ${HARNESS_IDS.join('|')}`); return v; };
@@ -96,17 +89,12 @@ export async function runHarness(argv: string[], d: HarnessCliDeps): Promise<num
     case 'key-check': {
       const pid = args.shift() ?? '';
       const hs = args.length ? [id()] : [...HARNESS_IDS];
-      const avail = await keyring.available();
-      if (!avail.ok) { d.out({ available: false, backend: keyring.backend, fallback: 'env', reason: avail.reason }); return 1; }
-      const results = [];
-      for (const h of hs) {
-        let found = false;
-        try { found = (await keyring.get(accountFor(pid, h))) !== null; } catch { found = false; }
-        results.push({ harness: h, found });
-      }
-      d.out({ available: true, backend: keyring.backend, profileId: pid, results });
-      return results.every((r) => r.found) ? 0 : 1;
+      const p = (await state.load()).profiles[pid];
+      const found = !!p && await vault.has(p.keyId);
+      d.out({ available: true, backend: 'file', profileId: pid, results: hs.map((h) => ({ harness: h, found })) });
+      return found ? 0 : 1;
     }
+
     case 'profile': {
       const op = args.shift();
       if (op === 'list') { d.out({ profiles: await harness.listProfiles() }); return 0; }
@@ -114,7 +102,7 @@ export async function runHarness(argv: string[], d: HarnessCliDeps): Promise<num
         const f = args.shift();
         if (!f) { d.err('profile set needs a JSON file'); return 1; }
         // Profiles hold a keyId, never a key; validateProfile drops unknown fields.
-        d.out(await harness.upsertProfile(JSON.parse(await readFile(f, 'utf8')) as HarnessProfile));
+        d.out(await harness.upsertProfile({ ...JSON.parse(await readFile(f, 'utf8')) as HarnessProfile, providerId: 'swift-cli' }));
         return 0;
       }
       d.err(HARNESS_HELP); return 1;

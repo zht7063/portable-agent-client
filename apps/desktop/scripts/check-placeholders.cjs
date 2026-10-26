@@ -105,6 +105,18 @@ function buildCommit(env = process.env, gitImpl) {
   return head;
 }
 
+/** Read relative to this script, report an actionable error rather than MODULE_NOT_FOUND. */
+function assertProductionOrigin() {
+  let origin;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    origin = JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, '../build/server-origin.json'), 'utf8')).origin;
+    const url = new URL(origin);
+    if (url.protocol !== 'https:' || url.origin !== origin) throw new Error('expected a bare HTTPS origin');
+    if (/\.invalid$/.test(url.hostname)) throw new Error('D-17 production HTTPS origin is still a placeholder');
+  } catch (e) { throw new Error(`cannot use build/server-origin.json: ${e.message}`); }
+}
+
 module.exports = { SOURCE_HOSTS, PLACEHOLDER_RE, sourceUrlProblem, sourceOfferProblem, placeholderProblems, unreplacedPlaceholders, assertNoPlaceholders, assertOfficialRelease, buildCommit };
 
 // CLI: `node scripts/check-placeholders.cjs [--official]` — the pack scripts run this first so they refuse before building.
@@ -113,7 +125,7 @@ if (require.main === module) {
   const product = require('../../../packages/core/src/product.config.json');
   const fail = (e) => { console.error(`refusing to package: ${e.message}`); process.exit(1); };
   if (process.argv.includes('--official')) {
-    let commit; try { assertNoPlaceholders(product, {}); commit = buildCommit(); } catch (e) { fail(e); }
+    let commit; try { assertNoPlaceholders(product, {}); commit = buildCommit(); assertProductionOrigin(); } catch (e) { fail(e); }
     assertOfficialRelease(product, { commit }).then(() => console.log(`official release check passed (${commit})`), fail);
   } else {
     try { const w = assertNoPlaceholders(product, process.env); if (w) console.warn(w); } catch (e) { fail(e); }

@@ -1,3 +1,7 @@
+import { newProviderId, validateProfile } from '@pac/harness';
+import type { HarnessHost } from '../harness-host';
+import { SERVER_ORIGIN } from '../server-origin';
+import type { ProviderInput } from '@pac/core';
 import { isShopRequest, type ShopAction } from '../shop-policy';
 import {
   CONFIRM_REQUIRED_CHANNELS,
@@ -7,7 +11,6 @@ import {
   findCredentialLeaks,
   ok,
   PaException,
-  normalizeServerUrl,
   toPaError,
   type ClientConfig,
   type ConfigSetReq,
@@ -37,16 +40,7 @@ export interface HandlerDeps {
   getConfig(): ClientConfig;
   setConfig(patch: ConfigSetReq): Promise<ClientConfig>;
   harness: Harness;
-  /**
-   * Aegis #3: native (main-process) confirmation when a harness profile points at a server other than the client's
-   * own. Absent = refuse. Never driven by the renderer.
-   */
-  confirmForeignServer?(profileOrigin: string, clientOrigin: string): Promise<boolean>;
-  /**
-   * Aegis (M3 review #1): the server URL decides where the main-only session, passwords and keys go, so a renderer
-   * request to change it needs a native main-process confirmation (full URL shown, Cancel default). Absent = refuse.
-   */
-  confirmServerChange?(nextUrl: string, currentUrl: string | null): Promise<boolean>;
+  harnessHost?: HarnessHost;
   /** M4: token -> keychain / clipboard (KeyService). Absent = keys:* unavailable. */
   keys?: KeyServiceLike;
   /**
@@ -76,9 +70,54 @@ export interface KeyServiceLike {
 }
 
 /** Pure (no electron import) so it is unit-testable. */
-export function createHandlers({ getCore, getConfig, setConfig, harness, confirmForeignServer, confirmServerChange, keys, confirmRevealKey, showKey, serverStatus, about, confirmDisableClipboardClear, shop }: HandlerDeps): HandlerMap {
+export function createHandlers({ getCore, getConfig, setConfig, harness, harnessHost, keys, confirmRevealKey, showKey, serverStatus, about, confirmDisableClipboardClear, shop }: HandlerDeps): HandlerMap {
   const k = () => { if (!keys) throw new PaException({ code: 'VALIDATION', message: 'Key storage is not available' }); return keys; };
+  const profile = async (id: string) => {
+    if (!/^[a-z0-9-]{1,32}$/.test(id)) throw new PaException({ code: 'VALIDATION', message: 'Invalid provider id' });
+    const p = (await harness.listProfiles()).find((p) => p.id === id);
+    if (!p) throw new PaException({ code: 'VALIDATION', message: 'Unknown provider' });
+    return p;
+  };
+  async function saveProvider(r: ProviderInput) {
+    strict(r, ['id', 'label', 'keyId', 'models', 'codex', 'claude']);
+    strict(r.models, ['main', 'small', 'opus', 'sonnet', 'haiku', 'codex', 'custom']);
+    if (r.codex) strict(r.codex, ['setDefault']);
+    if (r.claude) strict(r.claude, ['setModel']);
+    if (typeof r.label !== 'string' || !r.label.trim() || r.label.length > 100) throw new PaException({ code: 'VALIDATION', message: 'Invalid provider label' });
+    const id = r.id ? (await profile(r.id)).id : newProviderId();
+    if (!harnessHost || !keys) throw new PaException({ code: 'VALIDATION', message: 'Provider storage unavailable' });
+    const p = { id, label: r.label, serverUrl: SERVER_ORIGIN, keyId: r.keyId, models: r.models, keyMode: 'plaintext' as const, providerId: 'swift', codex: r.codex, claude: r.claude };
+    validateProfile(p);
+    const key = await keys.fetchKey(r.keyId);
+    // Validate for free before storing a credential.
+    await harnessHost.connectivity.models(p, key);
+    await harnessHost.keyFile.set(id, key, `token:${r.keyId}`);
+    const saved = await harness.upsertProfile(p);
+    await harnessHost.providers.activate(id);
+    return saved;
+  }
   return {
+    'harness:provider:list': async () => ({ profiles: await harness.listProfiles() }),
+    'harness:provider:upsert': saveProvider,
+    'harness:provider:delete': async (r) => {
+      const p = await profile(r.profileId);
+      if (r.confirm !== true || !harnessHost) throw new PaException({ code: 'VALIDATION', message: 'Confirmation required' });
+      const st = await harnessHost.state.load();
+      for (const id of ['codex', 'claude'] as const) if (Object.values(st.files).some((f) => f.harness === id && f.profileId === p.id)) await harness.rollback(id, 'detach');
+      await harnessHost.keyFile.delete(p.id);
+      await harnessHost.state.update((s) => { delete s.profiles[p.id]; if (s.activeProvider === p.id) delete s.activeProvider; });
+      await harnessHost.providers.sync();
+      return { removed: true };
+    },
+    'harness:provider:activate': async (r) => { await profile(r.profileId); if (!harnessHost) throw new Error('Provider store unavailable'); return harnessHost.providers.activate(r.profileId); },
+    'harness:models': async (r) => {
+      if (!harnessHost) throw new PaException({ code: 'VALIDATION', message: 'Tests unavailable' });
+      return { models: await harnessHost.connectivity.models(await profile(r.profileId)) };
+    },
+    'harness:test': async (r) => {
+      if (!harnessHost || !['L0', 'L1', 'L2', 'L3'].includes(r.level)) throw new PaException({ code: 'VALIDATION', message: 'Invalid test' });
+      return harnessHost.connectivity.test(await profile(r.profileId), r);
+    },
     'shop:control': async (r) => {
       if (!isShopRequest(r)) throw new PaException({ code: 'VALIDATION', message: 'Invalid shop request' });
       if (!shop) throw new PaException({ code: 'VALIDATION', message: 'Shop unavailable' });
@@ -86,19 +125,7 @@ export function createHandlers({ getCore, getConfig, setConfig, harness, confirm
     },
     'config:get': async () => getConfig(),
     'config:set': async (r) => {
-      if (r && typeof r === 'object' && 'serverUrl' in r) {
-        const next = r.serverUrl;
-        let nextUrl: string;
-        // Aegis N3: full validation (http/https only, no userinfo `user:pass@`, no query/fragment) BEFORE any dialog,
-        // so a credential-bearing or deceptive URL is never even offered for confirmation.
-        try { nextUrl = new URL(normalizeServerUrl(String(next))).href; }
-        catch (e) { throw e instanceof PaException ? e : new PaException({ code: 'VALIDATION', message: 'Invalid server URL' }); }
-        const cur = getConfig().serverUrl;
-        const same = (() => { try { return !!cur && new URL(cur).href === nextUrl; } catch { return false; } })();
-        if (!same && !(await confirmServerChange?.(nextUrl, cur))) {
-          throw new PaException({ code: 'CANCELLED', message: 'Server change not confirmed; not saved' });
-        }
-      }
+      strict(r, ['clipboardClearSeconds']);
       if (r && typeof r === 'object' && 'clipboardClearSeconds' in r && r.clipboardClearSeconds === 0 && getConfig().clipboardClearSeconds !== 0) {
         if (!(await confirmDisableClipboardClear?.())) {
           throw new PaException({ code: 'CANCELLED', message: 'Disabling clipboard auto-clear not confirmed; not saved' });
@@ -109,35 +136,16 @@ export function createHandlers({ getCore, getConfig, setConfig, harness, confirm
     'harness:detect': async () => ({ harnesses: await harness.detect(), registered: harness.registered() }),
     'harness:plan': (r) => harness.plan(r.id, r.profileId),
     'harness:apply': async (r) => {
-      // Aegis: compare against the client's *current* server at apply time (the user may have switched servers since
-      // the profile was saved/confirmed). Foreign origin -> native confirmation (Cancel default); no dialog -> refuse.
-      const origin = (u: unknown) => { try { return typeof u === 'string' ? new URL(u).origin : ''; } catch { return ''; } };
-      const p = (await harness.listProfiles()).find((x) => x.id === r?.plan?.profileId);
-      if (p) {
-        const want = origin(p.serverUrl); const client = origin(getConfig().serverUrl ?? '');
-        if (want !== client && !(await confirmForeignServer?.(want, client))) {
-          throw new PaException({ code: 'CANCELLED', message: 'Profile server differs from the client server; not applied' });
-        }
-      }
       return harness.apply(r.id, r.plan, r.acknowledge ?? []);
     },
-    'harness:rollback': (r) => harness.rollback(r.id, r.target, { overwriteExternal: r.overwriteExternal === true }),
+    'harness:rollback': async (r) => {
+      return harness.rollback(r.id, r.target, { overwriteExternal: r.overwriteExternal === true });
+    },
     'harness:history': (r) => harness.history(r.id),
     'harness:rollback:preview': (r) => harness.previewRollback(r.id, r.target),
-    'harness:keyring:status': (r) => harness.keyringStatus(r?.profileId),
+    'harness:keyring:status': async (r) => harnessHost ? harnessHost.keyringStatus(r?.profileId) : harness.keyringStatus(r?.profileId),
     'harness:profile:list': async () => ({ profiles: await harness.listProfiles() }),
-    'harness:profile:upsert': async (r) => {
-      const origin = (u: unknown) => { try { return typeof u === 'string' ? new URL(u).origin : ''; } catch { return ''; } };
-      const want = origin(r?.serverUrl); const client = origin(getConfig().serverUrl ?? '');
-      if (want && want !== client) {
-        // Already-confirmed foreign origin for this profile does not prompt again.
-        const prev = (await harness.listProfiles()).find((x) => x.id === r.id);
-        if (origin(prev?.serverUrl) !== want && !(await confirmForeignServer?.(want, client))) {
-          throw new PaException({ code: 'CANCELLED', message: 'Profile server differs from the client server; not saved' });
-        }
-      }
-      return harness.upsertProfile(r);
-    },
+    'harness:profile:upsert': saveProvider,
     'harness:channel:probe': async (r) => {
       const checkedAt = new Date().toISOString();
       const p = (await harness.listProfiles()).find((x) => x.id === r?.profileId);
@@ -189,6 +197,9 @@ export async function dispatch<C extends InvokeChannel>(handlers: HandlerMap, ch
     return err('VALIDATION', 'This action requires explicit confirmation');
   }
   try {
+    strict(req ?? {}, IPC_FIELDS[channel]);
+    const addressFields = (value: unknown): boolean => value !== null && typeof value === 'object' && Object.entries(value).some(([name, child]) => /^(serverUrl|host|origin|providerId)$/i.test(name) || addressFields(child));
+    if (addressFields(req)) return err('VALIDATION', 'Address fields are not accepted');
     const data = await (handlers[channel] as Handler<C>)(req);
     if (!exempt.has(channel) && findCredentialLeaks(data).length) return err('SERVER', 'Blocked: response contained credential material');
     return ok(data);
@@ -197,3 +208,23 @@ export async function dispatch<C extends InvokeChannel>(handlers: HandlerMap, ch
   }
 }
 
+
+export const IPC_FIELDS: Record<InvokeChannel, string[]> = {
+  'config:get': [], 'config:set': ['clipboardClearSeconds'],
+  'harness:detect': [], 'harness:plan': ['id', 'profileId'],
+  'harness:apply': ['id', 'plan', 'acknowledge', 'confirm'],
+  'harness:rollback': ['id', 'target', 'confirm', 'overwriteExternal'],
+  'harness:history': ['id'], 'harness:rollback:preview': ['id', 'target'],
+  'harness:keyring:status': ['profileId'], 'harness:profile:list': [],
+  'harness:profile:upsert': ['id', 'label', 'keyId', 'models', 'codex', 'claude'],
+  'harness:provider:list': [], 'harness:provider:upsert': ['id', 'label', 'keyId', 'models', 'codex', 'claude'],
+  'harness:provider:delete': ['profileId', 'confirm'], 'harness:provider:activate': ['profileId'],
+  'harness:test': ['profileId', 'id', 'level', 'confirm', 'quoteId', 'confirmUnknownCost'], 'harness:models': ['profileId'],
+  'harness:channel:probe': ['profileId'],
+  'keys:list': [], 'keys:store': ['tokenId', 'harness', 'profileId'], 'keys:copy': ['tokenId', 'curl'], 'keys:delete': ['harness', 'profileId'], 'keys:show': ['tokenId'],
+  'server:status': ['recheck'], 'app:about': [],
+  'shop:control': ['action'],
+};
+function strict(value: unknown, allowed: string[]): void {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some((k) => !allowed.includes(k))) throw new PaException({ code: 'VALIDATION', message: 'Unexpected request field' });
+}

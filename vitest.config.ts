@@ -13,7 +13,6 @@ export default defineConfig({
       { find: /^@pac\/core$/, replacement: src('core/src/index.ts') },
       { find: /^@pac\/harness$/, replacement: src('harness/src/index.ts') },
       { find: /^@pac\/keychain$/, replacement: src('keychain/src/index.ts') },
-      { find: /^@pac\/pa-key$/, replacement: src('pa-key/src/index.ts') },
     ],
   },
   test: {

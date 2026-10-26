@@ -20,6 +20,7 @@ describe('preload surface', () => {
     expect(shape(b).sort()).toEqual([
       'app.about()',
       'config.get()', 'config.set()',
+      'harness.activateProvider()', 'harness.deleteProvider()', 'harness.models()', 'harness.providers()', 'harness.saveProvider()', 'harness.test()',
       'harness.apply()', 'harness.detect()', 'harness.history()', 'harness.keyringStatus()', 'harness.listProfiles()',
       'harness.plan()', 'harness.probeChannel()', 'harness.rollback()', 'harness.rollbackPreview()', 'harness.upsertProfile()',
       'keys.copy()', 'keys.list()', 'keys.remove()', 'keys.show()', 'keys.store()',
@@ -27,14 +28,15 @@ describe('preload surface', () => {
       'onShopHost()',
       'server.status()',
       'shop.control()',
-    ]);
+    ].sort());
   });
   it('IPC invoke channels and bridge mapping are exactly these', () => {
     expect([...INVOKE_CHANNELS].sort()).toEqual([
       'app:about', 'config:get', 'config:set', 'harness:apply', 'harness:channel:probe', 'harness:detect', 'harness:history',
+      'harness:provider:list', 'harness:provider:upsert', 'harness:provider:delete', 'harness:provider:activate', 'harness:test', 'harness:models',
       'harness:keyring:status', 'harness:plan', 'harness:profile:list', 'harness:profile:upsert', 'harness:rollback',
       'harness:rollback:preview', 'keys:copy', 'keys:delete', 'keys:list', 'keys:show', 'keys:store', 'server:status', 'shop:control',
-    ]);
+    ].sort());
     expect(Object.keys(BRIDGE_CHANNELS).length).toBe(INVOKE_CHANNELS.length);
   });
   it('preload entry only exposes the bridge under window.pa', () => {

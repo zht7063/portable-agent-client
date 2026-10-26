@@ -196,11 +196,11 @@ export class ControlledFs {
     // already verified the resolved target is inside the allowed roots.
     const real = await this.ops.realpath(p);
     const target = real && real !== p ? await this.assertAllowed(real) : p;
-    const st = await this.ops.stat(target);
-    const mode = st ? st.mode & 0o777 : FILE_MODE;
+    const mode = FILE_MODE;
     const dir = dirname(target);
     await this.ensureDir(dir, DIR_MODE);
-    const tmp = join(dir, `.${basename(target)}.pa-tmp-${randomBytes(6).toString('hex')}`);
+    const release = await this.ops.acquireLock?.(`${target}.swift.lock`);
+    const tmp = join(dir, `.${basename(target)}.swift-tmp-${randomBytes(6).toString('hex')}`);
     try {
       await this.ops.writeFile(tmp, bytes, mode);
       await this.beforeRename?.(p, tmp);
@@ -209,7 +209,7 @@ export class ControlledFs {
     } catch (e) {
       await this.ops.rm(tmp).catch(() => {});
       throw e;
-    }
+    } finally { await release?.(); }
     await this.ops.fsyncDir(dir);
     const after = await this.ops.stat(target);
     return { sha256: sha256(bytes), mtimeMs: after?.mtimeMs ?? 0, size: bytes.byteLength };

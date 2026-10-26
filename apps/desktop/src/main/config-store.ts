@@ -1,8 +1,9 @@
+import { SERVER_ORIGIN } from './server-origin';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { CLIPBOARD_CLEAR_DEFAULT, CLIPBOARD_CLEAR_MAX, PaException, isInsecureServerUrl, normalizeServerUrl, type ClientConfig, type ConfigSetReq } from '@pac/core';
+import { CLIPBOARD_CLEAR_DEFAULT, CLIPBOARD_CLEAR_MAX, PaException, isInsecureServerUrl, type ClientConfig, type ConfigSetReq } from '@pac/core';
 
-/** Persisted (non-secret) desktop config: userData/config.json. No built-in server: null until configured. */
+/** Persisted (non-secret) desktop config: userData/config.json. Origin is a runtime view of the build constant, never persisted. */
 export interface PersistedConfig { version: 2; serverUrl: string | null; clipboardClearSeconds?: number }
 
 const validClear = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= CLIPBOARD_CLEAR_MAX;
@@ -18,30 +19,33 @@ export const toClientConfig = (p: PersistedConfig): ClientConfig => ({
 });
 
 export class ConfigStore {
-  /** @param seedServerUrl optional seed (PAC_SERVER_URL, dev only); a saved config.json wins. Invalid seeds are ignored. */
+  originChanged = false;
   constructor(private readonly path: string, private readonly seedServerUrl?: string) {}
 
   defaults(): PersistedConfig {
-    let serverUrl: string | null = null;
-    try { if (this.seedServerUrl) serverUrl = normalizeServerUrl(this.seedServerUrl); } catch { /* ignore bad seed */ }
-    return { version: 2, serverUrl };
+    return { version: 2, serverUrl: this.seedServerUrl ?? SERVER_ORIGIN };
+
   }
 
   /** Loads config; missing or invalid fields fall back to defaults (file is never trusted blindly). */
   async load(): Promise<PersistedConfig> {
     const d = this.defaults();
-    let raw: { serverUrl?: unknown; clipboardClearSeconds?: unknown };
-    try { raw = JSON.parse(await readFile(this.path, 'utf8')) as typeof raw; } catch { return d; }
-    let serverUrl = d.serverUrl;
-    try { if (typeof raw?.serverUrl === 'string') serverUrl = normalizeServerUrl(raw.serverUrl); } catch { /* keep default */ }
-    return { version: 2, serverUrl, ...(validClear(raw?.clipboardClearSeconds) ? { clipboardClearSeconds: raw.clipboardClearSeconds } : {}) };
+    let raw: { lastServerOrigin?: unknown; serverUrl?: unknown; clipboardClearSeconds?: unknown };
+    try { raw = JSON.parse(await readFile(this.path, 'utf8')) as typeof raw; } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; await this.save(d); return d; }
+    // Old serverUrl is deliberately ignored and removed from disk.
+    const next: PersistedConfig = { ...d, ...(validClear(raw?.clipboardClearSeconds) ? { clipboardClearSeconds: raw.clipboardClearSeconds } : {}) };
+    const previous = raw.lastServerOrigin ?? raw.serverUrl;
+    this.originChanged = typeof previous === 'string' && previous !== d.serverUrl;
+    if ('serverUrl' in raw || raw.lastServerOrigin !== d.serverUrl) await this.save(next);
+    return next;
   }
 
   /** Validates a patch against the current config (throws PaException VALIDATION). */
   apply(cur: PersistedConfig, patch: ConfigSetReq): PersistedConfig {
+    if (!patch || Object.keys(patch).some((k) => k !== 'clipboardClearSeconds')) throw new PaException({ code: 'VALIDATION', message: 'Unknown configuration field' });
     const clear = patch?.clipboardClearSeconds !== undefined ? normalizeClipboardClear(patch.clipboardClearSeconds) : cur.clipboardClearSeconds;
     return {
-      version: 2, serverUrl: patch?.serverUrl !== undefined ? normalizeServerUrl(patch.serverUrl) : cur.serverUrl,
+      version: 2, serverUrl: this.defaults().serverUrl,
       ...(clear !== undefined ? { clipboardClearSeconds: clear } : {}),
     };
   }
@@ -50,7 +54,7 @@ export class ConfigStore {
   async save(c: PersistedConfig): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true });
     const tmp = `${this.path}.tmp`;
-    await writeFile(tmp, JSON.stringify(c, null, 2), { mode: 0o600 });
+    await writeFile(tmp, JSON.stringify({ version: 2, lastServerOrigin: c.serverUrl, clipboardClearSeconds: c.clipboardClearSeconds }, null, 2), { mode: 0o600 });
     await rename(tmp, this.path);
   }
 }

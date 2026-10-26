@@ -6,7 +6,7 @@ import { ControlledFs, createHarness, nodeFsOps, PiAdapter, StateStore, type Exe
 import type { HarnessProfile } from '@pac/core';
 
 const exec: ExecFn = async () => ({ code: null, stdout: '', stderr: '' });
-const profile: HarnessProfile = { id: 'default', serverUrl: 'http://new-api.test:3000', keyId: 7, keyMode: 'command', models: { main: 'deepseek-flash' }, pi: { setDefault: true } };
+const profile: HarnessProfile = { id: 'default', serverUrl: 'http://new-api.test:3000', keyId: 7, keyMode: 'env', models: { main: 'deepseek-flash' }, pi: { setDefault: true } };
 
 describe('apply failing midway (Aegis #2)', () => {
   it('records state for files already written, keeps history, and rollback last restores them', async () => {
