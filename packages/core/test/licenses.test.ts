@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from '../../../test/helpers/subprocess.js';
 import { fileURLToPath } from 'node:url';
 // @ts-expect-error plain .mjs script without types
 import { spdxAllowed } from '../../../scripts/check-licenses.mjs';

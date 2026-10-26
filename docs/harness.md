@@ -1,156 +1,47 @@
-# Harness infrastructure (H0–H2)
+# Harness configuration
 
-## Layers
-- `@pac/core/contract` (harness.ts) — adapter contract, DTOs (no credential fields; diff entries use `setting`).
-- `@pac/core/fs` — ControlledFs: path allowlist (symlink-escape aware), sha256+mtime+size fingerprints,
-  atomic write (same-dir temp + fsync + rename, fingerprint re-check before rename, mode preserved; new files 0600, dirs 0700),
-  backups: one-time first-write backup + rolling snapshots (N=10), stored 0700/0600 under `<dataDir>/harness/backups`.
-- `state.ts` — single source of truth `<dataDir>/harness/state.json`; stores hashes of owned values only.
-  Change classification: untracked / clean / external-unowned / conflict. Corrupt state is never overwritten.
-- `merge/json.ts` — format-preserving JSONC merge of owned paths only (comments, indentation, trailing commas kept; verified semantically).
-- `env-scan.ts` — three layers: process env, login shell (`$SHELL -ilc 'env -0'`, 3s timeout; Windows `reg query`), rc files (one level of `source`). Values compared by hash, never output.
+swift-client configures Codex CLI and Claude Code directly. Gemini is not implemented or detected. Protocol conversion remains on the server. The `pac` CLI is a private development/test tool, with its own `FileKeyVault`; it never uses desktop credentials.
 
-## Pi adapter (H1)
-Owned settings (checked against the pi docs and tested against pi 1.4.0, `@earendil-works/pi-coding-agent`, MIT):
-- `<PI_CODING_AGENT_DIR or ~/.pi/agent>/models.json`: `providers.<providerId>` (default `pa`), the whole object:
-  `{ baseUrl: "<server>/v1", api: "openai-completions", apiKey, models: [{ id, reasoning? }] }`.
-  - Only `api: "openai-completions"` is offered. `anthropic-messages` is hidden (rejected by validation) until verified against real Pi.
-- `settings.json`: `defaultProvider` and `defaultModel` (skipped when `pi.setDefault === false`). The user's previous values are stored in state and restored by detach.
-- `apiKey`:
-  - command mode: `!'<abs pa-key path>' <profileId> pi` (shell-quoted). Pi runs it for each request and does not cache it.
-  - env mode: `$PA_API_KEY` (name configurable).
-  - plaintext mode is refused.
-- `auth.json` is never read. If it exists, we warn: Pi gives credentials stored in auth.json precedence over models.json.
-- Project-level `.pi/` is only reported, never written.
-- Conflicts:
-  - An existing provider with the same id that we did not write is a `name-collision`.
-  - Our settings edited outside the app are an `external-owned-change`.
-  - Both need an explicit `overwrite` or `keep-external`.
-  - Edits to anything else in the file are merged and reported.
-- Apply re-plans from the stored profile. The plan passed in is trusted only for its fingerprints, so a stale plan is rejected.
-- In command mode, desktop provisions the keychain entry before writing. With no keychain it refuses, and the user switches to env mode.
-- Opt-in offline E2E: `PA_HARNESS_E2E=1 PI_BIN=<pi> npx vitest run packages/harness/test/harness-pi-e2e.test.ts`. It uses a fake local server, never a real server.
+## Server and migration
 
-## Claude Code adapter (H2)
+The desktop origin is fixed at build time from `apps/desktop/build/server-origin.json`, injected by `build-main.mjs`. The committed `https://api.swift-client.invalid` is a **TODO placeholder pending D-17 HTTPS readiness**. Official releases must wait for the reviewed production origin. Settings display the origin read-only. Old `config.json.serverUrl` is ignored and removed; old-origin sessions are cleared. Select a token again after server migration; legacy keychain entries are not read or migrated.
 
-Field names verified against code.claude.com/docs (settings reference, env vars, managed settings), 2026-10, and
-exercised offline against Claude Code 2.1.309 (`harness-claude-e2e.test.ts`, opt-in).
+Only an unpackaged smoke build with `PA_SMOKE=1` can use `PAC_SERVER_URL`. Production dead-code elimination removes that path. The dev-only CLI retains independent URL configuration.
 
-- File: `$CLAUDE_CONFIG_DIR/settings.json` (default `~/.claude/settings.json`). Strict JSON for Claude Code; we merge
-  format-preservingly and never touch `~/.claude.json`.
-- Owned settings:
-  - `apiKeyHelper`: command mode `'<pa-key>' <profile> claude`; env mode `printf '%s' "$PA_API_KEY"` (Windows:
-    `echo %VAR%`, unverified). Claude Code runs it via `/bin/sh` and sends stdout as **both** `X-Api-Key` and
-    `Authorization: Bearer` (confirmed). Cached 5 min / re-run on 401/403.
-  - `env.ANTHROPIC_BASE_URL`: server origin without `/v1` (Claude Code calls `POST /v1/messages?beta=true`).
-  - `env.ANTHROPIC_MODEL` = `models.main` (skip with `claude.setModel: false`).
-  - `env.ANTHROPIC_DEFAULT_OPUS_MODEL` / `_SONNET_MODEL` = opus/sonnet or main; `env.ANTHROPIC_DEFAULT_HAIKU_MODEL`
-    = haiku, else small, else main. (`ANTHROPIC_SMALL_FAST_MODEL` is deprecated and not written.)
-- Never written: `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` (no plaintext mode). If either is set in the shell or in
-  `settings.json` `env` (presence only, value never shown), the plan warns: they override `apiKeyHelper`.
-- Collisions (file not written by us before): an existing different `apiKeyHelper` or `env.ANTHROPIC_BASE_URL`.
-  Previous values of the env keys are remembered for detach; a previous `apiKeyHelper` is **not** stored (it may embed
-  a credential), so detach removes it.
-- Read-only notes/warnings: managed settings (`/etc/claude-code/managed-settings.json` and `managed-settings.d/`,
-  macOS `/Library/Application Support/ClaudeCode/`, Windows `C:\Program Files\ClaudeCode\`), project
-  `.claude/settings.json` / `.claude/settings.local.json` in the cwd, and shell `ANTHROPIC_BASE_URL`/`ANTHROPIC_MODEL`
-  differing from ours.
-- Keychain account: `<profile>/claude`. Desktop provisions it before writing; the CLI requires it to exist.
+## Credentials and risks
 
-## Codex adapter (H3)
+Harness keys are **plaintext** in `<userData>/harness/keys.json` and in agent configuration files. POSIX files use 0600 and directories 0700, verified after writing. Windows uses protected ACLs granting only the current user, SYSTEM and Administrators, with readback verification. Windows ACL behavior still needs native platform validation.
 
-Field names verified against openai/codex source (commit 7d592f6, `codex-rs/model-provider-info/src/lib.rs`,
-`protocol/src/config_types.rs`), and exercised with a real `@openai/codex` 0.164.0 binary offline.
+Any process running as your user can read these keys. Claude injects `ANTHROPIC_AUTH_TOKEN` into child processes, including commands, hooks and MCP servers. Exclude agent config directories from cloud sync, backups and dotfiles repositories. Use server-side quota limits, rotate tokens, and revoke old keys on the server. Local file permissions cannot stop malicious code running as you.
 
-Owned settings in `$CODEX_HOME/config.toml` (default `~/.codex`), edited with smol-toml + a line-preserving
-merger (`merge/toml.ts`): comments, ordering and unrelated tables are kept; result is re-parsed and verified.
+Keys are resolved only in main. IPC returns masks, fingerprints and status; previews and rollback previews suppress credentials. Provider IDs are generated in main and restricted to lowercase letters, numbers and hyphens, at most 32 characters. Unknown IPC fields, including URL/host/origin fields, are rejected.
 
-```toml
-model = "<models.codex ?? models.main>"      # only when codex.setDefault = true (opt-in, H4 default false)
-model_provider = "pa"                         # only when codex.setDefault = true
+## Files
 
-[model_providers.pa]
-name = "Portable Agent"
-base_url = "<serverUrl>/v1"
-wire_api = "responses"                        # only value Codex accepts
+| Tool | Projection | Startup |
+|---|---|---|
+| Codex | User `config.toml`: `[model_providers.swift]`, `name="swift-client"`, `base_url="<origin>/v1"`, `wire_api="responses"`, `experimental_bearer_token`; ownership marker above table | `codex --profile swift` |
+| Codex profile | `<CODEX_HOME>/swift.config.toml`: only `model` and `model_provider="swift"` | Default provider stays unchanged unless “Set as Codex default” is selected |
+| Claude | `<CLAUDE_CONFIG_DIR>/settings.json`: `env.ANTHROPIC_AUTH_TOKEN`, origin without `/v1`, model aliases, custom option and `SWIFT_CLIENT_MANAGED` | Normal Claude startup |
 
-[model_providers.pa.auth]                     # command mode: no shell, stdout = bearer
-command = "/abs/path/pa-key"
-args = [ "<profileId>", "codex" ]
-# env mode instead: env_key = "PA_API_KEY"
-```
+Default directories are `~/.codex` and `~/.claude`. `auth.json` is checked for existence only, never read or written. No `ANTHROPIC_API_KEY` is written. Legacy `pa` provider/helper references are removed by an explicitly reviewed apply. No helper is installed; `packages/pa-key` is removed and RunAsNode is disabled.
 
-- `auth` is mutually exclusive with `env_key` / `experimental_bearer_token` / `requires_openai_auth` (Codex
-  validate()); plaintext mode is refused; built-in provider ids (openai, gcp, amazon-bedrock*, ollama, lmstudio,
-  oss) cannot be used as the profile provider id.
-- `auth.json` is only checked for existence; ChatGPT/API login is untouched. Detach restores only `model` /
-  `model_provider`; the previous `[model_providers.<id>]` table is never snapshotted (could contain a token).
-- Warnings: top-level `profile = ...` may override; project `.codex/config.toml`; env var not exported;
-  the default (`setDefault` unset/false; UI checkbox "设为 Codex 默认" opts in) gives a `codex -c model_provider=pa -m <model>` hint.
-- Server channel: the UI shows "服务端渠道未就绪" until probed. The probe (`harness:channel:probe`) is a GET
-  `/v1/models` with the profile key in main; `model-listed` does **not** prove `/v1/responses` works. See
-  `codex-responses-contract.md`.
-- Opt-in E2E: `PA_HARNESS_E2E=1 CODEX_BIN=/path/codex npx vitest run packages/harness/test/harness-codex-e2e.test.ts`.
+Claude main/small models start as configurable placeholders. Preview is allowed, apply and paid checks refuse placeholders. Claude's model selector supports the opus/sonnet/haiku aliases and one custom option, not an arbitrary catalog.
 
-## Local packaging (H4, no release)
+Writes use atomic replacement, fingerprints, cooperative locks, first-write backups, rolling snapshots and an operation journal. Agent processes do not honor our locks; fingerprint checks reduce but cannot eliminate concurrent-edit races. Claude settings must be strict JSON. Unsafe TOML layouts are refused rather than rewritten destructively.
 
-`cd apps/desktop && npm run pack:dir` → `release/<platform>-unpacked/` via electron-builder 25 (MIT, devDependency).
-`publish: null` plus `--publish never`; no tags, uploads or GitHub releases. Uses the locally installed Electron
-(`electronDist`), so nothing is downloaded.
+## Checks and billing
 
-- `scripts/stage.mjs` builds a dependency-free app dir (`stage/`): esbuild/vite output only. `@napi-rs/keyring`
-  (+ its platform binary) is staged **only for macOS/Windows targets**; `@napi-rs/keyring-linux-*` is never
-  shipped (bundles libdbus, AFL-2.1 OR GPL-2.0+) and is also excluded in `electron-builder.yml`. Linux uses
-  `secret-tool` or env mode.
-- `dist/key-helper/**` and `node_modules/@napi-rs/**` are `asarUnpack`ed. On start the app (re)writes the
-  `pa-key` wrapper (0700) into `<userData>/bin/`, pointing at the app's own executable with
-  `ELECTRON_RUN_AS_NODE=1` and the unpacked `pa-key.cjs`.
-- `xvfb-run -a npm run smoke:packaged` (temp HOME/userData): boots the packaged app, checks the wrapper exists and
-  runs (clean non-zero exit, empty stdout without a keychain entry), and that no keyring-linux file is in the package.
-- Re-applying harness configs is needed if the app is moved (wrapper path is absolute); the wrapper itself is
-  rewritten on every start.
+L0 verifies key-file permissions and compares credential fingerprints with config. L1 calls free `GET /v1/models`. L2 makes two paid requests per harness: nonstream and stream, with output cap 16 tokens. Before L2, the dialog shows request count, model, token cap and cost estimate. An estimate comes from numeric, bounded `/api/pricing` data or bundled `pricing.json` (with its date); unknown cost requires an extra checkbox. Quotes expire after five minutes and are single use. Paid calls never retry automatically. Limits: six paid requests per provider per ten minutes; ten free calls per minute. Cumulative request estimates are stored without credentials in `harness/test-usage.json`.
 
-## Linux runtime dependency
-`secret-tool` (Debian/Ubuntu package `libsecret-tools`) and a running Secret Service (GNOME Keyring or KWallet) are needed for command key mode on Linux. Without them the client falls back to env key mode.
+**L3 execution is currently refused (`harness-token-cap-unverified`)** because the real CLI commands have no verified hard request/token cap. Do not represent the L2 quote as a bound on an arbitrary agent run. Verifying a safe L3 limit remains outstanding.
 
-## Rollback
-`harness:rollback` / `pa harness rollback [--first-write | --detach | --snapshot <id>] --yes`:
-- `last` restores the snapshot taken before the latest apply, along with its state. Repeating it walks back further.
-- `first-write` restores the original files.
-- `detach` removes only our settings and restores the previous defaults. It is refused if those settings were edited outside the app.
-- Every rollback snapshots the current files first. Apply and rollback need explicit confirmation over IPC.
-- If a file was edited after our last write (fingerprint differs), `last` / `first-write` / `--snapshot` are refused
-  unless the user confirms again (`overwriteExternal`, CLI `--overwrite-external`); the UI asks a second time and
-  lists the files. Preview (`harness:rollback:preview`) is a read-only, masked dry run; `harness:history` lists snapshots.
-- Apply records its snapshot first and each file's state right after that file is written, so a failure midway
-  can be rolled back with `last`.
-- Symlinked config files are written through to the link target (which must be inside the allowed roots); the link stays.
+All connectivity HTTP uses core's HTTP client, manual redirects and omitted browser credentials. Every 3xx, including pricing redirects, is refused. API shapes (`/v1/models`, `/api/pricing`, `/api/status`, `/v1/messages`, `/v1/responses`) are assumptions: **TODO verify after rain recovers**. No live paid API validation was performed.
 
-### Backups may contain your original secrets
-`first-write` and snapshot backups are byte copies of the harness files **before** we changed them, so they can
-contain a key you had put there yourself (e.g. `ANTHROPIC_AUTH_TOKEN` in `~/.claude/settings.json`, an `apiKey` in
-Pi's `models.json`, a `[model_providers.*]` token in Codex `config.toml`). Our own writes never contain keys.
-Backups live in `<userData>/harness/backups/{first-write,snapshots}/` (dirs 0700, files 0600, newest N snapshots
-kept). To remove them: quit the app and delete that directory (this also removes the ability to roll back), e.g.
-`rm -rf "$HOME/.config/Portable Agent/harness/backups"` on Linux,
-`~/Library/Application Support/Portable Agent/harness/backups` on macOS, `%APPDATA%\Portable Agent\harness\backups` on Windows.
+## Cleanup and release checks
 
-### TOML comments
-Comments and unrelated tables in `config.toml` are preserved. Inside our `[model_providers.<id>]` table the
-table is re-rendered: full-line comments are kept (moved just above the table header); end-of-line comments on
-keys inside that table are not kept.
+Detach removes both desktop-managed projections, the provider key entry and key-containing backups. A second detach is a no-op. Deleting an unused provider must not detach another provider. Windows uninstall invokes guarded cleanup using a one-use nonce; ordinary and second-instance invocations do not trigger cleanup. Per-user installation means another process as the same user can forge this guard and cause denial of service.
 
-## Keys
-- One keychain entry per harness: service `portable-agent`, account `<profileId>/<harness>`.
-- macOS/Windows: `@napi-rs/keyring`. Linux: system `secret-tool` (libsecret), secret on stdin only.
-- If there is no Secret Service, we fall back to **env-var mode**, never to plaintext files.
-- `pa-key` is installed at `<userData>/bin/pa-key` (a sh/cmd wrapper that runs Electron as node on `dist/key-helper/pa-key.cjs`), and harness configs reference that absolute path. It prints the key without a newline. Exit codes: 2 usage, 3 not found, 4 keychain unavailable.
-- The renderer never receives credentials.
+Before deleting the macOS app, detach from the Harness page. Otherwise manually remove `[model_providers.swift]`, `swift.config.toml`, and Claude's managed `env` fields, then revoke the token server-side. Removing the app alone leaves plaintext credentials usable.
 
-### Why not @napi-rs/keyring on Linux
-- Without D-Bus it silently uses kernel keyutils, which does not persist across reboots.
-- Its Linux binaries statically link libdbus (AFL-2.1 OR GPL-2.0+).
-- **H4 packaging must exclude `@napi-rs/keyring-linux-*`** (`npm run licenses` warns about them).
-
-## Attribution
-Design ideas (owned-key merge, backups) were inspired by cc-switch (MIT). We used its design only, no code.
+Release CI extracts each installer’s `app.asar` with `@electron/asar` and checks committed origin, strict IPC field snapshot, own-module URL/environment policy using esbuild metafiles, and absence of smoke hooks. Third-party dependencies are excluded from the own-module scan.

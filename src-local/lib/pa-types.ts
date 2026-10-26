@@ -12,11 +12,12 @@ export interface PaError { code: PaErrorCode; message: string; status?: number }
 export type Result<T> = { ok: true; data: T } | { ok: false; error: PaError }
 
 export interface ClientConfig { serverUrl: string | null; insecureTransport: boolean; clipboardClearSeconds: number }
-export interface ConfigSetReq { serverUrl?: string; clipboardClearSeconds?: number }
+export interface ConfigSetReq { clipboardClearSeconds?: number }
 
-export interface ModelMapping { main: string; small?: string; opus?: string; sonnet?: string; haiku?: string; codex?: string }
+export interface ModelMapping { main: string; small?: string; opus?: string; sonnet?: string; haiku?: string; codex?: string; custom?: string }
 export interface HarnessProfile {
   id: string
+  label?: string
   serverUrl: string
   keyId: number
   models: ModelMapping
@@ -85,6 +86,13 @@ type P<T> = Promise<Result<T>>
 export interface PaBridge {
   config: { get(): P<ClientConfig>; set(r: ConfigSetReq): P<ClientConfig> }
   harness: {
+    providers(): P<{ profiles: HarnessProfile[] }>
+    saveProvider(r: ProviderInput): P<HarnessProfile>
+    deleteProvider(r: { profileId: string; confirm: true }): P<{ removed: boolean }>
+    activateProvider(r: { profileId: string }): P<HarnessProfile>
+    test(r: HarnessTestReq): P<HarnessTestResult>
+    models(r: { profileId: string }): P<{ models: string[] }>
+
     detect(): P<{ harnesses: Detection[]; registered: HarnessId[] }>
     plan(r: { id: HarnessId; profileId: string }): P<Plan>
     apply(r: { id: HarnessId; plan: Plan; acknowledge?: { conflictId: string; resolution: ConflictResolution }[]; confirm: true }): P<ApplyResult>
@@ -93,7 +101,7 @@ export interface PaBridge {
     rollbackPreview(r: { id: HarnessId; target: RollbackTarget }): P<RollbackPreview>
     keyringStatus(r: { profileId?: string }): P<KeyringStatus>
     listProfiles(): P<{ profiles: HarnessProfile[] }>
-    upsertProfile(r: HarnessProfile): P<HarnessProfile>
+    upsertProfile(r: ProviderInput): P<HarnessProfile>
     probeChannel(r: { profileId: string }): P<HarnessChannelStatus>
   }
   keys: {
@@ -107,3 +115,7 @@ export interface PaBridge {
   app: { about(): P<AppAboutRes> }
   onSessionChanged(l: (v: unknown) => void): () => void
 }
+
+export interface ProviderInput { id?: string; label: string; keyId: number; models: ModelMapping; codex?: { setDefault?: boolean }; claude?: { setModel?: boolean } }
+export interface HarnessTestReq { profileId: string; id: HarnessId; level: 'L0' | 'L1' | 'L2' | 'L3'; confirm?: boolean; quoteId?: string; confirmUnknownCost?: boolean }
+export interface HarnessTestResult { state: string; requestCount: number; model?: string; models?: string[]; quoteId?: string; tokenCap?: number; estimatedCost?: number | null; priceTableDate?: string; usageTokens?: number }

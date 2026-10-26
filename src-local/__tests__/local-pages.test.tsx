@@ -74,23 +74,11 @@ describe('server settings', () => {
     expect(container.textContent).toContain('v0.12.0-rc.46 · New API')
   })
 
-  it('URL change goes to main (which confirms natively); cancel saves nothing', async () => {
+  it('server origin is read-only and has no change action', async () => {
     render(<ServerSettingsCard />)
-    const input = await screen.findByLabelText('Server URL')
-    fake.config.set.mockImplementationOnce(() => fail('CANCELLED', 'Server change not confirmed; not saved') as never)
-    fireEvent.change(input, { target: { value: 'https://other.example' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Change server' }))
-    expect(await screen.findByText('Server change cancelled; nothing saved.')).toBeInTheDocument()
-    expect(fake.config.set).toHaveBeenCalledWith({ serverUrl: 'https://other.example' })
-      })
-
-  it('accepted URL change reloads status and notifies', async () => {
-    const onChanged = vi.fn()
-    render(<ServerSettingsCard onChanged={onChanged} />)
-    fireEvent.change(await screen.findByLabelText('Server URL'), { target: { value: 'https://other.example' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Change server' }))
-    await waitFor(() => expect(onChanged).toHaveBeenCalled())
-    expect(fake.server.status).toHaveBeenLastCalledWith({ recheck: true })
+    expect(await screen.findByLabelText('Server URL')).toHaveAttribute('readonly')
+    expect(screen.queryByRole('button', { name: 'Change server' })).not.toBeInTheDocument()
+    expect(fake.config.set).not.toHaveBeenCalled()
   })
 
   it('saves the clipboard auto-clear duration', async () => {
@@ -129,8 +117,8 @@ describe('harness card', () => {
     render(<HarnessCard harness='claude' serverUrl='http://127.0.0.1:3000' tokens={[{ id: 7, name: 'dev', maskedKey: 'sk-ab**********yz' }]} models={['gpt-x']} />)
     await waitFor(() => expect(fake.harness.detect).toHaveBeenCalled())
     fireEvent.click(await screen.findByRole('button', { name: 'Preview changes' }))
-    await waitFor(() => expect(fake.harness.plan).toHaveBeenCalledWith({ id: 'claude', profileId: 'default' }))
-    expect(fake.harness.upsertProfile).toHaveBeenCalledWith(expect.objectContaining({ id: 'default', keyId: 7, models: expect.objectContaining({ main: 'gpt-x' }) }))
+    await waitFor(() => expect(fake.harness.plan).toHaveBeenCalledWith({ id: 'claude', profileId: 'swift-test' }))
+    expect(fake.harness.upsertProfile).toHaveBeenCalledWith(expect.objectContaining({ label: 'Swift provider', keyId: 7, models: expect.objectContaining({ main: 'claude-main-placeholder' }) }))
     expect(await screen.findByText('env.ANTHROPIC_BASE_URL')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
     expect(fake.harness.apply).not.toHaveBeenCalled()

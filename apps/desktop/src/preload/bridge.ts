@@ -16,6 +16,7 @@ export function createBridge(ipc: IpcRendererLike): PaBridge {
   return {
     config: { get: call('config:get'), set: call('config:set') },
     harness: {
+      providers: call('harness:provider:list'), saveProvider: call('harness:provider:upsert'), deleteProvider: call('harness:provider:delete'), activateProvider: call('harness:provider:activate'), test: call('harness:test'), models: call('harness:models'),
       detect: call('harness:detect'), plan: call('harness:plan'), apply: call('harness:apply'), rollback: call('harness:rollback'),
       history: call('harness:history'), rollbackPreview: call('harness:rollback:preview'), keyringStatus: call('harness:keyring:status'),
       listProfiles: call('harness:profile:list'), upsertProfile: call('harness:profile:upsert'), probeChannel: call('harness:channel:probe'),

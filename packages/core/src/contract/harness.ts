@@ -7,24 +7,21 @@ export const HARNESS_IDS = ['pi', 'claude', 'codex'] as const;
 export type HarnessId = (typeof HARNESS_IDS)[number];
 export const isHarnessId = (v: unknown): v is HarnessId => typeof v === 'string' && (HARNESS_IDS as readonly string[]).includes(v);
 
-/**
- * command  = harness runs `pa-key <profileId> <harness>` (default, no key on disk)
- * env      = config references an env var the user exports themselves
- * plaintext= key written into the harness config (explicit opt-in only; not offered by H0)
- */
+/** Desktop Codex/Claude always use plaintext. Legacy modes remain only for the private Pi dev adapter. */
 export type KeyMode = 'command' | 'env' | 'plaintext';
 
-export interface ModelMapping { main: string; small?: string; opus?: string; sonnet?: string; haiku?: string; codex?: string }
+export interface ModelMapping { main: string; small?: string; opus?: string; sonnet?: string; haiku?: string; codex?: string; custom?: string }
 
 export interface HarnessProfile {
-  /** [A-Za-z0-9_-]{1,64}; also the keychain account prefix. */
+  /** [A-Za-z0-9_-]{1,64}; legacy internal profile id. Desktop provider ids are main-generated lowercase identifiers. */
   id: string;
+  label?: string;
   serverUrl: string;
   /** new-api key id (resolved to the secret in main only). */
   keyId: number;
   models: ModelMapping;
   keyMode: KeyMode;
-  /** Provider id written into harness configs (default "pa"). */
+  /** Provider id written into harness configs (desktop value "swift"). */
   providerId?: string;
   /** Env var name referenced in keyMode "env" (default PA_API_KEY). */
   envVar?: string;
@@ -170,3 +167,7 @@ export interface HarnessChannelProbeReq { profileId: string }
  */
 export type HarnessChannelState = 'not-checked' | 'model-listed' | 'model-missing' | 'unreachable' | 'no-profile';
 export interface HarnessChannelStatus { state: HarnessChannelState; model?: string; checkedAt: string; detail?: string }
+
+export interface HarnessTestReq { profileId: string; id: HarnessId; level: 'L0' | 'L1' | 'L2' | 'L3'; confirm?: boolean; quoteId?: string; confirmUnknownCost?: boolean }
+export interface HarnessTestResult { state: string; requestCount: number; model?: string; models?: string[]; quoteId?: string; tokenCap?: number; estimatedCost?: number | null; priceTableDate?: string; usageTokens?: number }
+export type ProviderInput = { id?: string; label: string; keyId: number; models: ModelMapping; codex?: CodexOptions; claude?: ClaudeOptions };

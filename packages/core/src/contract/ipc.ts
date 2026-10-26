@@ -1,3 +1,4 @@
+import type { ProviderInput, HarnessTestReq, HarnessTestResult } from './harness.js';
 /**
  * Module <-> UI contract. Shared by desktop (IPC) and CLI.
  * Rule: no response or event type may contain credentials (tokens, refresh cookie, full sk keys).
@@ -20,7 +21,7 @@ export interface ClientConfig {
 /** Bounds for clipboardClearSeconds (0 disables auto-clear). */
 export const CLIPBOARD_CLEAR_DEFAULT = 30;
 export const CLIPBOARD_CLEAR_MAX = 600;
-export interface ConfigSetReq { serverUrl?: string; clipboardClearSeconds?: number }
+export interface ConfigSetReq { clipboardClearSeconds?: number }
 
 export type Empty = Record<string, never>;
 
@@ -97,6 +98,12 @@ export interface ServerStatusRes {
 export interface IpcInvokeMap {
   'config:get': { req: Empty; res: ClientConfig };
   'config:set': { req: ConfigSetReq; res: ClientConfig };
+  'harness:provider:list': { req: Empty; res: HarnessProfileListRes };
+  'harness:provider:upsert': { req: ProviderInput; res: HarnessProfile };
+  'harness:provider:delete': { req: { profileId: string; confirm: true }; res: { removed: boolean } };
+  'harness:provider:activate': { req: { profileId: string }; res: HarnessProfile };
+  'harness:test': { req: HarnessTestReq; res: HarnessTestResult };
+  'harness:models': { req: { profileId: string }; res: { models: string[] } };
   'harness:detect': { req: Empty; res: HarnessDetectRes };
   /** Masked diff only. */
   'harness:plan': { req: HarnessPlanReq; res: Plan };
@@ -112,7 +119,7 @@ export interface IpcInvokeMap {
   'harness:keyring:status': { req: HarnessKeyringStatusReq; res: KeyringStatus };
   /** Profiles are the client SSOT (no secrets: keyId only). */
   'harness:profile:list': { req: Empty; res: HarnessProfileListRes };
-  'harness:profile:upsert': { req: HarnessProfile; res: HarnessProfile };
+  'harness:profile:upsert': { req: ProviderInput; res: HarnessProfile };
   /** Read-only server channel probe for Codex (GET /v1/models with the profile key, inside main). */
   'harness:channel:probe': { req: HarnessChannelProbeReq; res: HarnessChannelStatus };
   /** M4: keychain entries (metadata + masked key). */
@@ -141,6 +148,7 @@ export const CREDENTIAL_EXCEPTION_CHANNELS = [] as const satisfies readonly Invo
 
 export const INVOKE_CHANNELS = [
   'config:get', 'config:set',
+  'harness:provider:list', 'harness:provider:upsert', 'harness:provider:delete', 'harness:provider:activate', 'harness:test', 'harness:models',
   'harness:detect', 'harness:plan', 'harness:apply', 'harness:rollback', 'harness:history', 'harness:rollback:preview', 'harness:keyring:status', 'harness:profile:list', 'harness:profile:upsert', 'harness:channel:probe',
   'keys:list', 'keys:store', 'keys:copy', 'keys:delete', 'keys:show', 'server:status', 'app:about',
 ] as const satisfies readonly InvokeChannel[];
@@ -162,6 +170,12 @@ type Call0<C extends InvokeChannel> = () => Promise<InvokeRes<C>>;
 export interface PaBridge {
   config: { get: Call0<'config:get'>; set: Call<'config:set'> };
   harness: {
+    providers: Call0<'harness:provider:list'>;
+    saveProvider: Call<'harness:provider:upsert'>;
+    deleteProvider: Call<'harness:provider:delete'>;
+    activateProvider: Call<'harness:provider:activate'>;
+    test: Call<'harness:test'>;
+    models: Call<'harness:models'>;
     detect: Call0<'harness:detect'>;
     plan: Call<'harness:plan'>;
     apply: Call<'harness:apply'>;
@@ -185,6 +199,7 @@ export interface PaBridge {
 /** Bridge method -> channel (single source for the preload and its test). */
 export const BRIDGE_CHANNELS = {
   'config.get': 'config:get', 'config.set': 'config:set',
+  'harness.providers': 'harness:provider:list', 'harness.saveProvider': 'harness:provider:upsert', 'harness.deleteProvider': 'harness:provider:delete', 'harness.activateProvider': 'harness:provider:activate', 'harness.test': 'harness:test', 'harness.models': 'harness:models',
   'harness.detect': 'harness:detect', 'harness.plan': 'harness:plan', 'harness.apply': 'harness:apply',
   'harness.rollback': 'harness:rollback', 'harness.history': 'harness:history', 'harness.rollbackPreview': 'harness:rollback:preview',
   'harness.keyringStatus': 'harness:keyring:status', 'harness.listProfiles': 'harness:profile:list',

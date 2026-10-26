@@ -1,5 +1,5 @@
 // Aegis M6 item 4: scripts/source-tarball.sh is reproducible (two runs -> identical sha256).
-import { execFileSync } from 'node:child_process';
+import { execFileSync } from '../../../../test/helpers/subprocess';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';

@@ -1,3 +1,4 @@
+import { KeyFile } from '@pac/harness';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -17,6 +18,7 @@ export const DEFAULT_PROFILE = 'default';
 
 export interface KeyServiceOptions {
   keyring: Keyring;
+  keyFile?: KeyFile;
   /** Main-only authenticated standard-API call (ServerSession.mainApi). */
   api<T>(method: 'GET' | 'POST', path: string): Promise<T>;
   clipboard: { writeText(text: string): void; readText(): string; clear(): void };
@@ -85,6 +87,7 @@ export class KeyService {
   }
 
   private async requireKeyring(): Promise<void> {
+    if (this.o.keyFile) return;
     if (!(await this.o.keyring.available().catch(() => ({ ok: false }))).ok) {
       throw new PaException({ code: 'VALIDATION', message: 'System keychain unavailable; use env key mode (export the key in your shell). Nothing was stored. 系统钥匙串不可用，请改用环境变量模式。' });
     }
@@ -100,7 +103,7 @@ export class KeyService {
   async ensure(profileId: string, harness: HarnessId, tokenId: number): Promise<void> {
     const account = accountFor(profileId, harness);
     await this.requireKeyring();
-    if ((await this.load())[account]?.tokenId === tokenId && (await this.o.keyring.get(account)) !== null) return;
+    if ((await this.load())[account]?.tokenId === tokenId && (this.o.keyFile ? (await this.o.keyFile.load())[profileId] !== undefined : (await this.o.keyring.get(account)) !== null)) return;
     await this.write(profileId, harness, tokenId);
   }
 
@@ -110,14 +113,15 @@ export class KeyService {
     const account = accountFor(profileId, harness);
     await this.requireKeyring();
     const key = await this.fetchKey(tokenId);
-    await this.o.keyring.set(account, key);
+    if (this.o.keyFile) await this.o.keyFile.set(profileId, key, `token:${tokenId}`);
+    else await this.o.keyring.set(account, key);
     const info = { profileId, harness, tokenId, tokenName: await this.tokenName(tokenId), maskedKey: maskSecret(key), storedAt: (this.o.now?.() ?? new Date()).toISOString() };
     const meta = await this.load(); meta[account] = info; await this.save(meta);
     return { ...info, present: true };
   }
 
   async list(): Promise<KeysListRes> {
-    const a = await this.o.keyring.available().catch(() => ({ ok: false, reason: 'keychain check failed' }));
+    const a = this.o.keyFile ? { ok: true } : await this.o.keyring.available().catch(() => ({ ok: false, reason: 'keychain check failed' }));
     const meta = await this.load();
     const entries: StoredKeyInfo[] = [];
     for (const h of HARNESS_IDS) {
@@ -125,7 +129,7 @@ export class KeyService {
       const m = meta[account];
       if (!m) continue;
       let present = false;
-      if (a.ok) { try { present = (await this.o.keyring.get(account)) !== null; } catch { present = false; } }
+      if (a.ok) { try { present = (this.o.keyFile ? (await this.o.keyFile.load())[m.profileId] !== undefined : (await this.o.keyring.get(account)) !== null); } catch { present = false; } }
       entries.push({ ...m, present });
     }
     if (!a.ok) return { available: false, backend: this.o.keyring.backend, fallback: 'env', ...('reason' in a && a.reason ? { reason: a.reason } : {}), entries };
@@ -171,7 +175,8 @@ export class KeyService {
     if (!isHarnessId(harness)) throw new PaException({ code: 'VALIDATION', message: 'Invalid harness' });
     const account = accountFor(profileId, harness);
     let removed = false;
-    if ((await this.o.keyring.available().catch(() => ({ ok: false }))).ok) removed = await this.o.keyring.delete(account);
+    if (this.o.keyFile) { await this.o.keyFile.delete(profileId); removed = true; }
+    else if ((await this.o.keyring.available().catch(() => ({ ok: false }))).ok) removed = await this.o.keyring.delete(account);
     const meta = await this.load();
     if (meta[account]) { delete meta[account]; await this.save(meta); removed = true; }
     return { removed };

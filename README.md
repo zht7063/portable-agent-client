@@ -31,12 +31,13 @@ bun run check         # all of the above except licenses
 
 Desktop: `bun run --filter @pac/desktop smoke` (build + Electron smoke; needs a display or `xvfb-run`; as root it adds `--no-sandbox`). Local package only: `bun run --filter @pac/desktop pack:dir` (`--publish never`, no installers, `@napi-rs/keyring-linux-*` never shipped).
 
-## Server URL
-There is **no built-in server**. Set one with:
-- Desktop: `config:set`, persisted in `<userData>/config.json` (`{version: 2, serverUrl}`). `PAC_SERVER_URL` only seeds it when no file exists.
-- CLI: `pac config set-url https://your-new-api.example`, or the `PAC_SERVER_URL` env var (precedence: env > saved). State lives in `~/.config/portable-agent-cli/` (override with `PA_CLI_DIR`).
+## Server and harness keys
 
-URLs must be http/https, with no credentials, query or fragment. Plain `http://` is accepted with a **warning** only.
+Desktop `SERVER_ORIGIN` is fixed at build time from `apps/desktop/build/server-origin.json`; settings show it read-only and `config:set` rejects address fields. The committed HTTPS origin is a **TODO placeholder pending D-17**. Official release depends on production HTTPS readiness. Only unpackaged smoke builds with `PA_SMOKE=1` allow an address override.
+
+The private **dev/test-only** CLI retains `pac config set-url` / `PAC_SERVER_URL` and its own `FileKeyVault` under `~/.config/portable-agent-cli/`; it is not packaged or published.
+
+Harness keys are **plaintext**, protected by private file permissions/ACLs. They are written into Codex and Claude config files; Claude commands, hooks and MCP children inherit the token. Exclude those directories from cloud sync/dotfiles, set server quota limits, and detach before uninstalling. See [harness configuration](docs/harness.md) for cleanup, migration, paid-test safeguards and the current L3 limitation.
 
 ## Live test
 `PAC_LIVE=1 PAC_SERVER_URL=https://… bun run test:live` runs a read-only `/api/status` smoke. It is skipped by default.

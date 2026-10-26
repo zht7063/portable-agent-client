@@ -12,6 +12,8 @@ export function installFakePa() {
       set: vi.fn((r: { serverUrl?: string; clipboardClearSeconds?: number }) => { Object.assign(cfg, r); return ok({ ...cfg }) }),
     },
     harness: {
+      providers: vi.fn(() => ok({ profiles: [] })), saveProvider: vi.fn((p: object) => ok({ ...p, id: 'swift-test' })), deleteProvider: vi.fn(() => ok({ removed: true })), activateProvider: vi.fn(() => ok({ id: 'swift-test' })),
+      test: vi.fn(() => ok({ state: 'ok', requestCount: 1 })), models: vi.fn(() => ok({ models: ['gpt-x'] })),
       detect: vi.fn(() => ok({ harnesses: ['pi', 'claude', 'codex'].map((id) => ({ id, installed: id !== 'pi', version: id === 'pi' ? null : '1.0.0', configDir: `/tmp/h/.${id}`, notes: [] })), registered: ['pi', 'claude', 'codex'] })),
       plan: vi.fn((r: { id: string }) => ok({ id: r.id, changes: [{ file: `/tmp/h/.${r.id}/settings.json`, setting: 'env.ANTHROPIC_BASE_URL', kind: 'create', before: null, after: 'http://127.0.0.1:3000' }], conflicts: [], externalUnownedChange: [], warnings: [] })),
       apply: vi.fn((r: { id: string }) => ok({ id: r.id, written: [`/tmp/h/.${r.id}/settings.json`], snapshotId: 's1', warnings: [] })),
@@ -20,7 +22,7 @@ export function installFakePa() {
       rollbackPreview: vi.fn(() => ok({ target: 'last', files: [], changes: [], warnings: [] })),
       keyringStatus: vi.fn(() => ok({ available: true, backend: 'secret-service' })),
       listProfiles: vi.fn(() => ok({ profiles: [] })),
-      upsertProfile: vi.fn((p: unknown) => ok(p)),
+      upsertProfile: vi.fn((p: object) => ok({ ...p, id: 'swift-test' })),
       probeChannel: vi.fn(() => ok({ state: 'model-listed', model: 'gpt-x', checkedAt: new Date().toISOString() })),
     },
     keys: {

@@ -1,6 +1,6 @@
 /** Injected subprocess runner (node impl below; fakes in tests). Never pass secrets via args. */
 export interface ExecResult { code: number | null; stdout: string; stderr: string; timedOut?: boolean }
-export interface ExecOptions { timeoutMs: number; env?: Record<string, string>; input?: string }
+export interface ExecOptions { timeoutMs: number; cwd?: string; env?: Record<string, string>; input?: string }
 export type ExecFn = (cmd: string, args: string[], opts: ExecOptions) => Promise<ExecResult>;
 
 export const nodeExec: ExecFn = async (cmd, args, opts) => {
@@ -9,7 +9,7 @@ export const nodeExec: ExecFn = async (cmd, args, opts) => {
     let stdout = ''; let stderr = ''; let timedOut = false;
     let child;
     try {
-      child = spawn(cmd, args, { env: opts.env ?? (process.env as Record<string, string>), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+      child = spawn(cmd, args, { cwd: opts.cwd, env: opts.env ?? { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', SYSTEMROOT: process.env.SYSTEMROOT ?? '' }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     } catch { resolve({ code: null, stdout: '', stderr: 'spawn failed' }); return; }
     const t = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, opts.timeoutMs);
     child.stdout.on('data', (d: Buffer) => { if (stdout.length < 4_000_000) stdout += d.toString('utf8'); });

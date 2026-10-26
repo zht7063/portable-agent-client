@@ -17,6 +17,18 @@ async function adHocSignMac(ctx, run = require('node:child_process').execFileSyn
   return true;
 }
 
+/** electron-builder 25 has no electronFuses config key. Flip before signing: fuses alter the binary. */
+async function afterPack(ctx, fuses = require('@electron/fuses'), run) {
+  const path = require('node:path');
+  const mac = ctx.electronPlatformName === 'darwin';
+  const binary = mac
+    ? path.join(ctx.appOutDir, `${ctx.packager.appInfo.productFilename}.app`, 'Contents', 'MacOS', ctx.packager.appInfo.productFilename)
+    : path.join(ctx.appOutDir, product.executableName + (ctx.electronPlatformName === 'win32' ? '.exe' : ''));
+  const { flipFuses, FuseVersion, FuseV1Options } = fuses;
+  await flipFuses(binary, { version: FuseVersion.V1, [FuseV1Options.RunAsNode]: false });
+  return adHocSignMac(ctx, run);
+}
+
 module.exports = {
   appId: product.appId,
   productName: product.productName,
@@ -27,9 +39,8 @@ module.exports = {
   publish: null,
   npmRebuild: false,
   asar: true,
-  // pa-key.cjs runs under ELECTRON_RUN_AS_NODE from the userData/bin wrapper; keep it (and the native keyring
-  // module on macOS/Windows) outside the asar so plain Node resolution works.
-  asarUnpack: ['dist/key-helper/**', 'node_modules/@napi-rs/**'],
+  // Native keyring modules on macOS/Windows must stay outside the asar for native loading.
+  asarUnpack: ['node_modules/@napi-rs/**'],
   files: [
     'package.json',
     'dist/**',
@@ -62,11 +73,12 @@ module.exports = {
   // `bun run pack:win` (NSIS x64). No Developer ID signing and no Windows certificate (identity null). All mac
   // builds (LOCAL and official) are ad-hoc signed in afterPack (codesign --sign -; electron-builder 25 has no
   // identity '-' support) so the arm64 app is not reported as "damaged". No Developer ID / notarization yet.
-  afterPack: adHocSignMac,
+  afterPack,
   mac: { target: 'dir', icon: 'build/icon.icns', identity: null, category: 'public.app-category.developer-tools' },
   dmg: { icon: 'build/icon.icns', writeUpdateInfo: false },
   win: { target: 'dir', icon: 'build/icon.ico', signAndEditExecutable: true, verifyUpdateCodeSignature: false },
   nsis: {
+    include: 'build/installer.nsh',
     oneClick: false,
     installerIcon: 'build/icon.ico',
     uninstallerIcon: 'build/icon.ico',

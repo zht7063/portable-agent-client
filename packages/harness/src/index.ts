@@ -49,8 +49,8 @@ export function validateProfile(p: HarnessProfile): HarnessProfile {
   v(str(p.serverUrl, 2048) && /^https?:\/\//.test(p.serverUrl), 'Invalid server URL');
   v(['command', 'env', 'plaintext'].includes(p.keyMode), 'Invalid key mode');
   v(!!p.models && str(p.models.main), 'Main model is required');
-  for (const k of ['small', 'opus', 'sonnet', 'haiku', 'codex'] as const) v(p.models[k] === undefined || str(p.models[k]), 'Invalid model');
-  v(p.providerId === undefined || /^[A-Za-z0-9_-]{1,64}$/.test(p.providerId), 'Invalid provider id');
+  for (const k of ['small', 'opus', 'sonnet', 'haiku', 'codex', 'custom'] as const) v(p.models[k] === undefined || str(p.models[k]), 'Invalid model');
+  v(p.providerId === undefined || /^[a-z0-9-]{1,32}$/.test(p.providerId), 'Invalid provider id');
   v(p.envVar === undefined || /^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(p.envVar), 'Invalid env var name');
   const pi = p.pi;
   if (pi !== undefined) {
@@ -70,9 +70,9 @@ export function validateProfile(p: HarnessProfile): HarnessProfile {
     v(cx.setDefault === undefined || typeof cx.setDefault === 'boolean', 'Invalid codex setDefault');
   }
   const m = p.models;
-  const models = Object.fromEntries(Object.entries({ main: m.main, small: m.small, opus: m.opus, sonnet: m.sonnet, haiku: m.haiku, codex: m.codex }).filter(([, x]) => x !== undefined)) as unknown as HarnessProfile['models'];
+  const models = Object.fromEntries(Object.entries({ main: m.main, small: m.small, opus: m.opus, sonnet: m.sonnet, haiku: m.haiku, codex: m.codex, custom: m.custom }).filter(([, x]) => x !== undefined)) as unknown as HarnessProfile['models'];
   return {
-    id: p.id, serverUrl: p.serverUrl, keyId: p.keyId, keyMode: p.keyMode, models,
+    id: p.id, ...(p.label ? { label: p.label } : {}), serverUrl: p.serverUrl, keyId: p.keyId, keyMode: p.keyMode, models,
     ...(p.providerId !== undefined ? { providerId: p.providerId } : {}),
     ...(p.envVar !== undefined ? { envVar: p.envVar } : {}),
     ...(pi ? { pi: { ...(pi.api ? { api: pi.api } : {}), ...(pi.models ? { models: [...pi.models] } : {}), ...(pi.reasoning ? { reasoning: [...pi.reasoning] } : {}), ...(pi.setDefault !== undefined ? { setDefault: pi.setDefault } : {}) } } : {}),
@@ -113,7 +113,7 @@ export function createHarness(d: HarnessDeps) {
         readText: async (p) => (await d.fs.readText(p).catch(() => null))?.text ?? null,
       }, o);
     },
-    async listProfiles(): Promise<HarnessProfile[]> { return Object.values((await d.state.load()).profiles); },
+    async listProfiles(): Promise<HarnessProfile[]> { const s = await d.state.load(); return Object.values(s.profiles).sort((a, b) => Number(b.id === s.activeProvider) - Number(a.id === s.activeProvider)); },
     async upsertProfile(p: HarnessProfile): Promise<HarnessProfile> {
       const clean = validateProfile(p);
       await d.state.upsertProfile(clean);
@@ -126,3 +126,9 @@ export function createHarness(d: HarnessDeps) {
   };
 }
 export type Harness = ReturnType<typeof createHarness>;
+
+export * from "./keyfile.js";
+
+export * from "./connectivity.js";
+
+export * from "./providers.js";

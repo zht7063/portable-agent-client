@@ -13,8 +13,8 @@ export interface WatchedVar { name: string; policy: EnvPolicy; /** Value our pro
 export const HARNESS_ENV_VARS: Record<HarnessId, WatchedVar[]> = {
   claude: [
     { name: 'ANTHROPIC_BASE_URL', policy: 'must-match' },
-    { name: 'ANTHROPIC_AUTH_TOKEN', policy: 'must-not-be-set', hint: 'overrides apiKeyHelper' },
-    { name: 'ANTHROPIC_API_KEY', policy: 'must-not-be-set', hint: 'takes precedence over apiKeyHelper and subscription login' },
+    { name: 'ANTHROPIC_AUTH_TOKEN', policy: 'must-not-be-set', hint: 'may conflict with the managed token' },
+    { name: 'ANTHROPIC_API_KEY', policy: 'must-not-be-set', hint: 'may conflict with managed credentials and subscription login' },
     { name: 'ANTHROPIC_MODEL', policy: 'must-match' },
     { name: 'ANTHROPIC_DEFAULT_OPUS_MODEL', policy: 'must-match' },
     { name: 'ANTHROPIC_DEFAULT_SONNET_MODEL', policy: 'must-match' },

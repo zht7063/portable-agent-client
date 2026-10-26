@@ -1,269 +1,35 @@
 import { describe, expect, it } from 'vitest';
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MemoryKeyVault, MemoryTokenStore, createCore, findCredentialLeaks, type Plan } from '@pac/core';
-import { MemoryKeyring, NoKeyring, type Keyring } from '@pac/keychain';
+import { HarnessHost } from '../src/main/harness-host';
 import { createHandlers, dispatch } from '../src/main/ipc/handlers';
-import { tmpHarnessHost } from './harness-fixture';
+import { fixture, CANARY } from '../../../packages/harness/test/v6-fixture';
 
-const SECRET = 'sk-' + 'H'.repeat(48);
-function setup(keyring: Keyring = new MemoryKeyring()) {
-  const vault = new MemoryKeyVault();
-  void vault.set(7, SECRET);
-  const core = createCore({ serverUrl: 'http://127.0.0.1:9', store: new MemoryTokenStore(), vault, fetch: async () => { throw new Error('no network in tests'); } });
-  const t = tmpHarnessHost(keyring);
-  const cfg = { serverUrl: 'http://127.0.0.1:9', insecureTransport: true, clipboardClearSeconds: 30 };
-  const handlers = createHandlers({ getCore: () => core, getConfig: () => cfg, setConfig: async () => cfg, harness: t.host.harness });
-  return { core, handlers, ...t };
-}
-
-async function filesUnder(dir: string): Promise<string[]> {
-  const out: string[] = [];
-  for (const n of await readdir(dir).catch(() => [])) {
-    const p = join(dir, n);
-    if ((await stat(p)).isDirectory()) out.push(...(await filesUnder(p))); else out.push(p);
-  }
-  return out;
-}
-
-describe('desktop harness IPC skeleton', () => {
-  it('harness:detect returns credential-free detection on a temp HOME', async () => {
-    const { handlers, home } = setup();
-    const r = await dispatch(handlers, 'harness:detect', {});
-    expect(r.ok).toBe(true);
-    if (r.ok) {
-      expect(r.data.registered).toEqual(['pi', 'claude', 'codex']);
-      expect(r.data.harnesses.map((h) => h.configDir)).toEqual([join(home, '.pi', 'agent'), join(home, '.claude'), join(home, '.codex')]);
+describe('desktop v6 IPC', () => {
+  it('S20 detach removes both projected keys, key file, key-containing snapshots; S19 responses never contain CANARY', async () => {
+    const s = await fixture();
+    const host = new HarnessHost({ home: s.home, dataDir: s.data, env: s.env.env, platform: 'linux', exec: s.exec, keyFile: s.keys });
+    const cfg = { serverUrl: s.profile.serverUrl, insecureTransport: false, clipboardClearSeconds: 30 };
+    const h = createHandlers({ harness: host.harness, harnessHost: host, getCore: () => { throw new Error('no network'); }, getConfig: () => cfg, setConfig: async () => cfg });
+    const responses: unknown[] = [];
+    for (const id of ['codex', 'claude'] as const) {
+      const p = await host.harness.plan(id, s.profile.id);
+      responses.push(p, await dispatch(h, 'harness:apply', { id, plan: p, confirm: true }));
     }
+    responses.push(await dispatch(h, 'harness:rollback', { id: 'codex', target: 'detach', confirm: true }));
+    expect(JSON.stringify(responses)).not.toContain(CANARY);
+    expect(await readFile(s.codex.configPath, 'utf8')).not.toContain(CANARY);
+    expect(await readFile(s.claude.settingsPath, 'utf8')).not.toContain(CANARY);
+    await expect(stat(s.keys.path)).rejects.toThrow(); expect((await s.fs.loadBackup('codex', 'first-write')).every((e) => e.data === null || !new TextDecoder().decode(e.data).includes(CANARY))).toBe(true);
+    expect(await dispatch(h, 'harness:rollback', { id: 'claude', target: 'detach', confirm: true })).toMatchObject({ ok: true, data: { written: [] } });
   });
-  it('apply/rollback require confirm: true; plan for an unknown profile is rejected', async () => {
-    const { handlers } = setup();
-    const plan: Plan = { id: 'pi', profileId: 'p', createdAt: '', baseFingerprints: {}, changes: [], conflicts: [], warnings: [], externalUnownedChange: [] };
-    expect(await dispatch(handlers, 'harness:apply', { id: 'pi', plan, confirm: false } as never)).toMatchObject({ ok: false, error: { code: 'VALIDATION', message: 'This action requires explicit confirmation' } });
-    expect(await dispatch(handlers, 'harness:rollback', { id: 'pi', target: 'last' } as never)).toMatchObject({ ok: false, error: { code: 'VALIDATION' } });
-    expect(await dispatch(handlers, 'harness:apply', { id: 'pi', plan: { ...plan, id: 'codex' }, confirm: true })).toMatchObject({ ok: false, error: { code: 'VALIDATION' } });
-    expect(await dispatch(handlers, 'harness:apply', { id: 'pi', plan, confirm: true })).toMatchObject({ ok: false, error: { code: 'VALIDATION', message: 'Unknown harness profile' } });
-  });
-  it('provisioning writes the key into the keychain only; renderer-facing status never contains it', async () => {
-    const { handlers, host, core, keyring, dataDir, home } = setup();
-    await host.state.upsertProfile({ id: 'default', serverUrl: 'http://127.0.0.1:9', keyId: 7, models: { main: 'deepseek-flash' }, keyMode: 'command' });
-    await host.provisionKey(core, 'default', 'claude', 7);
-    expect(await keyring.get('default/claude')).toBe(SECRET);
-    const r = await dispatch(handlers, 'harness:keyring:status', {});
-    expect(r).toMatchObject({ ok: true, data: { available: true, entries: expect.arrayContaining([{ profileId: 'default', harness: 'claude', present: true }]) } });
-    expect(findCredentialLeaks(r)).toEqual([]);
-    expect(JSON.stringify(r)).not.toContain(SECRET);
-    for (const f of [...(await filesUnder(dataDir)), ...(await filesUnder(home))]) expect(await readFile(f, 'utf8')).not.toContain(SECRET);
-    await host.revokeKey('default');
-    expect(await keyring.get('default/claude')).toBeNull();
-  });
-  it('keychain unavailable (Linux w/o Secret Service): refuses to provision, no plaintext anywhere, status says env fallback', async () => {
-    const { handlers, host, core, dataDir, home } = setup(new NoKeyring('no D-Bus session'));
-    await expect(host.provisionKey(core, 'default', 'codex', 7)).rejects.toMatchObject({ error: { code: 'VALIDATION', message: expect.stringMatching(/env key mode/) } });
-    expect(await dispatch(handlers, 'harness:keyring:status', { profileId: 'default' })).toEqual({ ok: true, data: { available: false, backend: 'none', fallback: 'env', reason: 'no D-Bus session', entries: [] } });
-    for (const f of [...(await filesUnder(dataDir)), ...(await filesUnder(home))]) expect(await readFile(f, 'utf8')).not.toContain(SECRET);
-  });
-});
-
-describe('Pi via IPC (H1)', () => {
-  function setupPi(keyring: Keyring = new MemoryKeyring()) {
-    const vault = new MemoryKeyVault();
-    void vault.set(7, SECRET);
-    const core = createCore({ serverUrl: 'http://127.0.0.1:9', store: new MemoryTokenStore(), vault, fetch: async () => { throw new Error('no network in tests'); } });
-    const t = tmpHarnessHost(keyring, () => core);
-    const cfg = { serverUrl: 'http://127.0.0.1:9', insecureTransport: true, clipboardClearSeconds: 30 };
-    const handlers = createHandlers({ getCore: () => core, getConfig: () => cfg, setConfig: async () => cfg, harness: t.host.harness });
-    return { handlers, ...t };
-  }
-  const prof = { id: 'default', serverUrl: 'http://127.0.0.1:9', keyId: 7, keyMode: 'command' as const, models: { main: 'deepseek-flash' } };
-
-  it('upsert -> plan -> apply(confirm) provisions the keychain; files and responses never carry the key; detach revokes', async () => {
-    const kr = new MemoryKeyring();
-    const s = setupPi(kr);
-    expect((await dispatch(s.handlers, 'harness:profile:upsert', prof)).ok).toBe(true);
-    const plan = await dispatch(s.handlers, 'harness:plan', { id: 'pi', profileId: 'default' });
-    expect(plan.ok).toBe(true);
-    if (!plan.ok) return;
-    expect(findCredentialLeaks(plan.data)).toEqual([]);
-    const noConfirm = await dispatch(s.handlers, 'harness:apply', { id: 'pi', plan: plan.data } as never);
-    expect(noConfirm.ok).toBe(false);
-    const r = await dispatch(s.handlers, 'harness:apply', { id: 'pi', plan: plan.data as Plan, confirm: true });
-    expect(r.ok).toBe(true);
-    expect(JSON.stringify(r)).not.toContain(SECRET);
-    expect(await kr.get('default/pi')).toBe(SECRET);
-    const models = await readFile(join(s.home, '.pi', 'agent', 'models.json'), 'utf8');
-    expect(models).toContain(join(s.dataDir, 'bin', 'pa-key'));
-    for (const f of await filesUnder(s.home)) expect(await readFile(f, 'utf8')).not.toContain(SECRET);
-    for (const f of await filesUnder(s.dataDir)) expect(await readFile(f, 'utf8')).not.toContain(SECRET);
-    const list = await dispatch(s.handlers, 'harness:profile:list', {});
-    expect(list.ok && list.data.profiles.map((p) => p.id)).toEqual(['default']);
-    const d = await dispatch(s.handlers, 'harness:rollback', { id: 'pi', target: 'detach', confirm: true });
-    expect(d.ok).toBe(true);
-    expect(await kr.get('default/pi')).toBeNull();
-  });
-
-  it('command mode without a keychain refuses to write (no plaintext fallback); env mode works', async () => {
-    const s = setupPi(new NoKeyring('no secret service'));
-    await dispatch(s.handlers, 'harness:profile:upsert', prof);
-    const plan = await dispatch(s.handlers, 'harness:plan', { id: 'pi', profileId: 'default' });
-    if (!plan.ok) throw new Error('plan failed');
-    const r = await dispatch(s.handlers, 'harness:apply', { id: 'pi', plan: plan.data, confirm: true });
-    expect(r.ok).toBe(false);
-    expect(await filesUnder(join(s.home, '.pi'))).toEqual([]);
-    await dispatch(s.handlers, 'harness:profile:upsert', { ...prof, keyMode: 'env' });
-    const p2 = await dispatch(s.handlers, 'harness:plan', { id: 'pi', profileId: 'default' });
-    if (!p2.ok) throw new Error('plan failed');
-    expect((await dispatch(s.handlers, 'harness:apply', { id: 'pi', plan: p2.data, confirm: true })).ok).toBe(true);
-    expect(JSON.parse(await readFile(join(s.home, '.pi', 'agent', 'models.json'), 'utf8')).providers.pa.apiKey).toBe('$PA_API_KEY');
-  });
-
-  it('Claude Code (H2): apply provisions default/claude, settings.json has apiKeyHelper only (no key); detach revokes', async () => {
-    const kr = new MemoryKeyring();
-    const s = setupPi(kr);
-    await dispatch(s.handlers, 'harness:profile:upsert', prof);
-    const plan = await dispatch(s.handlers, 'harness:plan', { id: 'claude', profileId: 'default' });
-    if (!plan.ok) throw new Error('plan failed');
-    expect(findCredentialLeaks(plan.data)).toEqual([]);
-    const r = await dispatch(s.handlers, 'harness:apply', { id: 'claude', plan: plan.data, confirm: true });
-    expect(r.ok).toBe(true);
-    expect(await kr.get('default/claude')).toBe(SECRET);
-    expect(await kr.get('default/pi')).toBeNull();
-    const j = JSON.parse(await readFile(join(s.home, '.claude', 'settings.json'), 'utf8'));
-    expect(j.apiKeyHelper).toBe(`'${join(s.dataDir, 'bin', 'pa-key')}' default claude`);
-    expect(j.env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:9');
-    for (const f of [...(await filesUnder(s.home)), ...(await filesUnder(s.dataDir))]) expect(await readFile(f, 'utf8')).not.toContain(SECRET);
-    expect((await dispatch(s.handlers, 'harness:rollback', { id: 'claude', target: 'detach', confirm: true })).ok).toBe(true);
-    expect(await kr.get('default/claude')).toBeNull();
-    expect(JSON.parse(await readFile(join(s.home, '.claude', 'settings.json'), 'utf8')).apiKeyHelper).toBeUndefined();
-  });
-
-  it('Codex (H3): apply writes config.toml with [model_providers.pa.auth] (no key); channel probe is read-only and key-free', async () => {
-    const kr = new MemoryKeyring();
-    const vault = new MemoryKeyVault(); void vault.set(7, SECRET);
-    const seen: { url: string; method: string; auth: boolean }[] = [];
-    const fetchFn = (async (u: string | URL | Request, init?: RequestInit) => {
-      const h = new Headers(init?.headers);
-      seen.push({ url: String(u), method: init?.method ?? 'GET', auth: h.get('authorization') === `Bearer ${SECRET}` });
-      return new Response(JSON.stringify({ data: [{ id: 'deepseek-v4-pro' }] }), { status: 200, headers: { 'content-type': 'application/json' } });
-    }) as typeof fetch;
-    const core = createCore({ store: new MemoryTokenStore(), vault, fetch: fetchFn, serverUrl: 'http://127.0.0.1:9' });
-    const t = tmpHarnessHost(kr, () => core);
-    const cfg = { serverUrl: 'http://127.0.0.1:9', insecureTransport: true, clipboardClearSeconds: 30 };
-    const handlers = createHandlers({ getCore: () => core, getConfig: () => cfg, setConfig: async () => cfg, harness: t.host.harness });
-    expect(await dispatch(handlers, 'harness:channel:probe', { profileId: 'default' })).toMatchObject({ ok: true, data: { state: 'no-profile' } });
-    await dispatch(handlers, 'harness:profile:upsert', { ...prof, models: { main: 'deepseek-v4-pro' } });
-    const probe = await dispatch(handlers, 'harness:channel:probe', { profileId: 'default' });
-    expect(probe).toMatchObject({ ok: true, data: { state: 'model-listed', model: 'deepseek-v4-pro' } });
-    expect(JSON.stringify(probe)).not.toContain(SECRET);
-    expect(seen.every((x) => x.method === 'GET' && x.url.endsWith('/v1/models'))).toBe(true);
-    await dispatch(handlers, 'harness:profile:upsert', { ...prof, models: { main: 'deepseek-v4-pro', codex: 'not-there' }, codex: { setDefault: true } });
-    expect(await dispatch(handlers, 'harness:channel:probe', { profileId: 'default' })).toMatchObject({ ok: true, data: { state: 'model-missing' } });
-    const plan = await dispatch(handlers, 'harness:plan', { id: 'codex', profileId: 'default' });
-    if (!plan.ok) throw new Error('plan failed');
-    expect((await dispatch(handlers, 'harness:apply', { id: 'codex', plan: plan.data, confirm: true })).ok).toBe(true);
-    expect(await kr.get('default/codex')).toBe(SECRET);
-    const text = await readFile(join(t.home, '.codex', 'config.toml'), 'utf8');
-    expect(text).toContain('[model_providers.pa.auth]');
-    expect(text).toContain('model_provider = "pa"');
-    for (const f of [...(await filesUnder(t.home)), ...(await filesUnder(t.dataDir))]) expect(await readFile(f, 'utf8')).not.toContain(SECRET);
-    // H4: read-only history + preview over IPC; preview writes nothing and has no confirm gate
-    const hist = await dispatch(handlers, 'harness:history', { id: 'codex' });
-    expect(hist).toMatchObject({ ok: true, data: { attached: true, firstWrite: true, snapshots: [{ action: 'apply', available: true }] } });
-    const pv = await dispatch(handlers, 'harness:rollback:preview', { id: 'codex', target: 'detach' });
-    expect(pv.ok && pv.data.changes.length).toBeGreaterThan(0);
-    expect(await readFile(join(t.home, '.codex', 'config.toml'), 'utf8')).toBe(text);
-    expect(JSON.stringify(pv)).not.toContain(SECRET);
-  });
-});
-
-describe('harness:profile:upsert server origin (Aegis #3)', () => {
-  const mk = (answer: boolean | undefined) => {
-    const core = createCore({ serverUrl: 'http://127.0.0.1:9', store: new MemoryTokenStore(), vault: new MemoryKeyVault(), fetch: async () => { throw new Error('no network in tests'); } });
-    const t = tmpHarnessHost(new MemoryKeyring(), () => core);
-    const cfg = { serverUrl: 'http://127.0.0.1:9/', insecureTransport: true, clipboardClearSeconds: 30 };
-    const asked: [string, string][] = [];
-    const handlers = createHandlers({ getCore: () => core, getConfig: () => cfg, setConfig: async () => cfg, harness: t.host.harness,
-      ...(answer === undefined ? {} : { confirmForeignServer: async (a: string, b: string) => { asked.push([a, b]); return answer; } }) });
-    return { handlers, asked, t };
-  };
-  const p = (serverUrl: string) => ({ id: 'default', serverUrl, keyId: 7, keyMode: 'command' as const, models: { main: 'm' } });
-
-  it('same origin saves without asking; foreign origin needs the main-process confirmation', async () => {
-    const a = mk(false);
-    expect((await dispatch(a.handlers, 'harness:profile:upsert', p('http://127.0.0.1:9/v1'))).ok).toBe(true);
-    expect(a.asked).toEqual([]);
-    const r = await dispatch(a.handlers, 'harness:profile:upsert', p('https://evil.example'));
-    expect(r).toMatchObject({ ok: false, error: { code: 'CANCELLED' } });
-    expect(a.asked).toEqual([['https://evil.example', 'http://127.0.0.1:9']]);
-    expect((await a.t.host.harness.listProfiles())[0]!.serverUrl).toBe('http://127.0.0.1:9/v1');
-
-    const b = mk(true);
-    expect((await dispatch(b.handlers, 'harness:profile:upsert', p('https://other.example'))).ok).toBe(true);
-    // already confirmed for this profile: no second prompt
-    expect((await dispatch(b.handlers, 'harness:profile:upsert', { ...p('https://other.example/v1'), models: { main: 'n' } })).ok).toBe(true);
-    expect(b.asked).toHaveLength(1);
-
-    const c = mk(undefined); // no confirmer wired -> refuse
-    expect(await dispatch(c.handlers, 'harness:profile:upsert', p('https://x.example'))).toMatchObject({ ok: false });
-  });
-});
-
-describe('harness:apply server origin at apply time (Aegis re-review)', () => {
-  const mk = (answer: boolean | undefined) => {
-    const vault = new MemoryKeyVault(); void vault.set(7, SECRET);
-    const core = createCore({ serverUrl: 'http://127.0.0.1:9', store: new MemoryTokenStore(), vault, fetch: async () => { throw new Error('no network in tests'); } });
-    const t = tmpHarnessHost(new MemoryKeyring(), () => core);
-    const cfg = { serverUrl: 'http://127.0.0.1:9', insecureTransport: true, clipboardClearSeconds: 30 };
-    const asked: [string, string][] = [];
-    const handlers = createHandlers({ getCore: () => core, getConfig: () => cfg, setConfig: async () => cfg, harness: t.host.harness,
-      ...(answer === undefined ? {} : { confirmForeignServer: async (a: string, b: string) => { asked.push([a, b]); return answer; } }) });
-    const apply = async () => {
-      const plan = await dispatch(handlers, 'harness:plan', { id: 'pi', profileId: 'default' });
-      if (!plan.ok) throw new Error('plan failed');
-      return dispatch(handlers, 'harness:apply', { id: 'pi', plan: plan.data, confirm: true });
-    };
-    return { handlers, asked, cfg, t, apply };
-  };
-  const prof = (serverUrl: string) => ({ id: 'default', serverUrl, keyId: 7, keyMode: 'command' as const, models: { main: 'deepseek-flash' } });
-  const written = async (home: string) => readFile(join(home, '.pi', 'agent', 'models.json'), 'utf8').catch(() => null);
-
-  it('same origin applies without asking', async () => {
-    const a = mk(false);
-    await a.t.host.harness.upsertProfile(prof('http://127.0.0.1:9/v1'));
-    expect((await a.apply()).ok).toBe(true);
-    expect(a.asked).toEqual([]);
-  });
-  it('foreign origin declined -> CANCELLED, nothing written', async () => {
-    const a = mk(false);
-    await a.t.host.harness.upsertProfile(prof('https://other.example'));
-    expect(await a.apply()).toMatchObject({ ok: false, error: { code: 'CANCELLED' } });
-    expect(a.asked).toEqual([['https://other.example', 'http://127.0.0.1:9']]);
-    expect(await written(a.t.home)).toBeNull();
-  });
-  it('foreign origin accepted -> applied', async () => {
-    const a = mk(true);
-    await a.t.host.harness.upsertProfile(prof('https://other.example'));
-    expect((await a.apply()).ok).toBe(true);
-    expect(await written(a.t.home)).toContain('https://other.example');
-  });
-  it('no dialog available -> refused', async () => {
-    const a = mk(undefined);
-    await a.t.host.harness.upsertProfile(prof('https://other.example'));
-    expect(await a.apply()).toMatchObject({ ok: false, error: { code: 'CANCELLED' } });
-    expect(await written(a.t.home)).toBeNull();
-  });
-  it('switch server: profile saved on A (no prompt), user moves to B, apply prompts again even though upsert was fine', async () => {
-    const a = mk(false);
-    expect((await dispatch(a.handlers, 'harness:profile:upsert', prof('http://127.0.0.1:9'))).ok).toBe(true);
-    expect(a.asked).toEqual([]);
-    a.cfg.serverUrl = 'https://b.example';
-    expect(await a.apply()).toMatchObject({ ok: false, error: { code: 'CANCELLED' } });
-    expect(a.asked).toEqual([['http://127.0.0.1:9', 'https://b.example']]);
-    expect(await written(a.t.home)).toBeNull();
-    // also after a confirmed foreign upsert: apply still compares against the current server and asks
-    const b = mk(true);
-    expect((await dispatch(b.handlers, 'harness:profile:upsert', prof('https://c.example'))).ok).toBe(true);
-    expect((await b.apply()).ok).toBe(true);
-    expect(b.asked).toHaveLength(2);
+  it.each(['serverUrl', 'host', 'origin', 'providerId'])('S7 rejects extra %s before key or network access', async (field) => {
+    const root = await mkdtemp(join(tmpdir(), 'swift-ipc-'));
+    const host = new HarnessHost({ home: join(root, 'home'), dataDir: join(root, 'data'), env: {}, platform: 'linux', exec: async () => ({ code: null, stdout: '', stderr: '' }) });
+    let calls = 0; const cfg = { serverUrl: 'https://api.swift-client.invalid', insecureTransport: false, clipboardClearSeconds: 30 };
+    const h = createHandlers({ harness: host.harness, harnessHost: host, getCore: () => { calls++; throw new Error('unexpected'); }, getConfig: () => cfg, setConfig: async () => cfg });
+    const req = { label: 'test', keyId: 7, models: { main: 'test' }, [field]: 'https://evil.invalid' };
+    expect(await dispatch(h, 'harness:provider:upsert', req as never)).toMatchObject({ ok: false, error: { code: 'VALIDATION' } }); expect(calls).toBe(0);
   });
 });

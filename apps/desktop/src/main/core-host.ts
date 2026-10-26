@@ -23,6 +23,7 @@ export class CoreHost {
   static async start(o: CoreHostOptions): Promise<CoreHost> {
     const h = new CoreHost(o);
     h.cfg = await o.configStore.load();
+    if (o.configStore.originChanged) await o.tokenStore.clear();
     h.build();
     await h.current?.session.restore();
     return h;

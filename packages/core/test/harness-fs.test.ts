@@ -44,7 +44,7 @@ describe('harness fs: atomic write', () => {
     expect(fp).toEqual(await fs.fingerprint(p));
     await chmod(p, 0o640);
     await fs.atomicWrite(p, 'y');
-    expect(await mode(p)).toBe(0o640);
+    expect(await mode(p)).toBe(0o600);
   });
   it('failure before rename leaves the original intact and removes the temp file', async () => {
     const { home, fs: base } = await setup();
@@ -132,7 +132,7 @@ describe('harness fs: symlinked config (Aegis low)', () => {
     expect((await lstat(link)).isSymbolicLink()).toBe(true);
     expect(await readlink(link)).toBe(real);
     expect(await readFile(real, 'utf8')).toBe('{"a":2}');
-    expect(await mode(real)).toBe(0o640);
+    expect(await mode(real)).toBe(0o600);
     expect((await readdir(join(home, 'dotfiles'))).filter((n) => n.includes('pa-tmp'))).toEqual([]);
     await mkdir(join(root, 'out')); await writeFile(join(root, 'out', 'x.json'), '{}');
     await symlink(join(root, 'out', 'x.json'), join(home, 'esc.json'));

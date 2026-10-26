@@ -113,7 +113,7 @@ export class ServerProxy {
     if (!d.allow) return fail(d.status, d.code, d.message);
 
     const origin = this.o.getOrigin();
-    if (!origin) return fail(503, 'NO_SERVER', '尚未配置服务器地址（设置 PAC_SERVER_URL 或在配置中填写 serverUrl）。');
+    if (!origin) return fail(503, 'NO_SERVER', '尚未配置服务器地址。');
     const target = new URL(canon.wire + u.search, origin);
     if (target.origin !== origin) return fail(400, 'BAD_REQUEST', 'origin mismatch'); // defence in depth
 

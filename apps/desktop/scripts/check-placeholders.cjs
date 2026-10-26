@@ -110,6 +110,11 @@ module.exports = { SOURCE_HOSTS, PLACEHOLDER_RE, sourceUrlProblem, sourceOfferPr
 // CLI: `node scripts/check-placeholders.cjs [--official]` — the pack scripts run this first so they refuse before building.
 if (require.main === module) {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
+  if (process.argv.includes('--official') && /\.invalid$/.test(new URL(require('../build/server-origin.json').origin).hostname)) {
+    console.error('refusing to package: D-17 production HTTPS origin is still a placeholder');
+    process.exit(1);
+  }
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const product = require('../../../packages/core/src/product.config.json');
   const fail = (e) => { console.error(`refusing to package: ${e.message}`); process.exit(1); };
   if (process.argv.includes('--official')) {

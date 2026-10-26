@@ -1,5 +1,5 @@
 // Aegis M6 item 6: packaging errors on unreplaced sourceUrl/sourceOffer unless PA_LOCAL_BUILD=1.
-import { spawnSync } from 'node:child_process';
+import { spawnSync } from '../../../../test/helpers/subprocess';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
@@ -28,6 +28,8 @@ const cli = (prod: object | null, env: Record<string, string> = {}, args: string
   const root = mkdtempSync(join(tmpdir(), 'pa-guard-'));
   try {
     mkdirSync(join(root, 'apps/desktop/scripts'), { recursive: true }); mkdirSync(join(root, 'packages/core/src'), { recursive: true });
+    mkdirSync(join(root, 'apps/desktop/build'), { recursive: true });
+    copyFileSync(join(DESKTOP, 'build/server-origin.json'), join(root, 'apps/desktop/build/server-origin.json'));
     copyFileSync(join(DESKTOP, 'scripts/check-placeholders.cjs'), join(root, 'apps/desktop/scripts/check-placeholders.cjs'));
     writeFileSync(join(root, 'packages/core/src/product.config.json'), JSON.stringify(prod ?? product));
     return spawnSync(process.execPath, ['scripts/check-placeholders.cjs', ...args], { cwd: join(root, 'apps/desktop'), encoding: 'utf8', env: { ...process.env, PA_LOCAL_BUILD: '', ...env } });

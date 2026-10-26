@@ -6,6 +6,7 @@ import { sha256Hex, type ControlledFs } from './fs/controlled.js';
 /** Per managed file: what we last wrote (for external-change detection, §1.5). */
 export interface ManagedFileState {
   harness: HarnessId;
+  profileId?: string;
   lastWritten: FileFingerprint;
   /** sha256 over the canonical JSON of the owned values we wrote. */
   ownedValuesHash: string;
@@ -19,6 +20,7 @@ export interface HarnessState {
   version: 1;
   /** Client SSOT: live configs are projections of these profiles. No secrets (keyId only). */
   profiles: Record<string, HarnessProfile>;
+  activeProvider?: string;
   files: Record<string, ManagedFileState>;
   history: HistoryEntry[];
 }
@@ -66,6 +68,7 @@ function validate(raw: unknown): HarnessState {
 /** <dataDir>/harness/state.json, written atomically through ControlledFs. */
 export class StateStore {
   readonly path: string;
+  private mutations: Promise<void> = Promise.resolve();
   constructor(private readonly fs: ControlledFs) { this.path = join(fs.dataDir, 'harness', 'state.json'); }
 
   async load(): Promise<HarnessState> {
@@ -81,11 +84,15 @@ export class StateStore {
     await this.fs.atomicWrite(this.path, JSON.stringify(s, null, 2));
   }
 
-  async update(fn: (s: HarnessState) => HarnessState | void): Promise<HarnessState> {
-    const cur = await this.load();
-    const next = fn(cur) ?? cur;
-    await this.save(next);
-    return next;
+  update(fn: (s: HarnessState) => HarnessState | void): Promise<HarnessState> {
+    const result = this.mutations.then(async () => {
+      const cur = await this.load();
+      const next = fn(cur) ?? cur;
+      await this.save(next);
+      return next;
+    });
+    this.mutations = result.then(() => {}, () => {});
+    return result;
   }
 
   async upsertProfile(p: HarnessProfile): Promise<void> {
