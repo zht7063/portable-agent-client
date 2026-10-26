@@ -84,6 +84,8 @@ export interface AppAboutRes {
 
 type P<T> = Promise<Result<T>>
 export interface PaBridge {
+  shop: { control(r: { action: 'show' | 'hide' | 'reload' | 'open-in-browser' | 'clear-data' }): P<{ host: string }> }
+  onShopHost(l: (host: string) => void): () => void
   config: { get(): P<ClientConfig>; set(r: ConfigSetReq): P<ClientConfig> }
   harness: {
     providers(): P<{ profiles: HarnessProfile[] }>

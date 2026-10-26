@@ -2,6 +2,7 @@ import { newProviderId, validateProfile } from '@pac/harness';
 import type { HarnessHost } from '../harness-host';
 import { SERVER_ORIGIN } from '../server-origin';
 import type { ProviderInput } from '@pac/core';
+import { isShopRequest, type ShopAction } from '../shop-policy';
 import {
   CONFIRM_REQUIRED_CHANNELS,
   CREDENTIAL_EXCEPTION_CHANNELS,
@@ -33,6 +34,7 @@ type Handler<C extends InvokeChannel> = (req: InvokeReq<C>) => Promise<IpcInvoke
 export type HandlerMap = { [C in InvokeChannel]: Handler<C> };
 
 export interface HandlerDeps {
+  shop?(action: ShopAction): Promise<{ host: string }>;
   /** Current core (recreated when the server URL changes; throws if no server is configured). */
   getCore(): Core;
   getConfig(): ClientConfig;
@@ -68,7 +70,7 @@ export interface KeyServiceLike {
 }
 
 /** Pure (no electron import) so it is unit-testable. */
-export function createHandlers({ getCore, getConfig, setConfig, harness, harnessHost, keys, confirmRevealKey, showKey, serverStatus, about, confirmDisableClipboardClear }: HandlerDeps): HandlerMap {
+export function createHandlers({ getCore, getConfig, setConfig, harness, harnessHost, keys, confirmRevealKey, showKey, serverStatus, about, confirmDisableClipboardClear, shop }: HandlerDeps): HandlerMap {
   const k = () => { if (!keys) throw new PaException({ code: 'VALIDATION', message: 'Key storage is not available' }); return keys; };
   const profile = async (id: string) => {
     if (!/^[a-z0-9-]{1,32}$/.test(id)) throw new PaException({ code: 'VALIDATION', message: 'Invalid provider id' });
@@ -115,6 +117,11 @@ export function createHandlers({ getCore, getConfig, setConfig, harness, harness
     'harness:test': async (r) => {
       if (!harnessHost || !['L0', 'L1', 'L2', 'L3'].includes(r.level)) throw new PaException({ code: 'VALIDATION', message: 'Invalid test' });
       return harnessHost.connectivity.test(await profile(r.profileId), r);
+    },
+    'shop:control': async (r) => {
+      if (!isShopRequest(r)) throw new PaException({ code: 'VALIDATION', message: 'Invalid shop request' });
+      if (!shop) throw new PaException({ code: 'VALIDATION', message: 'Shop unavailable' });
+      return shop(r.action);
     },
     'config:get': async () => getConfig(),
     'config:set': async (r) => {
@@ -216,6 +223,7 @@ export const IPC_FIELDS: Record<InvokeChannel, string[]> = {
   'harness:channel:probe': ['profileId'],
   'keys:list': [], 'keys:store': ['tokenId', 'harness', 'profileId'], 'keys:copy': ['tokenId', 'curl'], 'keys:delete': ['harness', 'profileId'], 'keys:show': ['tokenId'],
   'server:status': ['recheck'], 'app:about': [],
+  'shop:control': ['action'],
 };
 function strict(value: unknown, allowed: string[]): void {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some((k) => !allowed.includes(k))) throw new PaException({ code: 'VALIDATION', message: 'Unexpected request field' });

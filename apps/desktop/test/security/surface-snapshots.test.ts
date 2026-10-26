@@ -25,7 +25,9 @@ describe('preload surface', () => {
       'harness.plan()', 'harness.probeChannel()', 'harness.rollback()', 'harness.rollbackPreview()', 'harness.upsertProfile()',
       'keys.copy()', 'keys.list()', 'keys.remove()', 'keys.show()', 'keys.store()',
       'onSessionChanged()',
+      'onShopHost()',
       'server.status()',
+      'shop.control()',
     ].sort());
   });
   it('IPC invoke channels and bridge mapping are exactly these', () => {
@@ -33,7 +35,7 @@ describe('preload surface', () => {
       'app:about', 'config:get', 'config:set', 'harness:apply', 'harness:channel:probe', 'harness:detect', 'harness:history',
       'harness:provider:list', 'harness:provider:upsert', 'harness:provider:delete', 'harness:provider:activate', 'harness:test', 'harness:models',
       'harness:keyring:status', 'harness:plan', 'harness:profile:list', 'harness:profile:upsert', 'harness:rollback',
-      'harness:rollback:preview', 'keys:copy', 'keys:delete', 'keys:list', 'keys:show', 'keys:store', 'server:status',
+      'harness:rollback:preview', 'keys:copy', 'keys:delete', 'keys:list', 'keys:show', 'keys:store', 'server:status', 'shop:control',
     ].sort());
     expect(Object.keys(BRIDGE_CHANNELS).length).toBe(INVOKE_CHANNELS.length);
   });

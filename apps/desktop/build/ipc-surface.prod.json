@@ -90,7 +90,10 @@
     "server:status": [
       "recheck"
     ],
-    "app:about": []
+    "app:about": [],
+    "shop:control": [
+      "action"
+    ]
   },
   "documentUrls": [
     "https://github.com/QuantumNous/new-api",

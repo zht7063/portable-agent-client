@@ -1,4 +1,5 @@
 import { consumeUninstallNonce } from './detach-all';
+import { Shop } from './shop';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -39,6 +40,7 @@ declare const __PA_SMOKE__: boolean;
 /** Build-time: git commit (+ '-dirty') of the source this build was made from (Corresponding Source, AGPL §6). */
 declare const __PA_BUILD_COMMIT__: string;
 let win: BrowserWindow | null = null;
+let shop: Shop | undefined;
 let serverSession: ServerSession | null = null;
 let smokeExtra: SmokeExtra | undefined;
 /** Smoke only: set when the native "Show key" box would have been shown (the key is never printed). */
@@ -214,6 +216,7 @@ if (primaryInstance) app.whenReady().then(async () => {
     });
   }
   const handlers = createHandlers({
+    shop: (action) => { if (!shop) throw new Error('Shop unavailable'); return shop.control(action); },
     harness: harnessHost.harness,
     harnessHost,
     keys,
@@ -269,6 +272,7 @@ if (primaryInstance) app.whenReady().then(async () => {
   await srv.runCheck();
   // Handlers are registered before the renderer loads, so its first invoke never races.
   win = createWindow();
+  shop = new Shop(win);
   installMenu();
   if (configStore.originChanged || (await harnessHost.harness.listProfiles()).some((p) => p.serverUrl !== host.config().serverUrl)) {
     await dialog.showMessageBox(win, { type: 'warning', title: 'Server changed', message: 'Select a token again', detail: 'The server origin changed. Sign in to this server and reselect a token on the Harness page before applying configurations.', buttons: ['OK'] });

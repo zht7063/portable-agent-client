@@ -20,6 +20,7 @@ const urlLiterals = new Map([
   ['src/main/proxy/api-proxy.ts', new Set(['https://'])],
   ['src/main/proxy/server-session.ts', new Set(['https://'])],
   ['src/main/proxy/server-status.ts', new Set(['https://'])],
+  ['src/main/shop-policy.ts', new Set(['https://wzyp.cn/shop/IZQQ51WQ'])],
 ]);
 const environmentLiterals = new Map([
   ['src/main/index.ts', new Set(['env: process.env'])],

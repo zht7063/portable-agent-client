@@ -42,7 +42,7 @@ describe('IPC contract: no credential fields reach the renderer', () => {
     expect(new Set(INVOKE_CHANNELS).size).toBe(INVOKE_CHANNELS.length);
     type Missing = Exclude<InvokeChannel, (typeof INVOKE_CHANNELS)[number]>;
     expectTypeOf<Missing>().toEqualTypeOf<never>();
-    expect([...EVENT_CHANNELS].sort()).toEqual(['session:changed']);
+    expect([...EVENT_CHANNELS].sort()).toEqual(['session:changed', 'shop:host']);
   });
 });
 

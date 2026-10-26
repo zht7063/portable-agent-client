@@ -6,7 +6,7 @@ describe('Aegis #5: narrow preload bridge', () => {
   it('exposes only named functions, each bound to its fixed channel; no generic invoke/on', async () => {
     const ipc = { invoke: vi.fn(async () => ({ ok: true })), on: vi.fn(), removeListener: vi.fn() };
     const b = createBridge(ipc) as unknown as Record<string, unknown>;
-    expect(Object.keys(b).sort()).toEqual(['app', 'config', 'harness', 'keys', 'onSessionChanged', 'server']);
+    expect(Object.keys(b).sort()).toEqual(['app', 'config', 'harness', 'keys', 'onSessionChanged', 'onShopHost', 'server', 'shop']);
     expect('invoke' in b || 'on' in b || 'send' in b).toBe(false);
     for (const [path, ch] of Object.entries(BRIDGE_CHANNELS)) {
       const [ns, fn] = path.split('.') as [string, string];
@@ -17,7 +17,7 @@ describe('Aegis #5: narrow preload bridge', () => {
       expect(ipc.invoke).toHaveBeenCalledWith(ch, { channel: 'config:set', x: 1 }); // a "channel" field cannot redirect
     }
     const fns = Object.values(b).flatMap((v) => (typeof v === 'function' ? [v] : Object.values(v as object)));
-    expect(fns.length).toBe(Object.keys(BRIDGE_CHANNELS).length + 1);
+    expect(fns.length).toBe(Object.keys(BRIDGE_CHANNELS).length + 2);
     expect(new Set(Object.values(BRIDGE_CHANNELS))).toEqual(new Set(INVOKE_CHANNELS));
   });
   it('session listener is fixed to session:changed and removable', () => {

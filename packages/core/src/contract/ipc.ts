@@ -96,6 +96,7 @@ export interface ServerStatusRes {
 
 // ---------- Invoke channels (renderer -> main, request/response) ----------
 export interface IpcInvokeMap {
+  'shop:control': { req: { action: 'show' | 'hide' | 'reload' | 'open-in-browser' | 'clear-data' }; res: { host: string } };
   'config:get': { req: Empty; res: ClientConfig };
   'config:set': { req: ConfigSetReq; res: ClientConfig };
   'harness:provider:list': { req: Empty; res: HarnessProfileListRes };
@@ -147,7 +148,7 @@ export const CONFIRM_REQUIRED_CHANNELS = ['harness:apply', 'harness:rollback'] a
 export const CREDENTIAL_EXCEPTION_CHANNELS = [] as const satisfies readonly InvokeChannel[];
 
 export const INVOKE_CHANNELS = [
-  'config:get', 'config:set',
+  'shop:control', 'config:get', 'config:set',
   'harness:provider:list', 'harness:provider:upsert', 'harness:provider:delete', 'harness:provider:activate', 'harness:test', 'harness:models',
   'harness:detect', 'harness:plan', 'harness:apply', 'harness:rollback', 'harness:history', 'harness:rollback:preview', 'harness:keyring:status', 'harness:profile:list', 'harness:profile:upsert', 'harness:channel:probe',
   'keys:list', 'keys:store', 'keys:copy', 'keys:delete', 'keys:show', 'server:status', 'app:about',
@@ -156,9 +157,10 @@ export const INVOKE_CHANNELS = [
 // ---------- Events (main -> renderer) ----------
 export interface IpcEventMap {
   'session:changed': SessionView;
+  'shop:host': string;
 }
 export type EventChannel = keyof IpcEventMap;
-export const EVENT_CHANNELS = ['session:changed'] as const satisfies readonly EventChannel[];
+export const EVENT_CHANNELS = ['session:changed', 'shop:host'] as const satisfies readonly EventChannel[];
 
 type Call<C extends InvokeChannel> = (req: InvokeReq<C>) => Promise<InvokeRes<C>>;
 type Call0<C extends InvokeChannel> = () => Promise<InvokeRes<C>>;
@@ -168,6 +170,8 @@ type Call0<C extends InvokeChannel> = () => Promise<InvokeRes<C>>;
  * channel inside the preload. There is no generic invoke(channel) / on(channel) passthrough.
  */
 export interface PaBridge {
+  shop: { control: Call<'shop:control'> };
+  onShopHost(listener: (host: string) => void): () => void;
   config: { get: Call0<'config:get'>; set: Call<'config:set'> };
   harness: {
     providers: Call0<'harness:provider:list'>;
@@ -198,6 +202,7 @@ export interface PaBridge {
 
 /** Bridge method -> channel (single source for the preload and its test). */
 export const BRIDGE_CHANNELS = {
+  'shop.control': 'shop:control',
   'config.get': 'config:get', 'config.set': 'config:set',
   'harness.providers': 'harness:provider:list', 'harness.saveProvider': 'harness:provider:upsert', 'harness.deleteProvider': 'harness:provider:delete', 'harness.activateProvider': 'harness:provider:activate', 'harness.test': 'harness:test', 'harness.models': 'harness:models',
   'harness.detect': 'harness:detect', 'harness.plan': 'harness:plan', 'harness.apply': 'harness:apply',

@@ -14,6 +14,12 @@ export interface IpcRendererLike {
 export function createBridge(ipc: IpcRendererLike): PaBridge {
   const call = (ch: string) => (req?: unknown) => ipc.invoke(ch, req ?? {}) as never;
   return {
+    shop: { control: call('shop:control') },
+    onShopHost: (listener) => {
+      const wrapped = (_e: unknown, host: unknown) => { if (typeof host === 'string') listener(host); };
+      ipc.on('shop:host', wrapped);
+      return () => { ipc.removeListener('shop:host', wrapped); };
+    },
     config: { get: call('config:get'), set: call('config:set') },
     harness: {
       providers: call('harness:provider:list'), saveProvider: call('harness:provider:upsert'), deleteProvider: call('harness:provider:delete'), activateProvider: call('harness:provider:activate'), test: call('harness:test'), models: call('harness:models'),
