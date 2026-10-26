@@ -46,6 +46,8 @@ export function installFakePa() {
         check: { verdict: 'ok', allowLogin: true, serverVersion: 'v0.12.0-rc.46', systemName: 'New API', insecureTransport: true, unsupported: [], turnstile: false, messages: [], checkedAt: Date.now() },
       })),
     },
+    shop: { control: vi.fn(() => ok({ host: 'wzyp.cn' })) },
+    onShopHost: vi.fn(() => () => {}),
     onSessionChanged: vi.fn(() => () => {}),
   }
   ;(window as unknown as { pa: unknown }).pa = fake

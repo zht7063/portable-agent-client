@@ -27,7 +27,7 @@ index 48a5ad3..3531887 100644
  
  /**
   * Root navigation groups for the application sidebar.
-@@ -128,6 +130,19 @@ export function useSidebarData(): SidebarData {
+@@ -128,6 +130,20 @@ export function useSidebarData(): SidebarData {
            },
          ],
        },
@@ -37,6 +37,7 @@ index 48a5ad3..3531887 100644
 +              id: 'pa-desktop',
 +              title: t('Desktop'),
 +              items: [
++                { title: t('Shop'), url: '/pa-shop', icon: PlugZap },
 +                { title: t('Harness'), url: '/pa/harness', icon: PlugZap },
 +                { title: t('Keychain'), url: '/pa/keychain', icon: Key },
 +                { title: t('Server settings'), url: '/pa/server', icon: ServerCog },

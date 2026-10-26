@@ -1,3 +1,4 @@
+import { isShopRequest, type ShopAction } from '../shop-policy';
 import {
   CONFIRM_REQUIRED_CHANNELS,
   CREDENTIAL_EXCEPTION_CHANNELS,
@@ -30,6 +31,7 @@ type Handler<C extends InvokeChannel> = (req: InvokeReq<C>) => Promise<IpcInvoke
 export type HandlerMap = { [C in InvokeChannel]: Handler<C> };
 
 export interface HandlerDeps {
+  shop?(action: ShopAction): Promise<{ host: string }>;
   /** Current core (recreated when the server URL changes; throws if no server is configured). */
   getCore(): Core;
   getConfig(): ClientConfig;
@@ -74,9 +76,14 @@ export interface KeyServiceLike {
 }
 
 /** Pure (no electron import) so it is unit-testable. */
-export function createHandlers({ getCore, getConfig, setConfig, harness, confirmForeignServer, confirmServerChange, keys, confirmRevealKey, showKey, serverStatus, about, confirmDisableClipboardClear }: HandlerDeps): HandlerMap {
+export function createHandlers({ getCore, getConfig, setConfig, harness, confirmForeignServer, confirmServerChange, keys, confirmRevealKey, showKey, serverStatus, about, confirmDisableClipboardClear, shop }: HandlerDeps): HandlerMap {
   const k = () => { if (!keys) throw new PaException({ code: 'VALIDATION', message: 'Key storage is not available' }); return keys; };
   return {
+    'shop:control': async (r) => {
+      if (!isShopRequest(r)) throw new PaException({ code: 'VALIDATION', message: 'Invalid shop request' });
+      if (!shop) throw new PaException({ code: 'VALIDATION', message: 'Shop unavailable' });
+      return shop(r.action);
+    },
     'config:get': async () => getConfig(),
     'config:set': async (r) => {
       if (r && typeof r === 'object' && 'serverUrl' in r) {
