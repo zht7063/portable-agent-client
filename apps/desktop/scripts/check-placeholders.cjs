@@ -112,7 +112,10 @@ function assertProductionOrigin() {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     origin = JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, '../build/server-origin.json'), 'utf8')).origin;
     const url = new URL(origin);
-    if (url.protocol !== 'https:' || url.origin !== origin) throw new Error('expected a bare HTTPS origin');
+    // Build-time guard only: the runtime accepts http(s) and warns on non-HTTPS (insecureTransport). Plain http is
+    // explicitly allowed for the beta.2 bare-IP server; keys travel in cleartext until an https:// origin lands.
+    if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.origin !== origin) throw new Error('expected a bare http(s) origin');
+    if (url.protocol === 'http:') console.warn(`warning: server origin ${origin} is plain HTTP; credentials travel in cleartext`);
     if (/\.invalid$/.test(url.hostname)) throw new Error('D-17 production HTTPS origin is still a placeholder');
   } catch (e) { throw new Error(`cannot use build/server-origin.json: ${e.message}`); }
 }

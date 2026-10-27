@@ -6,6 +6,7 @@ import { normalizeServerUrl } from '@pac/core';
 import { ConfigStore, toClientConfig } from '../src/main/config-store';
 import { createHandlers, dispatch } from '../src/main/ipc/handlers';
 import { tmpHarnessHost } from './harness-fixture';
+import committedOrigin from '../build/server-origin.json';
 
 const DEF = 'http://new-api.test:3000';
 const tmp = async () => join(await mkdtemp(join(tmpdir(), 'pa-cfg-')), 'config.json');
@@ -32,8 +33,8 @@ describe('S16 fixed desktop origin', () => {
     const p = await tmp();
     await writeFile(p, JSON.stringify({ version: 2, serverUrl: 'https://old.invalid', clipboardClearSeconds: 12 }));
     const store = new ConfigStore(p);
-    expect((await store.load()).serverUrl).toBe('https://api.swift-client.invalid');
-    expect(JSON.parse(await readFile(p, 'utf8'))).toEqual({ version: 2, lastServerOrigin: 'https://api.swift-client.invalid', clipboardClearSeconds: 12 });
+    expect((await store.load()).serverUrl).toBe(committedOrigin.origin);
+    expect(JSON.parse(await readFile(p, 'utf8'))).toEqual({ version: 2, lastServerOrigin: committedOrigin.origin, clipboardClearSeconds: 12 });
     expect(() => store.apply(store.defaults(), { serverUrl: 'https://evil.invalid' } as never)).toThrow();
     expect(toClientConfig(store.apply(store.defaults(), { clipboardClearSeconds: 0 })).clipboardClearSeconds).toBe(0);
   });

@@ -25,7 +25,8 @@ if (override && head && override !== head) {
 }
 const commit = (override || head || 'unknown') + dirty;
 const origin = JSON.parse(readFileSync(join(app, 'build/server-origin.json'), 'utf8')).origin;
-if (new URL(origin).protocol !== 'https:' || new URL(origin).origin !== origin) throw new Error('Invalid committed origin');
+// http: explicitly allowed (beta.2 bare-IP server, cleartext); the runtime flags it as insecureTransport.
+if (!['https:', 'http:'].includes(new URL(origin).protocol) || new URL(origin).origin !== origin) throw new Error('Invalid committed origin');
 const common = {
   bundle: true, platform: 'node', format: 'cjs', conditions: ['source'], mainFields: ['module', 'main'], logLevel: 'error',
   metafile: true,

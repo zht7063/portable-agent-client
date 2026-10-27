@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from '../../../../test/helpers/subprocess';
+import committedOrigin from '../../build/server-origin.json';
 
 const root = join(__dirname, '../../../..');
 const app = join(root, 'apps/desktop');
@@ -17,7 +18,7 @@ describe('S15 final own-module artifact policy', () => {
       expect(build.status).toBe(0);
       expect(() => inspect(temp)).not.toThrow();
       const path = join(out, 'main/index.cjs'); const good = readFileSync(path, 'utf8');
-      writeFileSync(path, good.replaceAll('https://api.swift-client.invalid', 'https://foreign.invalid'));
+      writeFileSync(path, good.replaceAll(committedOrigin.origin, 'https://foreign.invalid'));
       expect(() => inspect(temp)).toThrow(/origin/);
       writeFileSync(path, good + '\n// src/main/index.ts\nconst leakedOrigin = process.env.EVIL_URL;\n');
       expect(() => inspect(temp)).toThrow(/environment/);
