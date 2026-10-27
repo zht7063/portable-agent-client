@@ -105,19 +105,42 @@ function buildCommit(env = process.env, gitImpl) {
   return head;
 }
 
+/**
+ * Shared server-origin policy (build-main.mjs and the --official guard both call this; Aegis R41 P2/P3).
+ * Returns the problem string, or null when acceptable. http: is a TIME-LIMITED D-17 exception for beta.2
+ * (pre-release only, see docs/harness.md); revert to https-only once the server supports HTTPS.
+ */
+function originProblem(origin, { official = false } = {}) {
+  let url;
+  try { url = new URL(origin); } catch { return 'not a URL'; }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return 'expected an http(s) origin';
+  if (url.username || url.password || url.origin !== origin) return 'expected a bare http(s) origin (no path, userinfo, query or trailing slash)';
+  const host = url.hostname.toLowerCase().replace(/\.$/, '');
+  if (host === 'invalid' || host.endsWith('.invalid')) return 'D-17 production HTTPS origin is still a placeholder';
+  if (official) {
+    const bare = host.replace(/^\[|\]$/g, '');
+    if (bare === 'localhost' || bare.endsWith('.localhost') || /^127\./.test(bare) || bare === '::1' || bare === '0.0.0.0' || /^::ffff:(127\.|7f)/i.test(bare)) return 'loopback origin is not allowed in official builds';
+  }
+  return null;
+}
+/** Throws on an unacceptable origin; warns on cleartext http. */
+function assertOrigin(origin, opts) {
+  const problem = originProblem(origin, opts);
+  if (problem) throw new Error(problem);
+  if (new URL(origin).protocol === 'http:') console.warn(`warning: server origin ${origin} is plain HTTP; credentials travel in cleartext`);
+}
+
 /** Read relative to this script, report an actionable error rather than MODULE_NOT_FOUND. */
 function assertProductionOrigin() {
   let origin;
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     origin = JSON.parse(require('node:fs').readFileSync(require('node:path').join(__dirname, '../build/server-origin.json'), 'utf8')).origin;
-    const url = new URL(origin);
-    if (url.protocol !== 'https:' || url.origin !== origin) throw new Error('expected a bare HTTPS origin');
-    if (/\.invalid$/.test(url.hostname)) throw new Error('D-17 production HTTPS origin is still a placeholder');
+    assertOrigin(origin, { official: true });
   } catch (e) { throw new Error(`cannot use build/server-origin.json: ${e.message}`); }
 }
 
-module.exports = { SOURCE_HOSTS, PLACEHOLDER_RE, sourceUrlProblem, sourceOfferProblem, placeholderProblems, unreplacedPlaceholders, assertNoPlaceholders, assertOfficialRelease, buildCommit };
+module.exports = { originProblem, assertOrigin, SOURCE_HOSTS, PLACEHOLDER_RE, sourceUrlProblem, sourceOfferProblem, placeholderProblems, unreplacedPlaceholders, assertNoPlaceholders, assertOfficialRelease, buildCommit };
 
 // CLI: `node scripts/check-placeholders.cjs [--official]` — the pack scripts run this first so they refuse before building.
 if (require.main === module) {

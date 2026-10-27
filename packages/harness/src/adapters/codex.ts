@@ -102,6 +102,7 @@ export class CodexAdapter extends JsonHarnessAdapter {
 
   protected async planWarnings(p: HarnessProfile, files: FilePlan[]): Promise<string[]> {
     const w: string[] = [];
+    if (new URL(p.serverUrl).protocol === 'http:') w.push('Server uses plain HTTP: the key, prompts and code context are sent in cleartext on every request. Use only on trusted networks with a short-lived, quota-limited key.');
     const root = files[0]?.root ?? {};
     if (await this.exists(this.authPath)) w.push('Codex auth.json exists (not read); your ChatGPT/API login stays as is, only model_provider changes');
     const prof = getPath(root, ['profile']);

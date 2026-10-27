@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { HarnessHost } from '../src/main/harness-host';
 import { createHandlers, dispatch } from '../src/main/ipc/handlers';
 import { fixture, CANARY } from '../../../packages/harness/test/v6-fixture';
+import committedOrigin from '../build/server-origin.json';
 
 describe('desktop v6 IPC', () => {
   it('scoped detach preserves the other harness and its backups until its own detach; S19 responses never contain CANARY', async () => {
@@ -36,7 +37,7 @@ describe('desktop v6 IPC', () => {
   it.each(['serverUrl', 'host', 'origin', 'providerId'])('S7 rejects extra %s before key or network access', async (field) => {
     const root = await mkdtemp(join(tmpdir(), 'swift-ipc-'));
     const host = new HarnessHost({ home: join(root, 'home'), dataDir: join(root, 'data'), env: {}, platform: 'linux', exec: async () => ({ code: null, stdout: '', stderr: '' }) });
-    let calls = 0; const cfg = { serverUrl: 'https://api.swift-client.invalid', insecureTransport: false, clipboardClearSeconds: 30 };
+    let calls = 0; const cfg = { serverUrl: committedOrigin.origin, insecureTransport: false, clipboardClearSeconds: 30 };
     const h = createHandlers({ harness: host.harness, harnessHost: host, getCore: () => { calls++; throw new Error('unexpected'); }, getConfig: () => cfg, setConfig: async () => cfg });
     const req = { label: 'test', keyId: 7, models: { main: 'test' }, [field]: 'https://evil.invalid' };
     expect(await dispatch(h, 'harness:provider:upsert', req as never)).toMatchObject({ ok: false, error: { code: 'VALIDATION' } }); expect(calls).toBe(0);

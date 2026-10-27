@@ -90,6 +90,7 @@ export class ClaudeAdapter extends JsonHarnessAdapter {
 
   protected async planWarnings(p: HarnessProfile, files: FilePlan[]): Promise<string[]> {
     const w: string[] = ['Keys are plaintext; Claude commands, hooks and MCP children inherit the token. Exclude configs from sync and dotfiles; set a server quota limit.'];
+    if (new URL(p.serverUrl).protocol === 'http:') w.push('Server uses plain HTTP: the key, prompts and code context are sent in cleartext on every request. Use only on trusted networks with a short-lived, quota-limited key.');
     if (Object.values(p.models).some((m) => m?.includes('placeholder'))) w.push('Claude models pending: replace placeholders before apply or paid tests');
     const want = claudeEnv(p);
     const scan = await scanEnv(HARNESS_ENV_VARS.claude.map((v) => want[v.name] ? { ...v, expected: want[v.name] } : v), {

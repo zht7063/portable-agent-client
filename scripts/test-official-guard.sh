@@ -28,5 +28,13 @@ refuse 'working tree is dirty' node scripts/check-placeholders.cjs --official
 rm ci-dirty-marker.txt
 printf '%s\n' '{"origin":"https://release-placeholder.invalid"}' > build/server-origin.json
 refuse 'D-17 production HTTPS origin is still a placeholder' node scripts/check-placeholders.cjs --official
+printf '%s\n' '{"origin":"https://release-placeholder.invalid."}' > build/server-origin.json
+refuse 'D-17 production HTTPS origin is still a placeholder' node scripts/check-placeholders.cjs --official
+printf '%s\n' '{"origin":"http://185.115.207.247:3000/v1"}' > build/server-origin.json
+refuse 'expected a bare http(s) origin' node scripts/check-placeholders.cjs --official
+printf '%s\n' '{"origin":"http://user:pw@185.115.207.247:3000"}' > build/server-origin.json
+refuse 'expected a bare http(s) origin' node scripts/check-placeholders.cjs --official
+printf '%s\n' '{"origin":"http://127.0.0.1:3000"}' > build/server-origin.json
+refuse 'loopback origin is not allowed' node scripts/check-placeholders.cjs --official
 rm build/server-origin.json
 refuse 'cannot use build/server-origin.json' node scripts/check-placeholders.cjs --official

@@ -1,4 +1,4 @@
-/* global process, console, URL */
+/* global process, console */
 // Bundles main, preload and the pa-key helper with esbuild.
 //   node scripts/build-main.mjs          -> dev/test build: smoke hooks compiled in (PA_SMOKE=1 activates them)
 //   node scripts/build-main.mjs --prod   -> production build: __PA_SMOKE__=false, smoke code folded away and
@@ -8,6 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 const app = join(dirname(fileURLToPath(import.meta.url)), '..');
 const prod = process.argv.includes('--prod') || process.env.PA_BUILD === 'production';
@@ -25,7 +26,8 @@ if (override && head && override !== head) {
 }
 const commit = (override || head || 'unknown') + dirty;
 const origin = JSON.parse(readFileSync(join(app, 'build/server-origin.json'), 'utf8')).origin;
-if (new URL(origin).protocol !== 'https:' || new URL(origin).origin !== origin) throw new Error('Invalid committed origin');
+// Shared with the --official guard (Aegis R41 P2): bare http(s), no .invalid placeholder.
+try { createRequire(import.meta.url)('./check-placeholders.cjs').assertOrigin(origin); } catch (e) { throw new Error(`Invalid committed origin: ${e.message}`); }
 const common = {
   bundle: true, platform: 'node', format: 'cjs', conditions: ['source'], mainFields: ['module', 'main'], logLevel: 'error',
   metafile: true,
