@@ -99,6 +99,17 @@ export function inspect(dir) {
   console.log(`asar policy: passed (${dir})`);
 }
 function walk(dir) { return readdirSync(dir, { withFileTypes: true }).flatMap((d) => d.isSymbolicLink() ? [] : d.isDirectory() ? walk(join(dir, d.name)) : [join(dir, d.name)]); }
+/** Only the top-level official installers (swift-client-*.exe / *.dmg); never helper exes inside win-unpacked etc. */
+export function releaseArtifacts(dir) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true }).filter((d) => d.isFile() && /^swift-client-.*\.(?:exe|dmg)$/.test(d.name)).map((d) => join(dir, d.name)).sort();
+}
+/** Explicit paths, or the top-level release installers; zero matches (or a missing path) is an error. */
+export function selectArtifacts(args, releaseDir) {
+  const artifacts = args.length ? args.map((p) => resolve(p)) : releaseArtifacts(releaseDir);
+  if (!artifacts.length || artifacts.some((p) => !existsSync(p))) fail('no release artifacts');
+  return artifacts;
+}
 async function checkArtifact(file) {
   const tmp = mkdtempSync(join(tmpdir(), 'swift-asar-'));
   let mount;
@@ -122,7 +133,7 @@ async function checkArtifact(file) {
 }
 if (process.argv[1] && realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url))) {
   const args = process.argv.slice(2);
-  const artifacts = args.length ? args.map((p) => resolve(p)) : walk(join(root, 'apps/desktop/release')).filter((p) => /\.(dmg|exe)$/.test(p));
-  if (!artifacts.length || artifacts.some((p) => !existsSync(p))) fail('no release artifacts');
+  const artifacts = selectArtifacts(args, join(root, 'apps/desktop/release'));
+  console.log(`asar policy: scanning ${artifacts.length} artifact(s):\n${artifacts.map((p) => `  ${p}`).join('\n')}`);
   for (const file of artifacts) await checkArtifact(file);
 }
