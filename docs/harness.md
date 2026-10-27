@@ -14,6 +14,12 @@ D-17 requires an `https://` `SERVER_ORIGIN` for official builds. The time-limite
 - **Guards:** the shared `originProblem()` in `apps/desktop/scripts/check-placeholders.cjs` (used by `build-main.mjs` and `--official`) accepts only bare `https:` origins. It rejects `http:`, `.invalid` placeholders, paths, userinfo, an explicit default port, and (official) loopback hosts.
 - **Runtime:** `packages/core` config still accepts `http:` for dev/smoke use (`PA_SMOKE=1` with `PAC_SERVER_URL`, and the dev CLI). It shows the insecure-transport warning. Packaged official builds cannot carry an http origin.
 
+### Deployment requirements (Cloudflare + nginx)
+
+- **No 3xx on API paths:** the client refuses redirects ("Server redirect refused" / redirect-refused), so Cloudflare and nginx must not answer `/v1/*` or `/api/*` with any 3xx. That rules out Redirect Rules, Page Rules, www↔apex or trailing-slash redirects, and nginx `return 301`/`rewrite … redirect` on those paths. *Always Use HTTPS* is harmless, because the client always uses `https://`, but nothing else may redirect.
+- **No challenges on API paths:** Cloudflare WAF managed rules, Bot Fight Mode, Turnstile/JS (managed) challenges and *Under Attack* mode can answer non-browser clients (the desktop app, Codex CLI, Claude Code) with 403 or challenge HTML, which breaks every request. Disable challenges and bot fighting for `/v1/*` and `/api/*`, or add a WAF skip rule for those paths.
+- **Proxy limits:** on the free plan Cloudflare enforces a 100-second proxy read timeout (HTTP 524) and a 100 MB request-body limit. Long streaming responses with no bytes for 100 s, or very large requests, can be cut off. Make sure the upstream streams promptly and sends keep-alive data, or move API traffic to a DNS-only (grey-cloud) or higher-plan setup if this matters. Keep nginx `proxy_read_timeout` and `proxy_buffering off` consistent with streaming.
+
 ### Domain risks (`flowpier.top`)
 
 Clients trust whatever name resolution and the domain's accounts say. TLS certificate checks limit DNS attacks, but these risks remain:

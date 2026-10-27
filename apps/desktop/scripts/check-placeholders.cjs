@@ -117,6 +117,7 @@ function originProblem(origin, { official = false } = {}) {
   if (url.username || url.password || url.origin !== origin) return 'expected a bare https origin (no path, userinfo, query, default port or trailing slash)';
   const host = url.hostname.toLowerCase().replace(/\.$/, '');
   if (host === 'invalid' || host.endsWith('.invalid')) return 'D-17 production HTTPS origin is still a placeholder';
+  if (url.hostname.endsWith('.')) return 'expected a bare https origin (no trailing dot in host)';
   if (official) {
     const bare = host.replace(/^\[|\]$/g, '');
     if (bare === 'localhost' || bare.endsWith('.localhost') || /^127\./.test(bare) || bare === '::1' || bare === '0.0.0.0' || /^::ffff:(127\.|7f)/i.test(bare)) return 'loopback origin is not allowed in official builds';

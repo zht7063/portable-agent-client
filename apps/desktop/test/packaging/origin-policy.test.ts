@@ -16,7 +16,7 @@ describe('shared server-origin policy (Aegis R41 P2/P3; D-17 https-only)', () =>
   });
   it.each([
     'https://api.swift-client.invalid', 'https://foo.invalid.', 'https://invalid', 'https://FOO.INVALID',
-    'https://flowpier.top/', 'https://flowpier.top/v1', 'https://u:p@flowpier.top', 'https://u@flowpier.top', 'https://flowpier.top:443',
+    'https://flowpier.top/', 'https://flowpier.top/v1', 'https://u:p@flowpier.top', 'https://u@flowpier.top', 'https://flowpier.top:443', 'https://flowpier.top.', 'https://flowpier.top.:8443',
     'https://flowpier.top?x=1', 'https://flowpier.top#f', 'wss://flowpier.top', 'ws://flowpier.top:3000', 'file:///etc', 'not a url',
   ])('rejects %s in every build', (o) => {
     expect(originProblem(o)).not.toBeNull();
