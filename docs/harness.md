@@ -4,14 +4,14 @@ swift-client configures Codex CLI and Claude Code directly. Gemini is not implem
 
 ## Server and migration
 
-The desktop origin is fixed at build time from `apps/desktop/build/server-origin.json`, injected by `build-main.mjs`. The committed origin is `http://185.115.207.247:3000` (new-api, plain HTTP on a bare IP) under the time-limited D-17 exception below. Settings display the origin read-only. Old `config.json.serverUrl` is ignored and removed; old-origin sessions are cleared. Select a token again after server migration; legacy keychain entries are not read or migrated.
+The desktop origin is fixed at build time from `apps/desktop/build/server-origin.json`, injected by `build-main.mjs`. The committed origin is `http://flowpier.top:3000` (new-api, plain HTTP; the server is being redeployed and the scheme and port are TBD — `:3000` over HTTP is a placeholder matching the current deployment) under the time-limited D-17 exception below. Settings display the origin read-only. Old `config.json.serverUrl` is ignored and removed; old-origin sessions are cleared. Select a token again after server migration; legacy keychain entries are not read or migrated.
 
 Only an unpackaged smoke build with `PA_SMOKE=1` can use `PAC_SERVER_URL`. Production dead-code elimination removes that path. The dev-only CLI retains independent URL configuration.
 
 ### D-17 exception (time-limited, v0.1.0-beta.3)
 
 D-17 requires an `https://` `SERVER_ORIGIN` before official releases (R26: dev/smoke builds only until then). yubai approved a **time-limited exception**:
-- **Scope:** v0.1.0-beta.3 ships as a GitHub **pre-release only**, over cleartext HTTP to `http://185.115.207.247:3000`. It must not be promoted as a stable release.
+- **Scope:** v0.1.0-beta.3 shipped as a GitHub **pre-release only**, over cleartext HTTP to the former origin `http://185.115.207.247:3000`; the next pre-release targets `http://flowpier.top:3000` (scheme/port TBD). It must not be promoted as a stable release.
 - **Risk:** API keys, passwords, session cookies, prompts and code context sent by swift-client, Codex and Claude Code travel in cleartext and can be read or modified on the network (R6). Use only on trusted networks with short-lived, quota-limited keys; revoke and reissue all keys once HTTPS is live.
 - **Guards:** the shared `originProblem()` in `apps/desktop/scripts/check-placeholders.cjs` (used by `build-main.mjs` and `--official`) accepts `http:` only for this exception. It still rejects `.invalid` placeholders, paths, userinfo and (official) loopback hosts.
 - **End:** the exception ends when the server supports HTTPS. At that point the origin becomes `https://…` and both guards go back to https-only (remove `http:` from `originProblem()`).

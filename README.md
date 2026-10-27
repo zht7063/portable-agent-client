@@ -32,7 +32,7 @@ Desktop: `bun run --filter @pac/desktop smoke` (build + Electron smoke; needs a 
 
 ## Server and harness keys
 
-Desktop `SERVER_ORIGIN` is fixed at build time from `apps/desktop/build/server-origin.json`; settings show it read-only and `config:set` rejects address fields. The committed origin is `http://185.115.207.247:3000` — **plain HTTP**, a time-limited D-17 exception for the v0.1.0-beta.3 pre-release only (see [harness configuration](docs/harness.md#d-17-exception-time-limited-v010-beta3)). Keys and code context travel in cleartext until HTTPS is live. Only unpackaged smoke builds with `PA_SMOKE=1` allow an address override.
+Desktop `SERVER_ORIGIN` is fixed at build time from `apps/desktop/build/server-origin.json`; settings show it read-only and `config:set` rejects address fields. The committed origin is `http://flowpier.top:3000` — **plain HTTP**, a time-limited D-17 exception for the v0.1.0-beta.3 pre-release only (see [harness configuration](docs/harness.md#d-17-exception-time-limited-v010-beta3)). Keys and code context travel in cleartext until HTTPS is live. Only unpackaged smoke builds with `PA_SMOKE=1` allow an address override.
 
 The private **dev/test-only** CLI retains `pac config set-url` / `PAC_SERVER_URL` and its own `FileKeyVault` under `~/.config/portable-agent-cli/`; it is not packaged or published.
 
