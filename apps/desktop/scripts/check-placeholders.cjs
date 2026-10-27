@@ -107,7 +107,7 @@ function buildCommit(env = process.env, gitImpl) {
 
 /**
  * Shared server-origin policy (build-main.mjs and the --official guard both call this; Aegis R41 P2/P3).
- * Returns the problem string, or null when acceptable. http: is a TIME-LIMITED D-17 exception for the beta.3 pre-release
+ * Returns the problem string, or null when acceptable. http: is a TIME-LIMITED D-17 exception for pre-releases until HTTPS (beta.3 and the next pre-release)
  * (pre-release only, see docs/harness.md); revert to https-only once the server supports HTTPS.
  */
 function originProblem(origin, { official = false } = {}) {

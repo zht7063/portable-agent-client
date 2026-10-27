@@ -8,11 +8,17 @@ The desktop origin is fixed at build time from `apps/desktop/build/server-origin
 
 Only an unpackaged smoke build with `PA_SMOKE=1` can use `PAC_SERVER_URL`. Production dead-code elimination removes that path. The dev-only CLI retains independent URL configuration.
 
-### D-17 exception (time-limited, v0.1.0-beta.3)
+### D-17 exception (time-limited, until HTTPS)
 
 D-17 requires an `https://` `SERVER_ORIGIN` before official releases (R26: dev/smoke builds only until then). yubai approved a **time-limited exception**:
-- **Scope:** v0.1.0-beta.3 shipped as a GitHub **pre-release only**, over cleartext HTTP to the former origin `http://185.115.207.247:3000`; the next pre-release targets `http://flowpier.top:3000` (scheme/port TBD). It must not be promoted as a stable release.
+- **Scope:** GitHub **pre-releases only**, until HTTPS: v0.1.0-beta.3 shipped over cleartext HTTP to the former origin `http://185.115.207.247:3000`; the next pre-release targets `http://flowpier.top:3000` (scheme/port TBD). It must not be promoted as a stable release.
 - **Risk:** API keys, passwords, session cookies, prompts and code context sent by swift-client, Codex and Claude Code travel in cleartext and can be read or modified on the network (R6). Use only on trusted networks with short-lived, quota-limited keys; revoke and reissue all keys once HTTPS is live.
+- **Domain risks (since the move to `flowpier.top`):** plain HTTP has no certificate check, so whoever controls name resolution controls where keys go.
+  - *DNS hijack / poisoning:* a public Wi-Fi, router, ISP resolver, or local `hosts` entry can point `flowpier.top` at an attacker's server. The client then sends API keys, passwords, sessions and code context straight to them. With a bare IP an attacker had to be on the network path; now controlling DNS is enough.
+  - *No DNSSEC:* `flowpier.top` has no DS record, so resolvers cannot detect forged answers.
+  - *Domain and account takeover:* domain expiry or re-registration, a compromised registrar or Cloudflare account, or an altered DNS record would redirect every installed client to a third party. Keep auto-renew on, use 2FA on the registrar and Cloudflare accounts, and watch for DNS record changes.
+  - *Cloudflare in the path:* if the Cloudflare proxy (orange cloud) is enabled, Cloudflare terminates the connection and sees all traffic in plaintext. Whether the hop from Cloudflare to the server is encrypted depends on the SSL mode.
+- **Key revocation after a server move:** after any server move or redeploy, or a suspected DNS or account compromise, revoke every API key and session that was issued or used against the old server, on the server side. Then issue new short-lived, quota-limited keys and have users re-select a token in swift-client. Old origins' sessions are cleared automatically and legacy keychain entries are not migrated. Do the same once HTTPS is live.
 - **Guards:** the shared `originProblem()` in `apps/desktop/scripts/check-placeholders.cjs` (used by `build-main.mjs` and `--official`) accepts `http:` only for this exception. It still rejects `.invalid` placeholders, paths, userinfo and (official) loopback hosts.
 - **End:** the exception ends when the server supports HTTPS. At that point the origin becomes `https://…` and both guards go back to https-only (remove `http:` from `originProblem()`).
 

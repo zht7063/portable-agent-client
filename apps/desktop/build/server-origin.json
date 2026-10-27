@@ -1,4 +1,4 @@
 {
   "origin": "http://flowpier.top:3000",
-  "NOTE": "D-17: plain HTTP on a bare IP until production HTTPS is ready. Bearer keys and sessions travel in cleartext; the app shows its insecure-transport warning. Switch to an https:// origin through a reviewed change."
+  "NOTE": "D-17: plain HTTP on flowpier.top (scheme/port TBD) until production HTTPS is ready. Bearer keys and sessions travel in cleartext; the app shows its insecure-transport warning. Switch to an https:// origin through a reviewed change."
 }
