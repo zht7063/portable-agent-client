@@ -18,4 +18,18 @@ describe('check-asar release artifact selection', () => {
       expect(releaseArtifacts(join(dir, 'missing'))).toEqual([]);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
+  it('treats zero matched installers (or a missing explicit path) as an error', async () => {
+    // @ts-expect-error JS build policy tool has no declarations.
+    const { selectArtifacts } = await import('../../../../scripts/check-asar.mjs') as { selectArtifacts(args: string[], dir: string): string[] };
+    const dir = mkdtempSync(join(tmpdir(), 'swift-rel-'));
+    try {
+      mkdirSync(join(dir, 'win-unpacked/resources'), { recursive: true });
+      writeFileSync(join(dir, 'win-unpacked/resources/elevate.exe'), '');
+      expect(() => selectArtifacts([], dir)).toThrow(/no release artifacts/);
+      expect(() => selectArtifacts([], join(dir, 'missing'))).toThrow(/no release artifacts/);
+      expect(() => selectArtifacts([join(dir, 'nope.exe')], dir)).toThrow(/no release artifacts/);
+      writeFileSync(join(dir, 'swift-client-0.1.0-beta.3-win-x64.exe'), '');
+      expect(selectArtifacts([], dir)).toEqual([join(dir, 'swift-client-0.1.0-beta.3-win-x64.exe')]);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
 });
