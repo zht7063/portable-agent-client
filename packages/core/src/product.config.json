@@ -1,5 +1,5 @@
 {
-  "$comment": "SINGLE source of product identity. Change here only; code, scripts, packaging and tests read this file. productName is the one display-name config point (window/dialog titles, About, installer + shortcuts, Add/Remove Programs, macOS app name). Release 0.1.0-beta.2 branding: swift-client. keychainService/protocolScheme/cliConfigDir are internal ids, unchanged. sourceUrl: AGPL-3.0 §6/§13 source location (public repo) shown in About & licenses; no written offer.",
+  "$comment": "SINGLE source of product identity. Change here only; code, scripts, packaging and tests read this file. productName is the one display-name config point (window/dialog titles, About, installer + shortcuts, Add/Remove Programs, macOS app name). Release 0.1.0-beta.3 branding: swift-client. keychainService/protocolScheme/cliConfigDir are internal ids, unchanged. sourceUrl: AGPL-3.0 §6/§13 source location (public repo) shown in About & licenses; no written offer.",
   "productName": "swift-client",
   "appId": "com.yubai.swift-client",
   "executableName": "swift-client",
