@@ -106,6 +106,9 @@ export class ServerSession {
     if (!tok) throw new PaException({ code: 'UNAUTHORIZED', message: '请先登录服务器（未找到会话）。' });
     headers.authorization = `Bearer ${tok}`;
     if (body !== undefined) headers['content-type'] = 'application/json';
+    // Same as ServerProxy: pinned server origin (never an external value, no Referer) on non-safe methods, so main-only
+    // cookie+bearer writes pass new-api's Origin check (rc.47 AUTH_ORIGIN_FORBIDDEN on cookie-authenticated POSTs).
+    if (method !== 'GET') headers.origin = origin;
     let res: Response;
     try {
       res = await this.o.fetch(target.href, { method, headers, redirect: 'manual', credentials: 'omit', body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(30000) });

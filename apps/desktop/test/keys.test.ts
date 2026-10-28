@@ -264,6 +264,22 @@ describe('Aegis N1: clipboard auto-clear after keys:copy', () => {
   });
 });
 
+describe('Aegis R47 M1: mainApi sends the pinned Origin on non-GET requests only', () => {
+  it('POST carries Origin = configured server origin and no Referer; GET carries neither', async () => {
+    const fetch = vi.fn(async () => Response.json({ success: true, data: { key: RAW, name: 'n' } }));
+    const s = await session(fetch);
+    s.vault.issue('real-access-token-0123456789abcdef');
+    await s.mainApi('POST', '/api/token/7/key');
+    await s.mainApi('GET', '/api/token/7');
+    const [post, get] = (fetch.mock.calls as unknown as [string, RequestInit][]).map((c) => c[1].headers as Record<string, string>);
+    expect(post!.origin).toBe(ORIGIN);
+    expect(post!.referer).toBeUndefined();
+    expect(post!.authorization).toBe('Bearer real-access-token-0123456789abcdef');
+    expect(get!.origin).toBeUndefined();
+    expect(get!.referer).toBeUndefined();
+  });
+});
+
 describe('Aegis N2: mainApi errors never carry keys/tokens', () => {
   it('masks a key / bearer token echoed in an upstream error message', async () => {
     const fetch = vi.fn(async () => Response.json({ success: false, message: `bad key ${RAW} (sk-${RAW}) for real-access-token-0123456789abcdef` }, { status: 400 }));
