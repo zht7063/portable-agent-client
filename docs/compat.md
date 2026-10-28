@@ -6,10 +6,32 @@
 |---|---|---|
 | `tag` / `commit` | `v1.0.0-rc.46` / `7d8b9126…` | Upstream snapshot. |
 | `minServer` | `v1.0.0-rc.46` | Oldest accepted server (**provisional** = the pin; older servers are untested until the M7 matrix). |
-| `maxServerTested` | `v1.0.0-rc.46` | Newest verified server (M3: official rc.46 release binary, `scripts/integration-local-newapi.sh`); `null` means the same as `tag`. |
+| `maxServerTested` | `v1.0.0-rc.47` | Newest verified server: **rc.47, verified live on 2026-10-28** (see below); earlier M3 verification used the official rc.46 release binary (`scripts/integration-local-newapi.sh`). `null` means the same as `tag`. |
 | `policy` | `same-minor-line` | Accept servers ≥ minServer on the same major.minor line. Newer-than-tested servers are accepted with a warning; other lines are refused. (`exact` is also supported.) |
 
+The pin (`tag`/`commit`, the vendored web snapshot and the proxy allowlist) stays at **rc.46**; only the tested ceiling moved to rc.47. `minServer` is unchanged.
+
 `bun run compat` validates the file. `node scripts/compat-check.mjs --server v1.0.0-rc.47` evaluates a given server version. Upgrading the pin is a deliberate PR (M2 `scripts/update-upstream.sh`).
+
+## Live verification of server v1.0.0-rc.47 (2026-10-28)
+
+Run on 2026-10-28 (Asia/Singapore) against the production server `https://flowpier.top`, which reports `v1.0.0-rc.47` in
+`/api/status`, using a throwaway test account and the client's own main-process code (`ServerProxy` + `checkServer` from
+this branch with the updated `compat.json`); no credentials were logged or committed:
+
+| Check | Result |
+|---|---|
+| `checkServer` | verdict `ok`, `allowLogin: true`, `serverVersion: v1.0.0-rc.47`, no unsupported-login flags, no Turnstile, no messages |
+| Login (`POST /api/user/login` via `ServerProxy`) | 200 `success: true`; access token returned to the renderer only as an opaque handle; no `Set-Cookie` visible to the renderer; refresh cookie held in the main-process jar |
+| Session (`/api/user/self`, `/api/token/`) | 200; token keys masked |
+| Models (`/api/user/models`) | 200, 2 models listed |
+| Playground chat, stream (`/pg/chat/completions`, `stream: true`) | 200 `text/event-stream`, 14 JSON events, none malformed, `[DONE]` seen |
+| Playground chat, non-stream | 200, `finish_reason: stop`, usage reported |
+| Refresh (`POST /api/user/auth/refresh` via `ServerProxy`) | 200 `success: true`, new access token returned as an opaque handle (requires the pinned-Origin fix, PR #12; without it the server answers 403 `AUTH_ORIGIN_FORBIDDEN`) |
+| `/v1/models` through the proxy | 403 (not on the allowlist, as designed) |
+
+Not covered: older servers (`minServer` stays provisional), OAuth/passkey/Turnstile flows, payments. The Docker matrix entry for rc.47
+(`compatMatrix`) carries a digest verified on 2026-10-28 but has not been run through the manual `compat.yml` workflow.
 
 ## Runtime check (M3, desktop main process)
 
