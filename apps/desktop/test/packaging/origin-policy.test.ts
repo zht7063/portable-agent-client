@@ -22,8 +22,25 @@ describe('shared server-origin policy (Aegis R41 P2/P3; D-17 https-only)', () =>
     expect(originProblem(o)).not.toBeNull();
     expect(originProblem(o, { official: true })).not.toBeNull();
   });
-  it.each(['https://127.0.0.1:3000', 'https://localhost:3000', 'https://[::1]:3000', 'https://a.localhost', 'https://0.0.0.0'])('rejects loopback %s only in official builds', (o) => {
+  it.each([
+    'https://127.0.0.1:3000', 'https://localhost:3000', 'https://[::1]:3000', 'https://a.localhost', 'https://0.0.0.0',
+    // IPv6 unspecified address (L2): reaches the local host on most stacks; every textual form parses to hostname '[::]'.
+    'https://[::]', 'https://[::]:8443', 'https://[::ffff:0:0]:8443', 'https://[::ffff:7f00:1]:3000',
+  ])('rejects loopback %s only in official builds', (o) => {
     expect(originProblem(o)).toBeNull();
     expect(originProblem(o, { official: true })).toMatch(/loopback/);
+  });
+  // Non-canonical spellings never reach the loopback check: url.origin (canonical) !== the configured string.
+  it.each(['https://[0:0:0:0:0:0:0:0]:8443', 'https://[::0]:8443', 'https://[::ffff:0.0.0.0]', 'https://[::ffff:127.0.0.1]', 'https://[::ffff:8.8.8.8]:8443', 'https://[::]:443', 'https://[0:0:0:0:0:0:0:1]:3000'])('rejects non-canonical IPv6 spelling %s in every build', (o) => {
+    expect(originProblem(o)).toMatch(/bare https origin/);
+    expect(originProblem(o, { official: true })).toMatch(/bare https origin/);
+  });
+  it('parses bracketed unspecified IPv6 forms to the hostnames the guard compares', () => {
+    expect(new URL('https://[::]').hostname).toBe('[::]');
+    expect(new URL('https://[0:0:0:0:0:0:0:0]').hostname).toBe('[::]');
+    expect(new URL('https://[::ffff:0.0.0.0]').hostname).toBe('[::ffff:0:0]');
+  });
+  it.each(['https://[2001:db8::1]:8443', 'https://[::2]:8443', 'https://[::ffff:808:808]:8443', 'https://flowpier.top', 'https://flowpier.top:8443'])('still accepts non-loopback %s in official builds', (o) => {
+    expect(originProblem(o, { official: true })).toBeNull();
   });
 });
