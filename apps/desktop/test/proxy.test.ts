@@ -134,6 +134,22 @@ describe('ServerProxy', () => {
     expect((await t.req('GET', '//evil.test/api/status')).status).toBe(400);
     expect(t.calls.length).toBe(1);
   });
+  it('sets Origin to the pinned server origin on state-changing requests only (rc.47 AUTH_ORIGIN_FORBIDDEN)', async () => {
+    const t = setup();
+    const rendererHdr = { origin: 'pac://app', referer: 'pac://app/', 'content-type': 'application/json' };
+    await t.req('POST', '/api/user/auth/refresh', rendererHdr, '{}');
+    await t.req('POST', '/api/user/login', rendererHdr, '{}');
+    await t.req('PUT', '/api/token/', rendererHdr, '{}');
+    await t.req('DELETE', '/api/token/3', { origin: 'https://evil.test' });
+    for (const c of t.calls) {
+      expect(sentHeaders(c.init).origin).toBe(ORIGIN); // never the renderer-supplied value
+      expect(sentHeaders(c.init).referer).toBeUndefined();
+    }
+    expect(t.calls.length).toBe(4);
+    t.calls.length = 0;
+    await t.req('GET', '/api/status', { origin: 'pac://app' });
+    expect(sentHeaders(t.calls[0]!.init).origin).toBeUndefined();
+  });
   it('503 without a configured server, no network', async () => {
     const t = setup({ origin: null });
     const r = await t.req('GET', '/api/status');

@@ -141,6 +141,10 @@ export class ServerProxy {
     }
 
     const headers: Record<string, string> = filterRequestHeaders(req.headers);
+    // new-api rc.47 rejects state-changing requests (e.g. POST /api/user/auth/refresh -> 403 AUTH_ORIGIN_FORBIDDEN)
+    // that carry no Origin. The renderer's own Origin (pac://app) is dropped by the header filter and main-process
+    // undici fetch adds none, so send the pinned server origin (never a renderer-supplied value) on non-safe methods.
+    if (method !== 'GET' && method !== 'HEAD') headers.origin = origin;
     const cookie = this.o.getJar().header(path, origin.startsWith('https://'));
     if (cookie) headers.cookie = cookie;
     const auth = req.headers.get('authorization');
