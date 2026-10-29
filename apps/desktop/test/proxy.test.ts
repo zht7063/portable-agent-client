@@ -6,6 +6,7 @@ import { AccessTokenVault, HANDLE_PREFIX, filterRequestHeaders, filterResponseHe
 import { ServerProxy, LIMITS, rewriteStatus } from '../src/main/proxy/api-proxy';
 import { checkServer, classify, evaluateStatus, type CompatRange, type ServerCheck } from '../src/main/proxy/server-status';
 import { handleAppRequest } from '../src/main/app-protocol';
+import { readFileSync } from 'node:fs';
 
 const ORIGIN = 'https://na.example.test';
 const KEY48 = 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789AbCdEfGhIjKl';
@@ -150,6 +151,23 @@ describe('ServerProxy', () => {
     await t.req('GET', '/api/status', { origin: 'pac://app' });
     expect(sentHeaders(t.calls[0]!.init).origin).toBeUndefined();
   });
+  it.each([
+    ['PATCH', '/api/user/self'],
+    ['POST', '/pg/chat/completions'],
+    ['post', '/api/user/auth/refresh'], // method case-insensitive
+    ['POST', '/api/user/auth/logout'],
+    ['POST', '/api/token/7/key'],
+  ])('Aegis R47 L2: %s %s -> pinned Origin, no Referer/Host from the renderer (mixed-case header names)', async (method, path) => {
+    const t = setup();
+    await t.req(method, path, { ORIGIN: 'https://evil.test', Origin: 'pac://app', RefErEr: 'pac://app/x', Referer: 'https://evil.test/', HOST: 'evil.test', 'content-type': 'application/json' }, '{}');
+    expect(t.calls.length).toBe(1);
+    const h = sentHeaders(t.calls[0]!.init);
+    expect(h.origin).toBe(ORIGIN);
+    expect(Object.keys(h).filter((k) => /^(origin|referer|host)$/i.test(k)).sort()).toEqual(['origin']);
+    expect(Object.keys(h).every((k) => k === k.toLowerCase())).toBe(true); // no second, differently-cased origin key
+    expect(h.referer).toBeUndefined();
+    expect(h.host).toBeUndefined();
+  });
   it('503 without a configured server, no network', async () => {
     const t = setup({ origin: null });
     const r = await t.req('GET', '/api/status');
@@ -249,6 +267,14 @@ describe('server version check', () => {
     expect(classify(COMPAT, undefined)).toBe('not-new-api');
     expect(classify({ ...COMPAT, maxServerTested: 'v1.0.0-rc.50' }, 'v1.0.0-rc.50')).toBe('ok');
   });
+  it('the shipped compat.json accepts server rc.47 as tested (no untested warning) and still warns above it', () => {
+    const real = JSON.parse(readFileSync(new URL('../../../compat.json', import.meta.url), 'utf8')) as CompatRange;
+    expect(real.maxServerTested).toBe('v1.0.0-rc.47');
+    expect(classify(real, 'v1.0.0-rc.46')).toBe('ok');
+    expect(classify(real, 'v1.0.0-rc.47')).toBe('ok');
+    expect(classify(real, 'v1.0.0-rc.48')).toBe('untested');
+    expect(evaluateStatus(real, ORIGIN, { success: true, data: { version: 'v1.0.0-rc.47' } })).toMatchObject({ verdict: 'ok', allowLogin: true, messages: [] });
+  });
   it('allows/warns/blocks login and flags Turnstile, OAuth and non-HTTPS', () => {
     expect(evaluateStatus(COMPAT, ORIGIN, { success: true, data: { version: 'v1.0.0-rc.46' } })).toMatchObject({ verdict: 'ok', allowLogin: true, messages: [] });
     const newer = evaluateStatus(COMPAT, ORIGIN, { success: true, data: { version: 'v1.0.1' } });
@@ -289,8 +315,8 @@ describe('Aegis #2: runtime classify == scripts/compat-check.mjs serverCompat', 
   it('agrees on a version table for both policies', async () => {
     // @ts-expect-error untyped .mjs
     const { serverCompat } = await import('../../../scripts/compat-check.mjs');
-    const versions = ['v1.0.0-rc.40', 'v1.0.0-rc.46', 'v1.0.0-rc.47', 'v1.0.0', 'v1.0.9', 'v1.1.0', 'v2.0.0', 'v0.9.0', 'garbage'];
-    for (const policy of ['same-minor-line', 'exact'] as const) for (const maxServerTested of [null, 'v1.0.0-rc.46', 'v1.0.0']) {
+    const versions = ['v1.0.0-rc.40', 'v1.0.0-rc.46', 'v1.0.0-rc.47', 'v1.0.0-rc.48', 'v1.0.0', 'v1.0.9', 'v1.1.0', 'v2.0.0', 'v0.9.0', 'garbage'];
+    for (const policy of ['same-minor-line', 'exact'] as const) for (const maxServerTested of [null, 'v1.0.0-rc.46', 'v1.0.0-rc.47', 'v1.0.0']) {
       const c: CompatRange = { tag: 'v1.0.0-rc.46', minServer: 'v1.0.0-rc.46', maxServerTested, policy };
       for (const v of versions) {
         const rt = classify(c, v);

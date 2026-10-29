@@ -26,7 +26,12 @@ renderer fetch('/api/...')  →  pac://app/api/...  →  protocol.handle (main) 
   bind), passkey login.
 - **Request headers** forwarded from the renderer: `accept`, `accept-language`, `content-type`, `cache-control`,
   `x-auth-session`, `x-security-proof`, `if-none-match`, `if-modified-since`. Cookie / Authorization / Origin /
-  Host / `New-Api-User` from the renderer are dropped. (rc.46 authenticates the frontend with
+  Host / `New-Api-User` from the renderer are dropped; **Referer** is never sent. For non-safe methods (anything but
+  GET/HEAD) the main process sets `Origin` to the pinned server origin (`SERVER_ORIGIN`), never a renderer-supplied
+  value — in `ServerProxy` and in main-only `ServerSession.mainApi` POSTs. Reason: new-api rc.47 rejects cookie-
+  authenticated writes without an allowed Origin (`POST /api/user/auth/refresh` -> 403 `AUTH_ORIGIN_FORBIDDEN`), and the
+  main-process fetch adds none. Verified live on rc.47: refresh needs it; Bearer-authenticated `POST /api/token/:id/key`
+  does not, and sending it there is harmless. (rc.46 authenticates the frontend with
   `Authorization: Bearer <access token>` + an HttpOnly refresh cookie on `/api/user/auth`; it no longer needs
   `New-Api-User`, so none is sent.)
 - **Response headers** passed back: `content-type`, `content-disposition`, `content-language`, `cache-control`,
