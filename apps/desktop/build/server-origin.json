@@ -1,4 +1,4 @@
 {
-  "origin": "http://185.115.207.247:3000",
-  "NOTE": "D-17: plain HTTP on a bare IP until production HTTPS is ready. Bearer keys and sessions travel in cleartext; the app shows its insecure-transport warning. Switch to an https:// origin through a reviewed change."
+  "origin": "https://flowpier.top",
+  "NOTE": "D-17: production origin, HTTPS only (nginx -> new-api behind Cloudflare). Both build-main.mjs and check-placeholders --official reject http://. Change only through a reviewed change."
 }

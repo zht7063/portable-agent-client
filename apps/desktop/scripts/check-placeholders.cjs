@@ -107,27 +107,27 @@ function buildCommit(env = process.env, gitImpl) {
 
 /**
  * Shared server-origin policy (build-main.mjs and the --official guard both call this; Aegis R41 P2/P3).
- * Returns the problem string, or null when acceptable. http: is a TIME-LIMITED D-17 exception for the beta.3 pre-release
- * (pre-release only, see docs/harness.md); revert to https-only once the server supports HTTPS.
+ * Returns the problem string, or null when acceptable. D-17: https only. The time-limited http: exception applied only to
+ * v0.1.0-beta.3 and has ended (see docs/harness.md). Dev/smoke builds may still use http via PAC_SERVER_URL at runtime.
  */
 function originProblem(origin, { official = false } = {}) {
   let url;
   try { url = new URL(origin); } catch { return 'not a URL'; }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') return 'expected an http(s) origin';
-  if (url.username || url.password || url.origin !== origin) return 'expected a bare http(s) origin (no path, userinfo, query or trailing slash)';
+  if (url.protocol !== 'https:') return 'D-17 requires an https:// origin';
+  if (url.username || url.password || url.origin !== origin) return 'expected a bare https origin (no path, userinfo, query, default port or trailing slash)';
   const host = url.hostname.toLowerCase().replace(/\.$/, '');
   if (host === 'invalid' || host.endsWith('.invalid')) return 'D-17 production HTTPS origin is still a placeholder';
+  if (url.hostname.endsWith('.')) return 'expected a bare https origin (no trailing dot in host)';
   if (official) {
     const bare = host.replace(/^\[|\]$/g, '');
     if (bare === 'localhost' || bare.endsWith('.localhost') || /^127\./.test(bare) || bare === '::1' || bare === '0.0.0.0' || /^::ffff:(127\.|7f)/i.test(bare)) return 'loopback origin is not allowed in official builds';
   }
   return null;
 }
-/** Throws on an unacceptable origin; warns on cleartext http. */
+/** Throws on an unacceptable origin. */
 function assertOrigin(origin, opts) {
   const problem = originProblem(origin, opts);
   if (problem) throw new Error(problem);
-  if (new URL(origin).protocol === 'http:') console.warn(`warning: server origin ${origin} is plain HTTP; credentials travel in cleartext`);
 }
 
 /** Read relative to this script, report an actionable error rather than MODULE_NOT_FOUND. */

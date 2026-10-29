@@ -4,17 +4,30 @@ swift-client configures Codex CLI and Claude Code directly. Gemini is not implem
 
 ## Server and migration
 
-The desktop origin is fixed at build time from `apps/desktop/build/server-origin.json`, injected by `build-main.mjs`. The committed origin is `http://185.115.207.247:3000` (new-api, plain HTTP on a bare IP) under the time-limited D-17 exception below. Settings display the origin read-only. Old `config.json.serverUrl` is ignored and removed; old-origin sessions are cleared. Select a token again after server migration; legacy keychain entries are not read or migrated.
+The desktop origin is fixed at build time from `apps/desktop/build/server-origin.json`, injected by `build-main.mjs`. The committed origin is `https://flowpier.top` (new-api behind an nginx HTTPS reverse proxy, fronted by Cloudflare). D-17 applies again: official builds require HTTPS. Settings display the origin read-only. Old `config.json.serverUrl` is ignored and removed; old-origin sessions are cleared. Select a token again after server migration; legacy keychain entries are not read or migrated.
 
 Only an unpackaged smoke build with `PA_SMOKE=1` can use `PAC_SERVER_URL`. Production dead-code elimination removes that path. The dev-only CLI retains independent URL configuration.
 
-### D-17 exception (time-limited, v0.1.0-beta.3)
+### D-17: HTTPS required (cleartext exception ended)
 
-D-17 requires an `https://` `SERVER_ORIGIN` before official releases (R26: dev/smoke builds only until then). yubai approved a **time-limited exception**:
-- **Scope:** v0.1.0-beta.3 ships as a GitHub **pre-release only**, over cleartext HTTP to `http://185.115.207.247:3000`. It must not be promoted as a stable release.
-- **Risk:** API keys, passwords, session cookies, prompts and code context sent by swift-client, Codex and Claude Code travel in cleartext and can be read or modified on the network (R6). Use only on trusted networks with short-lived, quota-limited keys; revoke and reissue all keys once HTTPS is live.
-- **Guards:** the shared `originProblem()` in `apps/desktop/scripts/check-placeholders.cjs` (used by `build-main.mjs` and `--official`) accepts `http:` only for this exception. It still rejects `.invalid` placeholders, paths, userinfo and (official) loopback hosts.
-- **End:** the exception ends when the server supports HTTPS. At that point the origin becomes `https://…` and both guards go back to https-only (remove `http:` from `originProblem()`).
+D-17 requires an `https://` `SERVER_ORIGIN` for official builds. The time-limited cleartext-HTTP exception that yubai approved applied **only to v0.1.0-beta.3**, a GitHub pre-release that shipped against `http://185.115.207.247:3000`. That exception has ended. beta.3 users sent keys in cleartext, so revoke and reissue every key used with beta.3.
+- **Guards:** the shared `originProblem()` in `apps/desktop/scripts/check-placeholders.cjs` (used by `build-main.mjs` and `--official`) accepts only bare `https:` origins. It rejects `http:`, `.invalid` placeholders, paths, userinfo, an explicit default port, and (official) loopback hosts.
+- **Runtime:** `packages/core` config still accepts `http:` for dev/smoke use (`PA_SMOKE=1` with `PAC_SERVER_URL`, and the dev CLI). It shows the insecure-transport warning. Packaged official builds cannot carry an http origin.
+
+### Deployment requirements (Cloudflare + nginx)
+
+- **No 3xx on API paths:** the client refuses redirects ("Server redirect refused" / redirect-refused), so Cloudflare and nginx must not answer `/v1/*` or `/api/*` with any 3xx. That rules out Redirect Rules, Page Rules, www↔apex or trailing-slash redirects, and nginx `return 301`/`rewrite … redirect` on those paths. *Always Use HTTPS* is harmless, because the client always uses `https://`, but nothing else may redirect.
+- **No challenges on API paths:** Cloudflare WAF managed rules, Bot Fight Mode, Turnstile/JS (managed) challenges and *Under Attack* mode can answer non-browser clients (the desktop app, Codex CLI, Claude Code) with 403 or challenge HTML, which breaks every request. Disable challenges and bot fighting for `/v1/*` and `/api/*`, or add a WAF skip rule for those paths.
+- **Proxy limits:** on the free plan Cloudflare enforces a 100-second proxy read timeout (HTTP 524) and a 100 MB request-body limit. Long streaming responses with no bytes for 100 s, or very large requests, can be cut off. Make sure the upstream streams promptly and sends keep-alive data, or move API traffic to a DNS-only (grey-cloud) or higher-plan setup if this matters. Keep nginx `proxy_read_timeout` and `proxy_buffering off` consistent with streaming.
+
+### Domain risks (`flowpier.top`)
+
+Clients trust whatever name resolution and the domain's accounts say. TLS certificate checks limit DNS attacks, but these risks remain:
+- **DNS hijack / poisoning:** a public Wi-Fi, router, ISP resolver, or local `hosts` entry can point `flowpier.top` elsewhere. TLS stops a plain impersonator. It does not stop an attacker who can also obtain a certificate, for example through a domain or account takeover, or a user who ignores warnings in other tools such as Codex or Claude Code.
+- **No DNSSEC:** `flowpier.top` has no DS record, so resolvers cannot detect forged answers. Consider enabling DNSSEC in Cloudflare.
+- **Domain expiry or takeover:** domain expiry or re-registration, a compromised registrar or Cloudflare account, or an altered DNS record would let a third party obtain a valid certificate and receive every installed client's keys, passwords and code context. Keep auto-renew on, use 2FA on the registrar and Cloudflare accounts, add CAA records, and watch for DNS changes.
+- **Cloudflare TLS termination:** with the Cloudflare proxy enabled, Cloudflare terminates TLS and sees all traffic, including API keys, sessions, prompts and code context, in plaintext. Use the Full (strict) SSL mode so the hop from Cloudflare to nginx is encrypted and authenticated.
+- **Key revocation after a server move:** after any server move or redeploy, or a suspected DNS or account compromise, revoke on the server every API key and session issued or used against the old server. Then issue new short-lived, quota-limited keys and have users re-select a token in swift-client. Sessions for old origins are cleared automatically, and legacy keychain entries are not migrated.
 
 ## Credentials and risks
 

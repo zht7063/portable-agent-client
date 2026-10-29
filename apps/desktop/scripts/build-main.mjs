@@ -26,7 +26,7 @@ if (override && head && override !== head) {
 }
 const commit = (override || head || 'unknown') + dirty;
 const origin = JSON.parse(readFileSync(join(app, 'build/server-origin.json'), 'utf8')).origin;
-// Shared with the --official guard (Aegis R41 P2): bare http(s), no .invalid placeholder.
+// Shared with the --official guard (Aegis R41 P2): bare https only (D-17), no .invalid placeholder.
 try { createRequire(import.meta.url)('./check-placeholders.cjs').assertOrigin(origin); } catch (e) { throw new Error(`Invalid committed origin: ${e.message}`); }
 const common = {
   bundle: true, platform: 'node', format: 'cjs', conditions: ['source'], mainFields: ['module', 'main'], logLevel: 'error',
