@@ -27,5 +27,5 @@ uploaded. For each tag in `compat.json` → `compatMatrix.versions` it starts th
 `bun run test:compat` (`test/compat/status.compat.test.ts`: the client's credential-free `/api/status` check via
 `checkServer`; skipped unless `PAC_COMPAT_SERVER` is set). It has not been triggered yet. Each image is pinned as
 `calciumion/new-api@sha256:<digest>` (`compatMatrix.versions[].digest`, multi-arch index digest); the image name is the
-one in upstream's `docker-compose.yml` and v1.0.0-rc.46's digest was verified on 2026-10-24 against the Docker Hub tags
+one in upstream's `docker-compose.yml` and v1.0.0-rc.46's digest was verified on 2026-10-24 (v1.0.0-rc.47's on 2026-10-28) against the Docker Hub tags
 API and the registry manifest. An entry without a verified digest must carry a `todo: "TODO ..."` (policy-tested). The policy test above also covers this workflow (manual-only trigger, image from compat.json).
