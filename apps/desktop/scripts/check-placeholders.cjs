@@ -119,8 +119,9 @@ function originProblem(origin, { official = false } = {}) {
   if (host === 'invalid' || host.endsWith('.invalid')) return 'D-17 production HTTPS origin is still a placeholder';
   if (url.hostname.endsWith('.')) return 'expected a bare https origin (no trailing dot in host)';
   if (official) {
+    // WHATWG URL normalises every textual form to one hostname: [::], [0:0:0:0:0:0:0:0], [::0] -> '[::]'; [::ffff:0.0.0.0] -> '[::ffff:0:0]'.
     const bare = host.replace(/^\[|\]$/g, '');
-    if (bare === 'localhost' || bare.endsWith('.localhost') || /^127\./.test(bare) || bare === '::1' || bare === '0.0.0.0' || /^::ffff:(127\.|7f)/i.test(bare)) return 'loopback origin is not allowed in official builds';
+    if (bare === 'localhost' || bare.endsWith('.localhost') || /^127\./.test(bare) || bare === '::1' || bare === '::' || bare === '0.0.0.0' || /^::ffff:(127\.|7f|0:0$|0\.0\.0\.0$)/i.test(bare)) return 'loopback origin is not allowed in official builds';
   }
   return null;
 }

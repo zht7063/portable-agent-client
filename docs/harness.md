@@ -11,7 +11,7 @@ Only an unpackaged smoke build with `PA_SMOKE=1` can use `PAC_SERVER_URL`. Produ
 ### D-17: HTTPS required (cleartext exception ended)
 
 D-17 requires an `https://` `SERVER_ORIGIN` for official builds. The time-limited cleartext-HTTP exception that yubai approved applied **only to v0.1.0-beta.3**, a GitHub pre-release that shipped against `http://185.115.207.247:3000`. That exception has ended. beta.3 users sent keys in cleartext, so revoke and reissue every key used with beta.3.
-- **Guards:** the shared `originProblem()` in `apps/desktop/scripts/check-placeholders.cjs` (used by `build-main.mjs` and `--official`) accepts only bare `https:` origins. It rejects `http:`, `.invalid` placeholders, paths, userinfo, an explicit default port, and (official) loopback hosts.
+- **Guards:** the shared `originProblem()` in `apps/desktop/scripts/check-placeholders.cjs` (used by `build-main.mjs` and `--official`) accepts only bare `https:` origins. It rejects `http:`, `.invalid` placeholders, paths, userinfo, an explicit default port, and (official) loopback/unspecified hosts (`localhost`, `*.localhost`, `127.*`, `::1`, `0.0.0.0`, `::` incl. `[0:0:0:0:0:0:0:0]`, and the IPv4-mapped forms of those).
 - **Runtime:** `packages/core` config still accepts `http:` for dev/smoke use (`PA_SMOKE=1` with `PAC_SERVER_URL`, and the dev CLI). It shows the insecure-transport warning. Packaged official builds cannot carry an http origin.
 
 ### Deployment requirements (Cloudflare + nginx)
