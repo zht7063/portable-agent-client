@@ -151,6 +151,23 @@ describe('ServerProxy', () => {
     await t.req('GET', '/api/status', { origin: 'pac://app' });
     expect(sentHeaders(t.calls[0]!.init).origin).toBeUndefined();
   });
+  it.each([
+    ['PATCH', '/api/user/self'],
+    ['POST', '/pg/chat/completions'],
+    ['post', '/api/user/auth/refresh'], // method case-insensitive
+    ['POST', '/api/user/auth/logout'],
+    ['POST', '/api/token/7/key'],
+  ])('Aegis R47 L2: %s %s -> pinned Origin, no Referer/Host from the renderer (mixed-case header names)', async (method, path) => {
+    const t = setup();
+    await t.req(method, path, { ORIGIN: 'https://evil.test', Origin: 'pac://app', RefErEr: 'pac://app/x', Referer: 'https://evil.test/', HOST: 'evil.test', 'content-type': 'application/json' }, '{}');
+    expect(t.calls.length).toBe(1);
+    const h = sentHeaders(t.calls[0]!.init);
+    expect(h.origin).toBe(ORIGIN);
+    expect(Object.keys(h).filter((k) => /^(origin|referer|host)$/i.test(k)).sort()).toEqual(['origin']);
+    expect(Object.keys(h).every((k) => k === k.toLowerCase())).toBe(true); // no second, differently-cased origin key
+    expect(h.referer).toBeUndefined();
+    expect(h.host).toBeUndefined();
+  });
   it('503 without a configured server, no network', async () => {
     const t = setup({ origin: null });
     const r = await t.req('GET', '/api/status');
